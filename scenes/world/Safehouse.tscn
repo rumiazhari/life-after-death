@@ -1,0 +1,128 @@
+[gd_scene load_steps=6 format=3]
+
+[ext_resource type="Script" path="res://scripts/world/settlement.gd" id="1"]
+[ext_resource type="Script" path="res://scripts/world/storage_container.gd" id="2"]
+[ext_resource type="Script" path="res://scripts/world/sleep_spot.gd" id="3"]
+[ext_resource type="Script" path="res://scripts/world/guard_post.gd" id="4"]
+[ext_resource type="Script" path="res://scripts/jobs/settlement_job_board.gd" id="5"]
+
+[node name="Safehouse" type="Node2D"]
+script = ExtResource("1")
+settlement_name = "Riverside Safehouse"
+
+[node name="JobBoard" type="Node" parent="."]
+script = ExtResource("5")
+
+[node name="FloorVisual" type="Polygon2D" parent="."]
+color = Color(0.42, 0.4, 0.36, 1)
+polygon = PackedVector2Array(-170, -170, 170, -170, 170, 170, -170, 170)
+z_index = -8
+
+[node name="WallOutline" type="Line2D" parent="."]
+width = 6.0
+default_color = Color(0.3, 0.22, 0.15, 1)
+closed = true
+points = PackedVector2Array(-170, -170, 170, -170, 170, 170, -170, 170)
+
+[node name="Entrance" type="Node2D" parent="."]
+position = Vector2(0, 170)
+
+[node name="EntranceVisual" type="Polygon2D" parent="Entrance"]
+color = Color(0.55, 0.5, 0.3, 1)
+polygon = PackedVector2Array(-30, -6, 30, -6, 30, 6, -30, 6)
+
+[node name="StorageGeneral" type="Node2D" parent="."]
+position = Vector2(-110, -110)
+script = ExtResource("2")
+storage_role = "general"
+starting_items = {
+"materials": 12
+}
+
+[node name="Visual" type="Polygon2D" parent="StorageGeneral"]
+color = Color(0.6, 0.6, 0.6, 1)
+polygon = PackedVector2Array(-14, -14, 14, -14, 14, 14, -14, 14)
+
+[node name="StorageFood" type="Node2D" parent="."]
+position = Vector2(-36, -110)
+script = ExtResource("2")
+storage_role = "food"
+starting_items = {
+"food_ration": 8
+}
+
+[node name="Visual" type="Polygon2D" parent="StorageFood"]
+color = Color(0.75, 0.55, 0.2, 1)
+polygon = PackedVector2Array(-14, -14, 14, -14, 14, 14, -14, 14)
+
+[node name="StorageWater" type="Node2D" parent="."]
+position = Vector2(38, -110)
+script = ExtResource("2")
+storage_role = "water"
+starting_items = {
+"water_bottle": 8
+}
+
+[node name="Visual" type="Polygon2D" parent="StorageWater"]
+color = Color(0.25, 0.5, 0.8, 1)
+polygon = PackedVector2Array(-14, -14, 14, -14, 14, 14, -14, 14)
+
+[node name="StorageMedical" type="Node2D" parent="."]
+position = Vector2(112, -110)
+script = ExtResource("2")
+storage_role = "medical"
+starting_items = {
+"medical_supplies": 4
+}
+
+[node name="Visual" type="Polygon2D" parent="StorageMedical"]
+color = Color(0.85, 0.25, 0.25, 1)
+polygon = PackedVector2Array(-14, -14, 14, -14, 14, 14, -14, 14)
+
+[node name="SleepSpot1" type="Node2D" parent="."]
+position = Vector2(-120, 40)
+script = ExtResource("3")
+
+[node name="Visual" type="Polygon2D" parent="SleepSpot1"]
+color = Color(0.4, 0.35, 0.6, 1)
+polygon = PackedVector2Array(-16, -8, 16, -8, 16, 8, -16, 8)
+
+[node name="SleepSpot2" type="Node2D" parent="."]
+position = Vector2(-60, 40)
+script = ExtResource("3")
+
+[node name="Visual" type="Polygon2D" parent="SleepSpot2"]
+color = Color(0.4, 0.35, 0.6, 1)
+polygon = PackedVector2Array(-16, -8, 16, -8, 16, 8, -16, 8)
+
+[node name="SleepSpot3" type="Node2D" parent="."]
+position = Vector2(0, 40)
+script = ExtResource("3")
+
+[node name="Visual" type="Polygon2D" parent="SleepSpot3"]
+color = Color(0.4, 0.35, 0.6, 1)
+polygon = PackedVector2Array(-16, -8, 16, -8, 16, 8, -16, 8)
+
+[node name="SleepSpot4" type="Node2D" parent="."]
+position = Vector2(60, 40)
+script = ExtResource("3")
+
+[node name="Visual" type="Polygon2D" parent="SleepSpot4"]
+color = Color(0.4, 0.35, 0.6, 1)
+polygon = PackedVector2Array(-16, -8, 16, -8, 16, 8, -16, 8)
+
+[node name="GuardPostLeft" type="Node2D" parent="."]
+position = Vector2(-60, 210)
+script = ExtResource("4")
+
+[node name="Visual" type="Polygon2D" parent="GuardPostLeft"]
+color = Color(0.8, 0.7, 0.15, 1)
+polygon = PackedVector2Array(0, -14, 12, 10, -12, 10)
+
+[node name="GuardPostRight" type="Node2D" parent="."]
+position = Vector2(60, 210)
+script = ExtResource("4")
+
+[node name="Visual" type="Polygon2D" parent="GuardPostRight"]
+color = Color(0.8, 0.7, 0.15, 1)
+polygon = PackedVector2Array(0, -14, 12, 10, -12, 10)

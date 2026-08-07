@@ -27,3 +27,7 @@ signal weapon_ammo_changed(ammo_in_magazine: int, reserve_ammo: int)
 signal game_paused()
 signal game_resumed()
 signal game_restarted()
+
+signal survivor_spawned(survivor: Node2D)
+signal survivor_died(survivor: Node2D)
+signal survivor_selected(survivor: Node2D)

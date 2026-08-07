@@ -1,0 +1,16 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/world/scavenge_point.gd" id="1"]
+
+[node name="ScavengePoint" type="Node2D" groups=["scavenge_point"]]
+script = ExtResource("1")
+
+[node name="Visual" type="Polygon2D" parent="."]
+color = Color(0.55, 0.45, 0.15, 1)
+polygon = PackedVector2Array(0, -12, 10, -4, 6, 12, -6, 12, -10, -4)
+
+[node name="Outline" type="Line2D" parent="."]
+width = 2.0
+default_color = Color(0.3, 0.22, 0.08, 1)
+closed = true
+points = PackedVector2Array(0, -12, 10, -4, 6, 12, -6, 12, -10, -4)

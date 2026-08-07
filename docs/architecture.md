@@ -1,8 +1,10 @@
 # Architecture
 
 This document describes the systems implemented in the Phase 0 / Phase 1
-vertical slice and where later systems (settlements, quests, economy,
-survivors, crafting, procedural world generation) are expected to attach.
+combat vertical slice and the Phase 2A autonomous survivor/settlement
+simulation vertical slice, and where later systems (procedural world
+generation, quests, economy, crafting, factions, crime, family/children,
+advanced construction) are expected to attach.
 
 ## Guiding rules
 
@@ -108,8 +110,8 @@ exposes a `take_damage(amount, source)` method (`Player.take_damage`,
 via duck typing (`if body.has_method("take_damage")`), so combat code
 never needs to know the concrete class of what it's hitting.
 
-Extension point: a future `Survivor` actor gets damage/death for free by
-adding the same component.
+`Survivor` (Phase 2A) got damage/death for free by adding the same
+component.
 
 ## Pooling — `scripts/core/object_pool.gd` (`ObjectPool`)
 
@@ -172,9 +174,11 @@ branching in `try_fire`; they don't require touching `Player`.
   applies whenever `OS.has_feature("mobile")` is true, so Android never
   silently inherits the desktop-tuned 150 cap.
 
-Extension point: `Survivor` (a future friendly/rescuable actor) would
-live alongside `Zombie` here, likely sharing `HealthComponent` and its
-own manager analogous to `SpawnManager`.
+`Survivor` (`survivor.gd`, added in Phase 2A) lives alongside `Zombie`
+here, sharing `HealthComponent` and the same `Weapon`/`WeaponData`
+pipeline, but has no `SpawnManager`-style manager of its own -- the
+settlement's population is small and fixed for this slice, spawned
+directly by `main.gd`. See "Phase 2A" below for its AI.
 
 ## World — `scripts/world/`
 
@@ -228,21 +232,292 @@ single source of truth for "what does a fresh run look like."
 | 2 | 2 | Player |
 | 3 | 4 | Zombies |
 | 4 | 8 | Player projectiles |
+| 5 | 16 | Survivors |
 
-Player mask = world + zombies (physically blocked by both). Zombie mask =
-world + player + zombies. Projectiles mask = world + zombies (never hit
-the player or each other).
+Player mask = world + zombies. Zombie mask = world + player + zombies +
+survivors (physically blocked by all of them). Survivor mask = world +
+zombies. Projectiles mask = world + zombies (never hit the player,
+survivors, or each other). Zombie's `AttackArea` (an `Area2D`, not the
+body's own collision) additionally monitors player + survivor layers so
+contact damage lands on either.
 
-## Where the excluded systems would attach
+## Phase 2A: autonomous survivor and settlement simulation
 
-- **Settlements / world state**: would likely become sibling managers to
-  `SpawnManager` under `Main`, driven by the same `GameEvents` bus.
-- **Survivors**: a new actor under `scripts/actors/`, reusing
-  `HealthComponent` and the group-lookup pattern.
-- **Quests / economy**: new autoloads alongside `GameEvents`, or new
-  signals added to it, so existing systems don't need to know they exist.
-- **Crafting**: likely a new `Resource`-driven data pattern mirroring
-  `WeaponData`.
+Everything below is additive to the Phase 0/1 slice above: existing
+combat, `InputRouter`, mobile controls, the zombie swarm, and scene
+structure are unchanged except where noted (`Zombie` targeting and the
+`AttackArea` mask, both explained under "Zombies can now threaten
+survivors" below).
+
+### Simulation tick architecture -- `scripts/core/simulation_clock.gd` (autoload `SimulationClock`)
+
+A `Node` autoload that is the single source of "how much game time
+passed." It accumulates real `delta * speed` into a fixed
+`tick_interval_seconds` step (default 0.25s) and only advances game time
+in those fixed increments -- a slow frame processes more ticks in one
+`_process` call (capped at `_MAX_TICKS_PER_FRAME` so a debugger-stall
+frame can't spiral) rather than skipping simulated time. `speed` is a
+`SimSpeed` enum (`PAUSED` / `NORMAL` / `FAST`); `real_seconds_per_game_minute`
+converts real ticks to in-game minutes. Emits `sim_tick(tick_count)` every
+fixed tick (what AI staggering keys off, see below), and
+`minute_changed` / `hour_changed` / `day_changed` as game time rolls over
+(what need decay and settlement danger recompute key off).
+
+`SimulationClock` deliberately does **not** set
+`process_mode = PROCESS_MODE_ALWAYS` (unlike `InputRouter`/`PauseMenu`),
+so pausing the game (`SceneTree.paused = true`, e.g. on player death) also
+pauses simulated time -- consistent with the existing pause behavior for
+combat, and the reason `SurvivorAI` needs no special-casing to also
+freeze correctly on pause.
+
+### Persistent data vs. runtime nodes -- `scripts/core/world_state.gd` (autoload `WorldState`)
+
+`WorldState` is the authoritative registry for survivors, settlements,
+inventories, and jobs -- **not** the `Survivor`/`Settlement`/
+`StorageContainer` nodes themselves. Each holds a plain data
+`Resource`/object (`SurvivorData`, `SettlementData`, `Inventory`) and a
+stable `int` id assigned by `WorldState.register_*()`; the node is a
+*view* onto that data (reads/writes it, forwards physics/rendering), not
+the data's owner. This is what "off-screen/reduced simulation" and (in a
+later phase) save/load can build on: a survivor's data can keep existing
+and being reasoned about even if its actor node is far off-screen or not
+instantiated at all.
+
+- `SurvivorData` (`scripts/survivors/survivor_data.gd`, a `Resource`):
+  id, name, age, vitals (health/hunger/thirst/fatigue/morale/fear/
+  infection_exposure), skills, movement speed, personality modifiers,
+  current settlement/goal/action, relationships map.
+- `SettlementData` (`scripts/world/settlement_data.gd`): id, name, danger
+  level, member ids, storage container ids by role.
+- `Inventory` (`scripts/items/inventory.gd`, `RefCounted`, see below):
+  used both for a survivor's carried items and for settlement storage --
+  the same class on both sides of every transfer.
+
+`WorldState.to_snapshot()` walks all of the above into plain
+dictionaries (via each type's `to_dict()`) plus current sim time and
+world flags. This is *preparation* for save/load -- nothing reads or
+writes it to disk yet.
+
+### Utility AI -- `scripts/ai/`
+
+`UtilityAction` (`scripts/ai/utility_action.gd`) is the base class for
+one candidate behavior: `score(ai) -> float`, `can_start(ai) -> bool`,
+`enter/tick/exit(ai)`. `SurvivorAI` (`scripts/ai/survivor_ai.gd`, a
+`Node` child of `Survivor`) holds one instance of each of the 14 actions
+under `scripts/ai/actions/` (idle, wander, eat, drink, sleep,
+seek_safety, flee, fight, retrieve_supplies, haul_supplies, scavenge,
+treat_self, help_injured, guard) and, on each reconsideration, scores
+every action and runs whichever wins -- there is no hard-coded state
+machine branching on action type.
+
+**Scoring formula.** Each action computes its own score from whatever
+mix of these it needs (`scripts/ai/utility_math.gd` holds the shared
+curves so every action derives them the same way):
+
+- **urgency** -- `UtilityMath.urgency(value, threshold)`: 0 below a
+  threshold, ramping 0..1 as a need (hunger/thirst/fatigue/missing
+  health) gets worse. Needs that aren't a problem yet contribute nothing.
+- **risk** -- `UtilityMath.risk_from_danger(danger_level, brave)`:
+  settlement/point danger scaled down by the survivor's `brave`
+  personality trait.
+- **distance** -- `UtilityMath.distance_cost(distance, max_range)`: 0 at
+  the survivor's feet, 1 at or beyond `max_range`; subtracted from
+  benefit so a same-value-but-farther option scores lower.
+- **expected benefit** -- action-specific (e.g. scavenging benefit scales
+  with `scavenging_skill`; guarding benefit scales with `brave`/
+  `diligent` and current settlement danger).
+- **survivor personality** -- the four modifiers on `SurvivorData.personality`
+  (`brave`, `cautious`, `diligent`, `social`) bias risk tolerance, hauling/
+  guarding willingness, and help-injured willingness respectively.
+- **settlement priorities** -- e.g. `ActionGuard` scores higher as
+  `Settlement.danger_level()` rises; `ActionSleep`/`ActionSeekSafety`
+  score against the same danger level from the other direction.
+- **resource availability** -- actions that depend on stock (Eat/Drink/
+  TreatSelf on carried items; RetrieveSupplies/Scavenge/Haul on
+  settlement/point stock) score 0 when nothing is available, rather than
+  scoring speculatively and failing at execution time.
+- **interruption cost** -- `UtilityAction.interrupt_cost`: in
+  `SurvivorAI._reconsider()`, a candidate must beat the *currently
+  running* action's score by more than that action's `interrupt_cost` to
+  take over (unless the candidate is `is_emergency` and simply scores
+  higher) -- this is what stops two near-tied actions from flickering
+  every reconsideration.
+
+**Reconsideration cadence.** `SurvivorAI` reconsiders on a per-survivor
+jittered timer (`base_decision_interval` ± `decision_jitter`, default
+~1.1-1.9s), not every physics frame and not synchronized across
+survivors -- decision cost stays flat as survivor count grows. Perception
+(nearby zombies, cached on `SurvivorAI.nearby_zombies`/`nearest_zombie`)
+refreshes on its own shorter, separately-jittered timer
+(`base_perception_interval`, default ~0.5s) so "is anything a threat"
+stays cheap and current without being recomputed every frame either.
+
+**Emergency interrupts.** After each perception refresh,
+`_check_emergency()` checks "is a zombie within `emergency_zombie_radius`"
+or "is health below 25%"; if so and the current action isn't already
+`is_emergency` (Flee/Fight are the only two), it zeroes the decision
+timer so `_reconsider()` runs on the *next* physics frame instead of
+waiting out the rest of the normal interval. This is the mechanism behind
+"emergency needs and nearby threats interrupt lower-priority actions."
+
+### Job lifecycle -- `scripts/jobs/job.gd`, `scripts/jobs/settlement_job_board.gd`
+
+A `Job` (`RefCounted`) is one unit of settlement work: `SCAVENGE` (claim a
+`ScavengePoint`), `HAUL` (move a specific reserved item stack between two
+containers), `GUARD` (hold a `GuardPost`), or `HELP_INJURED` (declared for
+future use -- the current `ActionHelpInjured` uses a cheaper direct claim,
+see below). Status moves `AVAILABLE -> RESERVED` (`claim_job`, a survivor
+committed) `-> ACTIVE` (`start_job`, the survivor is actually executing
+it, e.g. arrived and working) `-> COMPLETED` / `FAILED` / `CANCELLED`.
+
+- `SCAVENGE` and `GUARD` jobs are created once at scenario setup (one per
+  `ScavengePoint` / `GuardPost`, `main.gd._setup_settlement_jobs()`) and
+  are *not* removed on completion if there's still work to do:
+  `ActionScavenge` calls `release_survivor()` instead of `complete_job()`
+  when the point isn't yet depleted, reopening the job (`AVAILABLE`) for
+  a future visit instead of retiring it after one harvest. `GUARD` jobs
+  are never completed at all -- holding one just means "no higher-scoring
+  action has won yet."
+- `HAUL` jobs are created dynamically by
+  `SettlementJobBoard._refresh_haul_jobs()` (checked once per sim tick)
+  whenever general storage holds stock that belongs in food/water/medical
+  storage, and complete for good once delivered.
+- `SettlementJobBoard._validate_some_jobs()` target-validates a handful of
+  jobs per sim tick (`jobs_validated_per_tick`, round-robin cursor, not
+  the whole list every tick) and cancels any whose node target no longer
+  exists (`Job.is_target_valid()` via a `WeakRef`) -- e.g. a fully-
+  depleted `ScavengePoint` frees itself, and the next validation pass
+  cancels any job still pointing at it.
+
+### Reservation lifecycle -- `scripts/items/inventory.gd`
+
+`Inventory.reserve(item_id, amount) -> reservation_id` claims stock
+without moving it; `get_available()` (count minus reserved) is what a new
+claim actually sees, so two survivors evaluating the same tick can't both
+commit to the same last unit. A reservation resolves one of two ways:
+
+- `confirm_reserved_transfer(reservation_id, to)` -- atomically moves the
+  reserved stack into another `Inventory` and clears the reservation in
+  one call (used when a survivor actually arrives and picks something up
+  in HAUL/SCAVENGE/RETRIEVE_SUPPLIES actions).
+- `release_reservation(reservation_id)` -- drops the claim without moving
+  anything; safe to call on an id that's already been resolved. Called
+  from every action's `exit()` when interrupted, from `SurvivorAI.stop()`
+  when a survivor dies, and from `SettlementJobBoard.cancel_job()`/
+  `fail_job()` -- this is what guarantees a dead or interrupted survivor
+  never leaves a reservation permanently stuck.
+
+`Inventory.transfer_item(from, to, item_id, amount)` is the unconditional
+(non-reservation) atomic move, used for a survivor depositing its own
+carried stock (which nothing else could be racing for) and for the
+player using the same storage.
+
+### Active vs. off-screen simulation
+
+`Survivor` carries a `VisibleOnScreenNotifier2D`
+(`is_on_screen`, toggled by its `screen_entered`/`screen_exited`
+signals). `SurvivorAI` multiplies both its decision and perception
+intervals by `offscreen_slowdown` (default 3x) whenever `is_on_screen` is
+false, so an off-screen survivor still reconsiders and perceives threats,
+just far less often -- proportionally cheaper instead of a separate coarse
+simulation path. Physics movement itself (`move_and_slide()`) is not
+throttled; at four survivors this is cheap regardless of screen state, and
+throttling it would risk a survivor's position silently drifting out of
+sync with its last-seen collision state.
+
+### Zombies can now threaten survivors
+
+`Zombie._seek_target()` used to always target the single "player" group
+node. It now periodically (`retarget_interval`, jittered, not every
+frame) picks the nearest node in the new `"attackable"` group, which
+`Player` and `Survivor` both join -- so zombies can converge on whichever
+is closer/most exposed instead of ignoring survivors entirely. The
+swarm/separation steering itself, and `Zombie` having no
+`NavigationAgent2D`, are unchanged. `Zombie.AttackArea`'s
+`_on_attack_area_body_entered` also switched from an `is_in_group("player")`
+check to the project's own documented duck-typing convention
+(`has_method("take_damage")`), matching how `HealthComponent` is already
+described as this project's "damage interface."
+
+### Settlement -- `scripts/world/`
+
+`Settlement` (`settlement.gd`) collects its own `StorageContainer`
+(`storage_container.gd`, role "general"/"food"/"water"/"medical", each
+wrapping its own registered `Inventory`), `SleepSpot`
+(`sleep_spot.gd`, single-occupant claim), and `GuardPost`
+(`guard_post.gd`, a job-board target) children by walking its own
+subtree in `_ready()` -- direct ownership, not a cross-cutting lookup, so
+this is one of the few places that doesn't use group-based discovery.
+`danger_level()` recomputes periodically (staggered on `sim_tick`, not
+every tick) from how many zombies are within `danger_check_radius`.
+`ScavengePoint` (`scavenge_point.gd`) is a standalone depleting resource
+node, scattered directly in `Main.tscn` rather than owned by the
+settlement, since scavenging happens away from home.
+
+### Items -- `scripts/items/`
+
+`ItemData` (a `Resource`, mirroring `WeaponData`'s pattern) defines one
+item type; `resources/items/*.tres` are the five required instances
+(food_ration, water_bottle, medical_supplies, ammunition, materials).
+`ItemDatabase` (autoload) loads every `.tres` under `resources/items/`
+once at startup and is the only place item stats are looked up by id --
+adding a new item is a new `.tres`, not new code. (`ammunition` is
+defined but not yet wired to `Weapon`'s reload, which still uses its own
+internal `reserve_ammo` counter -- see Known limitations.)
+
+### Observability
+
+`SurvivorInspector` (`scripts/ui/survivor_inspector.gd`,
+`scenes/ui/SurvivorInspector.tscn`) is a read-only panel, purely reactive
+to `GameEvents.survivor_selected` like `HUD` is to its own signals --
+never writes back to the survivor. Selection is a right-click nearest-
+survivor pick handled in `main.gd._try_select_survivor()` (kept off the
+existing left-click "fire" binding on purpose), which just emits
+`GameEvents.survivor_selected`; nothing about selecting a survivor can
+command it. `DebugOverlay` gained a second line of counters: survivor
+count, decisions/s and actions-evaluated/s (both accumulated over a
+rolling ~1s window -- an instantaneous per-frame rate would read ~0 most
+frames since individual reconsiderations are sparse relative to 60fps),
+average decision time, job board counts by status, and total inventory
+reservations across every registered container.
+
+### Extension points
+
+- **Settlement construction**: `StorageContainer`/`SleepSpot`/`GuardPost`
+  are already placeable primitives; a build system would add new ones at
+  runtime (reserving `materials` via the same `Inventory` reservation
+  path) rather than needing new placement infrastructure.
+- **Factions / crime**: `SettlementData.member_ids` and
+  `SurvivorData.relationships` (currently unused) are the natural anchors
+  -- faction standing and crime consequences would read/write those
+  rather than needing new per-survivor state.
+- **Economy**: `Inventory`/`ItemData` already model stock and transfer;
+  a market would be a new job type (`Job.Type.TRADE`) reusing the same
+  reservation-then-confirm pattern as `HAUL`.
+- **Family / children**: `SurvivorData.relationships` plus a new "age
+  survivor over time" hook off `SimulationClock.day_changed`.
+- **Consequential quests**: new `GameEvents` signals (matching the
+  existing "extend the bus, don't add direct references" rule) fired
+  from job completion/failure or settlement danger crossing a threshold.
+- **Save/load**: `WorldState.to_snapshot()` already produces the
+  serializable shape; wiring it to `ResourceSaver`/`FileAccess` is the
+  remaining step, plus a matching load path that reconstructs runtime
+  nodes (`Survivor`, `StorageContainer`, ...) from restored `WorldState`
+  data instead of the other way around.
+
+## Where the remaining excluded systems would attach
+
+Settlements, world state, and survivors are implemented as of Phase 2A
+(see above); their extension points are listed there. Still excluded:
+
+- **Quests / economy / crafting**: see the Phase 2A extension points
+  above (new job types, new `GameEvents` signals, a `Resource`-driven
+  recipe pattern mirroring `WeaponData`/`ItemData`).
 - **Procedural world generation**: extends or replaces `ArenaBuilder`;
   `SpawnManager`'s camera-relative spawn-ring logic does not assume a
-  fixed arena size, so it should keep working unmodified.
+  fixed arena size, so it should keep working unmodified. `Settlement`
+  and `ScavengePoint` placement is currently hand-authored in
+  `Main.tscn`; a generator would need to place these too, or query
+  `ArenaBuilder` for valid non-building positions.
+- **Android export / graphical polish**: unchanged from Phase 0/1 (see
+  Mobile / Android in the README).

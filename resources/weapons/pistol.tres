@@ -1,0 +1,16 @@
+[gd_resource type="Resource" script_class="WeaponData" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/combat/weapon_data.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+weapon_name = "Sidearm Pistol"
+damage = 16.0
+fire_rate = 2.5
+magazine_size = 10
+reload_duration = 1.4
+projectile_speed = 950.0
+projectile_lifetime = 1.0
+spread_degrees = 4.5
+automatic = false
+starting_reserve_ammo = 60

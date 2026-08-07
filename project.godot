@@ -19,6 +19,9 @@ config/icon="res://icon.svg"
 
 GameEvents="*res://scripts/core/game_events.gd"
 InputRouter="*res://scripts/core/input_router.gd"
+SimulationClock="*res://scripts/core/simulation_clock.gd"
+ItemDatabase="*res://scripts/items/item_database.gd"
+WorldState="*res://scripts/core/world_state.gd"
 _mcp_game_helper="*res://addons/godot_ai/runtime/game_helper.gd"
 
 [debug]

@@ -21,6 +21,7 @@ var _fire_was_held: bool = false
 
 func _ready() -> void:
 	add_to_group("player")
+	add_to_group("attackable")
 	health_component.died.connect(_on_died)
 	health_component.damaged.connect(_on_damaged)
 	health_component.health_changed.connect(_on_health_changed)

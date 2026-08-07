@@ -1,0 +1,12 @@
+[gd_resource type="Resource" script_class="ItemData" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/items/item_data.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+item_id = &"water_bottle"
+display_name = "Water Bottle"
+category = 1
+weight_per_unit = 0.6
+max_stack = 20
+restore_amount = 45.0

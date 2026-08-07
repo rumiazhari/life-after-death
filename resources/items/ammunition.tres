@@ -1,0 +1,12 @@
+[gd_resource type="Resource" script_class="ItemData" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/items/item_data.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+item_id = &"ammunition"
+display_name = "Ammunition"
+category = 3
+weight_per_unit = 0.05
+max_stack = 200
+restore_amount = 0.0
