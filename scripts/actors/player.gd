@@ -1,9 +1,9 @@
 class_name Player
 extends CharacterBody2D
-## Eight-direction, mouse-aiming player controller. Movement direction and
-## aim direction are computed independently: WASD/arrows drive velocity,
-## the mouse cursor drives WeaponPivot rotation, so you can strafe one way
-## while aiming another.
+## Eight-direction controller. Movement and aim are computed independently
+## and both come from InputRouter (never Input/InputMap directly), so the
+## same code drives desktop mouse+keyboard and mobile dual-joystick input
+## without knowing which is active.
 
 @export var max_speed: float = 260.0
 @export var acceleration: float = 1800.0
@@ -16,6 +16,8 @@ extends CharacterBody2D
 
 var aim_direction: Vector2 = Vector2.RIGHT
 var is_dead: bool = false
+
+var _fire_was_held: bool = false
 
 func _ready() -> void:
 	add_to_group("player")
@@ -32,18 +34,12 @@ func _physics_process(delta: float) -> void:
 	_update_firing()
 
 func _update_aim() -> void:
-	var to_mouse: Vector2 = get_global_mouse_position() - global_position
-	if to_mouse.length() > 1.0:
-		aim_direction = to_mouse.normalized()
+	if InputRouter.aim_vector != Vector2.ZERO:
+		aim_direction = InputRouter.aim_vector
 	weapon_pivot.rotation = aim_direction.angle()
 
 func _update_movement(delta: float) -> void:
-	var input_dir := Vector2(
-		Input.get_action_strength("move_right") - Input.get_action_strength("move_left"),
-		Input.get_action_strength("move_down") - Input.get_action_strength("move_up")
-	)
-	if input_dir.length() > 1.0:
-		input_dir = input_dir.normalized()
+	var input_dir: Vector2 = InputRouter.movement_vector
 	if input_dir != Vector2.ZERO:
 		velocity = velocity.move_toward(input_dir * max_speed, acceleration * delta)
 	else:
@@ -53,14 +49,16 @@ func _update_movement(delta: float) -> void:
 func _update_firing() -> void:
 	if weapon == null or weapon.data == null:
 		return
-	if Input.is_action_just_pressed("reload"):
+	if InputRouter.reload_pressed:
 		weapon.try_reload()
+	var fire_held: bool = InputRouter.fire_pressed
 	if weapon.data.automatic:
-		if Input.is_action_pressed("fire"):
+		if fire_held:
 			weapon.try_fire(aim_direction)
 	else:
-		if Input.is_action_just_pressed("fire"):
+		if fire_held and not _fire_was_held:
 			weapon.try_fire(aim_direction)
+	_fire_was_held = fire_held
 
 func take_damage(amount: float, source: Node = null) -> void:
 	if is_dead:

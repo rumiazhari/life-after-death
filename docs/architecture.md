@@ -33,6 +33,69 @@ Extension point: add new signals here (e.g. `survivor_recruited`,
 `quest_completed`) rather than wiring new cross-system references
 directly.
 
+## Input — `scripts/core/input_router.gd` (autoload `InputRouter`)
+
+The single source of input for gameplay: exposes `movement_vector`,
+`aim_vector`, `fire_pressed`, `reload_pressed`, `interact_pressed`,
+`pause_pressed` (plus `reload_requested`/`interact_requested`/
+`pause_requested` signals for the momentary ones). `Player` and
+`PauseMenu` read only from here — never `Input`/`InputMap` directly, and
+never from `MobileControls`.
+
+Desktop: computed every physics frame from the project's InputMap
+actions (`move_up`/`move_down`/... , `fire`, `reload`, `interact`,
+`pause`) and the mouse position relative to the viewport center (an
+approximation of "aim at the mouse" that stays fully decoupled from the
+player's world position — see `MobileControls` below for why that
+matters).
+
+Mobile: `MobileControls` (`scripts/ui/mobile_controls.gd`) is the *only*
+node that calls InputRouter's touch setters (`set_touch_movement`,
+`set_touch_aim`, `request_reload`, etc.) in response to the on-screen
+joysticks/buttons. InputRouter prefers touch state over
+keyboard/mouse whenever a touch is active, so the two input schemes
+never fight each other. This two-way decoupling (gameplay never reads
+touch UI; touch UI never reads gameplay) is what let the mobile input
+work land without changing `Weapon` at all and touching `Player` only at
+the InputRouter call sites.
+
+`process_mode = PROCESS_MODE_ALWAYS` on InputRouter is load-bearing: the
+pause action has to keep being read while `SceneTree.paused` is true, or
+nothing could ever unpause.
+
+Extension point: a new input source (gamepad, replay playback) is a new
+producer of the same six fields/signals; nothing downstream changes.
+
+## Touch controls — `scripts/ui/mobile_controls.gd`, `virtual_joystick.gd`
+
+`TouchJoystick` (file `virtual_joystick.gd` — named to avoid colliding
+with Godot 4.7's built-in `VirtualJoystick` control, whose action-driven
+design doesn't fit a continuously-polled analog vector) is a fixed-position
+on-screen joystick. It does its own hit-testing and touch-index tracking
+but has **no** input pipeline access of its own; `MobileControls` is the
+single `_input()` listener that forwards every `InputEventScreenTouch` /
+`InputEventScreenDrag` to both joysticks via `handle_touch_event()`. Each
+joystick only reacts to a touch index it already owns, or an unclaimed
+touch-down landing in its own catch radius — so one finger can never
+steal the other joystick's finger, and a third finger tapping a button
+elsewhere doesn't interfere with either.
+
+`PlatformUtils.should_show_mobile_controls()`
+(`scripts/core/platform_utils.gd`) decides visibility: true on an actual
+mobile export (`OS.has_feature("mobile")`), or on desktop when the
+`debug/mobile_controls/force_visible` project setting is enabled — a
+dev-only escape hatch for testing touch controls without a device.
+
+## Safe area — `scripts/ui/safe_area.gd` (`SafeArea`)
+
+A reusable `Control` that insets its own rect to
+`DisplayServer.get_display_safe_area()` (notches, rounded corners,
+system bars) and re-applies on every resize/rotation. `HUD` and
+`MobileControls` each parent their screen-edge content (corner labels,
+joysticks, buttons) under one of these instead of directly under their
+CanvasLayer's root Control. No-op (zero margins) on platforms without a
+safe-area concept, so it's safe to use everywhere, not just Android.
+
 ## Damage — `scripts/core/health_component.gd` (`HealthComponent`)
 
 A reusable `Node` component, not a base class. `Player` and `Zombie` each
@@ -76,9 +139,13 @@ branching in `try_fire`; they don't require touching `Player`.
 
 ## Actors — `scripts/actors/`
 
-- `player.gd`: reads input, updates velocity (accel/friction) and aim
-  rotation independently, delegates firing/reload to `Weapon`, forwards
-  damage to `HealthComponent`.
+- `player.gd`: reads `InputRouter` (never `Input`/`InputMap`), updates
+  velocity (accel/friction) and aim rotation independently, delegates
+  firing/reload to `Weapon`, forwards damage to `HealthComponent`. Aim
+  direction only updates when `InputRouter.aim_vector` is non-zero and
+  otherwise holds the last direction — this is what makes a centered/
+  just-touched joystick (zero vector) not snap the aim to "right" before
+  the first drag.
 - `zombie.gd`: seeks the player's position, applies separation steering
   from `SwarmManager.get_nearby()`, deals contact damage via an `Area2D`
   "AttackArea" ticking on an interval (not per-frame overlap checks).
@@ -93,10 +160,17 @@ branching in `try_fire`; they don't require touching `Player`.
   this is what makes separation steering affordable for hundreds of
   zombies instead of an O(n²) scan.
 - `spawn_manager.gd` (`SpawnManager`): spawns zombies on a ring outside
-  the camera's visible half-extent, ramps population from
+  the camera's *actual on-screen* visible half-extent (read from
+  `get_viewport().get_visible_rect()`, not the design-time reference
+  resolution, so this stays correct as stretch/aspect changes what's
+  actually visible per device), ramps population from
   `initial_population` to `max_population` on a timer, purges freed
   references every tick, and reports population/kills through
-  `GameEvents`.
+  `GameEvents`. `max_population` comes from a `PopulationProfile`
+  (`LOW`/`MEDIUM`/`HIGH`/`STRESS` → 50/100/150/250); `population_profile`
+  applies on desktop, `mobile_population_profile` (default `MEDIUM`)
+  applies whenever `OS.has_feature("mobile")` is true, so Android never
+  silently inherits the desktop-tuned 150 cap.
 
 Extension point: `Survivor` (a future friendly/rescuable actor) would
 live alongside `Zombie` here, likely sharing `HealthComponent` and its
@@ -118,12 +192,24 @@ own manager analogous to `SpawnManager`.
 
 ## UI — `scripts/ui/`
 
-`HUD`, `PauseMenu`, and `DeathOverlay` are independent `CanvasLayer`
-scenes. `HUD` is purely reactive (subscribes to `GameEvents`, never reads
-from `Player`/`SpawnManager` directly). `PauseMenu` and `DeathOverlay` own
-their own pause/input handling (`process_mode = PROCESS_MODE_ALWAYS` so
-they keep working while `SceneTree.paused` is true) rather than routing
-every frame through `Main`.
+`HUD`, `PauseMenu`, `DeathOverlay`, `MobileControls`, and `DebugOverlay`
+are independent `CanvasLayer` scenes. `HUD` is purely reactive
+(subscribes to `GameEvents`, never reads from `Player`/`SpawnManager`
+directly). `PauseMenu` owns its own pause/resume state and now listens
+to `InputRouter.pause_requested` instead of checking the "pause" action
+itself, so a desktop key press and a mobile button tap look identical to
+it. `PauseMenu` and `DeathOverlay` keep `process_mode = PROCESS_MODE_ALWAYS`
+so they keep working while `SceneTree.paused` is true, rather than
+routing every frame through `Main`.
+
+`DebugOverlay` (`debug_overlay.gd`) is a read-only profiler strip (FPS,
+frame/physics time, active zombies/projectiles, projectile pool
+capacity, spatial-grid queries/candidates-examined-last-frame) built the
+same way as `HUD` — it only reads counters other systems already expose
+(`SpawnManager.active_zombie_count()`, `ProjectileManager.
+active_projectile_count()`/`pool_capacity()`, `SwarmManager.
+queries_last_frame`/`candidates_examined_last_frame`), never writes to
+them.
 
 ## Orchestration — `scripts/core/main.gd`
 

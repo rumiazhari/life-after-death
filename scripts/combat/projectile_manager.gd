@@ -22,3 +22,6 @@ func spawn_projectile(start_position: Vector2, direction: Vector2, speed: float,
 
 func active_projectile_count() -> int:
 	return get_child_count() - _pool.available_count()
+
+func pool_capacity() -> int:
+	return _pool.capacity() if _pool else 0

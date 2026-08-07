@@ -4,7 +4,24 @@ extends Node
 ## ramps the active population up to a configurable cap. Purges invalid
 ## references every tick instead of trusting scene-tree bookkeeping.
 
+## Selectable zombie-population ceilings for performance testing across
+## device tiers. Values match the profiles requested for Android tuning.
+enum PopulationProfile { LOW, MEDIUM, HIGH, STRESS }
+
+const POPULATION_PROFILES := {
+	PopulationProfile.LOW: 50,
+	PopulationProfile.MEDIUM: 100,
+	PopulationProfile.HIGH: 150,
+	PopulationProfile.STRESS: 250,
+}
+
 @export var zombie_scene: PackedScene
+## Desktop/default profile. Preserves the Phase 0/1-validated 150 cap.
+@export var population_profile: PopulationProfile = PopulationProfile.HIGH
+## Used instead of `population_profile` whenever OS.has_feature("mobile")
+## is true. Kept at MEDIUM (100) per Android tuning policy until a real
+## device has been profiled -- raise this only after that testing.
+@export var mobile_population_profile: PopulationProfile = PopulationProfile.MEDIUM
 @export var max_population: int = 150
 @export var spawn_interval: float = 0.25
 @export var spawn_batch_size: int = 2
@@ -25,6 +42,11 @@ func _ready() -> void:
 	if _entity_container == null:
 		_entity_container = get_tree().get_first_node_in_group("entity_container")
 	GameEvents.zombie_killed_by_player.connect(_on_zombie_killed_by_player)
+	apply_population_profile(mobile_population_profile if OS.has_feature("mobile") else population_profile)
+
+func apply_population_profile(profile: PopulationProfile) -> void:
+	population_profile = profile
+	max_population = POPULATION_PROFILES.get(profile, max_population)
 
 func begin() -> void:
 	spawn_burst(initial_population)
@@ -83,10 +105,11 @@ func _pick_spawn_position() -> Vector2:
 	return center + Vector2.RIGHT.rotated(angle) * radius
 
 func _get_half_view() -> Vector2:
-	var viewport_size := Vector2(
-		float(ProjectSettings.get_setting("display/window/size/viewport_width", 1280)),
-		float(ProjectSettings.get_setting("display/window/size/viewport_height", 720))
-	)
+	# The actual on-screen visible extent, not the design-time reference
+	# resolution -- with stretch/aspect "expand" these differ per device
+	# aspect ratio (16:9 phone vs 19.5:9 vs tablet), and spawning relative
+	# to the wrong size would put zombies inside the visible camera area.
+	var viewport_size: Vector2 = get_viewport().get_visible_rect().size
 	var zoom: Vector2 = _camera.zoom if _camera else Vector2.ONE
 	return (viewport_size / zoom) * 0.5
 

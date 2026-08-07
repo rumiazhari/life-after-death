@@ -3,12 +3,12 @@ extends CanvasLayer
 ## Read-only display driven entirely by GameEvents signals -- the HUD never
 ## reaches into Player/SpawnManager/Weapon directly.
 
-@onready var health_label: Label = $Root/TopLeft/HealthLabel
-@onready var ammo_label: Label = $Root/TopLeft/AmmoLabel
-@onready var reload_label: Label = $Root/TopLeft/ReloadLabel
-@onready var zombie_count_label: Label = $Root/TopRight/ZombieCountLabel
-@onready var kills_label: Label = $Root/TopRight/KillsLabel
-@onready var fps_label: Label = $Root/TopRight/FPSLabel
+@onready var health_label: Label = $Root/SafeArea/TopLeft/HealthLabel
+@onready var ammo_label: Label = $Root/SafeArea/TopLeft/AmmoLabel
+@onready var reload_label: Label = $Root/SafeArea/TopLeft/ReloadLabel
+@onready var zombie_count_label: Label = $Root/SafeArea/TopRight/ZombieCountLabel
+@onready var kills_label: Label = $Root/SafeArea/TopRight/KillsLabel
+@onready var fps_label: Label = $Root/SafeArea/TopRight/FPSLabel
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS

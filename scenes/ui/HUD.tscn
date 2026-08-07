@@ -1,6 +1,7 @@
-[gd_scene load_steps=2 format=3]
+[gd_scene load_steps=3 format=3]
 
 [ext_resource type="Script" path="res://scripts/ui/hud.gd" id="1"]
+[ext_resource type="Script" path="res://scripts/ui/safe_area.gd" id="2"]
 
 [node name="HUD" type="CanvasLayer"]
 script = ExtResource("1")
@@ -13,7 +14,17 @@ grow_horizontal = 2
 grow_vertical = 2
 mouse_filter = 2
 
-[node name="TopLeft" type="VBoxContainer" parent="Root"]
+[node name="SafeArea" type="Control" parent="Root"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+script = ExtResource("2")
+
+[node name="TopLeft" type="VBoxContainer" parent="Root/SafeArea"]
 layout_mode = 1
 anchors_preset = 0
 offset_left = 16.0
@@ -22,19 +33,19 @@ offset_right = 260.0
 offset_bottom = 120.0
 mouse_filter = 2
 
-[node name="HealthLabel" type="Label" parent="Root/TopLeft"]
+[node name="HealthLabel" type="Label" parent="Root/SafeArea/TopLeft"]
 layout_mode = 2
 text = "HP: 100 / 100"
 
-[node name="AmmoLabel" type="Label" parent="Root/TopLeft"]
+[node name="AmmoLabel" type="Label" parent="Root/SafeArea/TopLeft"]
 layout_mode = 2
 text = "Ammo: 30 / 180"
 
-[node name="ReloadLabel" type="Label" parent="Root/TopLeft"]
+[node name="ReloadLabel" type="Label" parent="Root/SafeArea/TopLeft"]
 layout_mode = 2
 text = "Reloading..."
 
-[node name="TopRight" type="VBoxContainer" parent="Root"]
+[node name="TopRight" type="VBoxContainer" parent="Root/SafeArea"]
 layout_mode = 1
 anchors_preset = 1
 anchor_left = 1.0
@@ -47,17 +58,17 @@ grow_horizontal = 0
 alignment = 2
 mouse_filter = 2
 
-[node name="ZombieCountLabel" type="Label" parent="Root/TopRight"]
+[node name="ZombieCountLabel" type="Label" parent="Root/SafeArea/TopRight"]
 layout_mode = 2
 horizontal_alignment = 2
 text = "Zombies: 0"
 
-[node name="KillsLabel" type="Label" parent="Root/TopRight"]
+[node name="KillsLabel" type="Label" parent="Root/SafeArea/TopRight"]
 layout_mode = 2
 horizontal_alignment = 2
 text = "Kills: 0"
 
-[node name="FPSLabel" type="Label" parent="Root/TopRight"]
+[node name="FPSLabel" type="Label" parent="Root/SafeArea/TopRight"]
 layout_mode = 2
 horizontal_alignment = 2
 text = "FPS: 0"

@@ -9,6 +9,7 @@ extends RefCounted
 var _scene: PackedScene
 var _parent: Node
 var _available: Array[Node] = []
+var _capacity: int = 0
 
 func _init(scene: PackedScene, parent: Node, prewarm_count: int = 0) -> void:
 	_scene = scene
@@ -20,6 +21,7 @@ func _create_instance() -> Node:
 	var instance: Node = _scene.instantiate()
 	_parent.add_child(instance)
 	_deactivate(instance)
+	_capacity += 1
 	return instance
 
 func acquire() -> Node:
@@ -52,3 +54,7 @@ func _deactivate(instance: Node) -> void:
 
 func available_count() -> int:
 	return _available.size()
+
+## Total instances ever created by this pool (available + currently in use).
+func capacity() -> int:
+	return _capacity

@@ -18,13 +18,20 @@ run/main_scene="res://scenes/main/Main.tscn"
 [autoload]
 
 GameEvents="*res://scripts/core/game_events.gd"
+InputRouter="*res://scripts/core/input_router.gd"
 _mcp_game_helper="*res://addons/godot_ai/runtime/game_helper.gd"
+
+[debug]
+
+mobile_controls/force_visible=false
 
 [display]
 
 window/size/viewport_width=1280
 window/size/viewport_height=720
 window/stretch/mode="canvas_items"
+window/stretch/aspect="expand"
+window/handheld/orientation="landscape"
 
 [editor_plugins]
 
