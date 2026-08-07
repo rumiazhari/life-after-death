@@ -11,9 +11,9 @@ config_version=5
 [application]
 
 config/name="Life After Death"
+run/main_scene="uid://3rwkr4ohqr4y"
 config/features=PackedStringArray("4.7", "Mobile")
 config/icon="res://icon.svg"
-run/main_scene="res://scenes/main/Main.tscn"
 
 [autoload]
 
