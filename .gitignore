@@ -1,0 +1,12 @@
+# Godot 4+ specific ignores
+.godot/
+/android/
+
+# Godot AI MCP editor plugin: a development-time tool for this session,
+# not a runtime dependency of the shipped game. Excluded from version
+# control per project instructions.
+/addons/godot_ai/
+/godot-ai-LICENSE.txt
+
+# Claude Code local session settings (machine-local, not project source)
+/.claude/

@@ -1,0 +1,16 @@
+[gd_resource type="Resource" script_class="WeaponData" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/combat/weapon_data.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+weapon_name = "SMG-9"
+damage = 12.0
+fire_rate = 9.0
+magazine_size = 30
+reload_duration = 1.6
+projectile_speed = 1000.0
+projectile_lifetime = 1.0
+spread_degrees = 3.5
+automatic = true
+starting_reserve_ammo = 180

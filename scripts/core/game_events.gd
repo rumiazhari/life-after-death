@@ -1,0 +1,29 @@
+extends Node
+## Global signal bus (autoload "GameEvents").
+##
+## Decouples systems that would otherwise need direct references to each
+## other (HUD, SpawnManager, SwarmManager, Player, weapons). Systems emit
+## through this bus instead of calling into each other directly, which keeps
+## script dependencies one-directional.
+
+signal player_health_changed(current: float, max_health: float)
+signal player_damaged(amount: float)
+signal player_died()
+signal player_respawned()
+
+signal zombie_spawned(zombie: Node2D)
+signal zombie_damaged(zombie: Node2D, amount: float)
+signal zombie_died(zombie: Node2D, death_position: Vector2)
+signal zombie_killed_by_player(death_position: Vector2)
+
+signal zombie_count_changed(active_count: int)
+signal kill_count_changed(total_kills: int)
+
+signal weapon_fired(ammo_in_magazine: int, magazine_size: int)
+signal weapon_reload_started(duration: float)
+signal weapon_reload_finished(ammo_in_magazine: int, reserve_ammo: int)
+signal weapon_ammo_changed(ammo_in_magazine: int, reserve_ammo: int)
+
+signal game_paused()
+signal game_resumed()
+signal game_restarted()

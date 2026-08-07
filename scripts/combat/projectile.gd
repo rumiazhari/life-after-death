@@ -1,0 +1,54 @@
+class_name Projectile
+extends Area2D
+## Pooled hitscan-speed projectile. Travels in a straight line, deals damage
+## to whatever it hits via the take_damage(amount, source) convention, and
+## returns itself to its ObjectPool instead of being freed.
+
+var velocity: Vector2 = Vector2.ZERO
+var damage: float = 0.0
+var lifetime_remaining: float = 0.0
+
+var _pool: ObjectPool = null
+var _despawned: bool = false
+
+func _ready() -> void:
+	body_entered.connect(_on_body_entered)
+
+func setup(start_position: Vector2, direction: Vector2, speed: float, projectile_damage: float, lifetime: float, pool: ObjectPool) -> void:
+	global_position = start_position
+	rotation = direction.angle()
+	velocity = direction * speed
+	damage = projectile_damage
+	lifetime_remaining = lifetime
+	_pool = pool
+	_despawned = false
+
+func _physics_process(delta: float) -> void:
+	lifetime_remaining -= delta
+	if lifetime_remaining <= 0.0:
+		_despawn()
+		return
+	global_position += velocity * delta
+
+func _on_body_entered(body: Node) -> void:
+	if _despawned:
+		return
+	if body.has_method("take_damage"):
+		body.call("take_damage", damage, self)
+	_despawn()
+
+func _despawn() -> void:
+	if _despawned:
+		return
+	_despawned = true
+	if _pool:
+		_pool.release(self)
+	else:
+		queue_free()
+
+func on_pool_release() -> void:
+	velocity = Vector2.ZERO
+	_despawned = true
+
+func on_pool_acquire() -> void:
+	_despawned = false
