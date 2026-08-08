@@ -23,5 +23,19 @@ func _ready() -> void:
 		_inventory.add_item(StringName(item_id), int(starting_items[item_id]))
 	container_id = WorldState.register_container(_inventory)
 
+## Unregisters from WorldState whenever this node leaves the tree (freed,
+## reparented, or torn down as part of a scene reload) -- not just on
+## natural gameplay death, so a destroyed container never leaves a stale
+## Inventory reachable through WorldState.get_container(). Only touches
+## the registry entry if it still points at *this* container's own
+## Inventory: if WorldState.reset() already cleared it (e.g. mid-restart,
+## reset runs before the old scene's nodes are torn down) there is
+## nothing to unregister, and if a replacement container somehow reused
+## this id and registered its own Inventory there first, this must never
+## erase that instead.
+func _exit_tree() -> void:
+	if container_id != 0 and WorldState.get_container(container_id) == _inventory:
+		WorldState.unregister_container(container_id)
+
 func get_inventory() -> Inventory:
 	return _inventory

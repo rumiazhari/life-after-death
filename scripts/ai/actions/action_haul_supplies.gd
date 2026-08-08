@@ -108,7 +108,10 @@ func exit(ai: SurvivorAI) -> void:
 ## --- Path 1: personal carry-home --------------------------------------
 
 func _personal_carry_score(ai: SurvivorAI) -> float:
-	if ai.settlement == null or ai.settlement.storage_containers.get("general") == null:
+	if ai.settlement == null:
+		return 0.0
+	var container: StorageContainer = ai.settlement.storage_containers.get("general")
+	if container == null or not is_instance_valid(container):
 		return 0.0
 	var item: StringName = _find_surplus_item(ai)
 	if item == &"":
@@ -121,7 +124,7 @@ func _start_personal_carry(ai: SurvivorAI) -> void:
 	if item == &"":
 		return
 	var container: StorageContainer = ai.settlement.storage_containers.get("general")
-	if container == null:
+	if container == null or not is_instance_valid(container):
 		return
 	_personal_item = item
 	_personal_container = container
@@ -253,7 +256,8 @@ func _redirect_stalled_cargo(ai: SurvivorAI) -> bool:
 		return true
 
 	var fallback: StorageContainer = ai.settlement.storage_containers.get("general") if ai.settlement else null
-	if fallback and fallback.container_id != _job.dest_container_id and Inventory.transfer_item(carried, fallback.get_inventory(), item_id, to_redirect):
+	var fallback_valid: bool = fallback != null and is_instance_valid(fallback)
+	if fallback_valid and fallback.container_id != _job.dest_container_id and Inventory.transfer_item(carried, fallback.get_inventory(), item_id, to_redirect):
 		ai.job_board.fail_job(_job)
 		_job = null
 		return true

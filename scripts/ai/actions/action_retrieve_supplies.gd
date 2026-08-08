@@ -34,7 +34,8 @@ func enter(ai: SurvivorAI) -> void:
 	if best.is_empty():
 		return
 	_target_container = ai.settlement.storage_containers.get(best["role"])
-	if _target_container == null:
+	if _target_container == null or not is_instance_valid(_target_container):
+		_target_container = null
 		return
 	var inv: Inventory = _target_container.get_inventory()
 	var amount: int = mini(int(best["amount"]), inv.get_available(best["item_id"]))
@@ -47,7 +48,7 @@ func enter(ai: SurvivorAI) -> void:
 		_target_container = null
 
 func tick(ai: SurvivorAI, delta: float) -> bool:
-	if _target_container == null or _reservation_id == 0:
+	if _target_container == null or not is_instance_valid(_target_container) or _reservation_id == 0:
 		return true
 	ai.reserved_target_description = "retrieve %s from %s storage" % [_item_id, _target_container.storage_role]
 	var arrived: bool = ai.survivor.move_toward_point(_target_container.global_position, delta)
@@ -72,7 +73,7 @@ func tick(ai: SurvivorAI, delta: float) -> bool:
 	return true
 
 func exit(_ai: SurvivorAI) -> void:
-	if _reservation_id != 0 and _target_container:
+	if _reservation_id != 0 and _target_container and is_instance_valid(_target_container):
 		_target_container.get_inventory().release_reservation(_reservation_id)
 	_reservation_id = 0
 	_target_container = null

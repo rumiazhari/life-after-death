@@ -53,6 +53,11 @@ func _run_all() -> void:
 	await _run_test("survivor_death_preserves_carried_cargo", _test_survivor_death_preserves_cargo)
 	await _run_test("exact_conservation_across_all_sinks", _test_exact_conservation_all_sinks)
 	await _run_test("repeated_restart_lifecycle", _test_repeated_restart_lifecycle)
+	await _run_test("storage_container_unregisters_on_exit", _test_storage_container_unregisters_on_exit)
+	await _run_test("haul_source_destroyed_before_pickup", _test_haul_source_destroyed_before_pickup)
+	await _run_test("haul_destination_destroyed_redirects_to_fallback", _test_haul_destination_destroyed_redirects_to_fallback)
+	await _run_test("haul_destination_and_fallback_destroyed_creates_world_drop", _test_haul_destination_and_fallback_destroyed_creates_world_drop)
+	await _run_test("repeated_container_create_free_does_not_grow_registry", _test_repeated_container_create_free_does_not_grow_registry)
 
 	print("\n=== TEST RESULTS: %d passed, %d failed ===" % [_pass_count, _fail_count])
 	get_tree().quit(0 if _fail_count == 0 else 1)
@@ -77,15 +82,20 @@ func _assert(condition: bool, message: String) -> void:
 		_test_failed = true
 		push_error("[%s] %s" % [_current_test, message])
 
-## Builds a StorageContainer test double: constructed but never added to
-## the scene tree, with _ready() called directly (a plain virtual method,
-## safe to invoke without add_child()) so setup is synchronous instead of
-## depending on when the tree would normally call it.
+## Builds a real StorageContainer as a child of this TestRunner (in the
+## live scene tree), so both _ready() (registers with WorldState) and
+## _exit_tree() (unregisters on free/removal -- see
+## StorageContainer._exit_tree()) fire exactly as they do in normal play.
+## Standalone/orphan construction (this helper's old pattern, still used
+## by _make_job_board() below since SettlementJobBoard has no such
+## lifecycle hook to exercise) can't test _exit_tree() at all: that
+## notification only fires for nodes that were actually in the tree.
 func _make_container(role: String, capacity_weight: float = 0.0) -> StorageContainer:
 	var container := StorageContainer.new()
 	container.storage_role = role
 	container.capacity_weight = capacity_weight
-	container._ready()
+	add_child(container)
+	await get_tree().process_frame
 	return container
 
 func _make_job_board() -> SettlementJobBoard:
@@ -220,9 +230,9 @@ func _test_zero_capacity_scavenge() -> void:
 	point.free()
 
 func _test_haul_interrupt_before_pickup() -> void:
-	var source := _make_container("general")
+	var source := await _make_container("general")
 	source.get_inventory().add_item(&"food_ration", 5)
-	var dest := _make_container("food")
+	var dest := await _make_container("food")
 	var board := _make_job_board()
 
 	var job: Job = board.create_haul_job(source, dest, &"food_ration", 3, 1.0)
@@ -249,9 +259,9 @@ func _test_haul_interrupt_before_pickup() -> void:
 	dest.free()
 
 func _test_haul_interrupt_after_pickup() -> void:
-	var source := _make_container("general")
+	var source := await _make_container("general")
 	source.get_inventory().add_item(&"materials", 5)
-	var dest := _make_container("general_dest")
+	var dest := await _make_container("general_dest")
 	var board := _make_job_board()
 
 	var job: Job = board.create_haul_job(source, dest, &"materials", 3, 1.0)
@@ -308,9 +318,9 @@ func _test_survivor_death_retains_data() -> void:
 	_assert(WorldState.is_survivor_alive(id), "should read as alive before death")
 
 	# An in-transit haul job the victim was carrying when it died.
-	var source := _make_container("general")
+	var source := await _make_container("general")
 	source.get_inventory().add_item(&"materials", 4)
-	var dest := _make_container("general_dest")
+	var dest := await _make_container("general_dest")
 	var board := _make_job_board()
 	var job: Job = board.create_haul_job(source, dest, &"materials", 2, 1.0)
 	board.claim_job(job, id)
@@ -459,9 +469,9 @@ func _test_haul_in_transit_source_destroyed() -> void:
 	var carrier_data := SurvivorData.new()
 	var carrier_id: int = WorldState.register_survivor(carrier_data)
 
-	var source := _make_container("general")
+	var source := await _make_container("general")
 	source.get_inventory().add_item(&"materials", 5)
-	var dest := _make_container("general_dest")
+	var dest := await _make_container("general_dest")
 	var board := _make_job_board()
 
 	var job: Job = board.create_haul_job(source, dest, &"materials", 3, 1.0)
@@ -733,3 +743,134 @@ func _test_repeated_restart_lifecycle() -> void:
 		SimulationClock.reset()
 		main_instance.free()
 		await get_tree().process_frame
+
+## --- Destroyed storage-container lifecycle -------------------------------
+
+## Direct test of StorageContainer._exit_tree(): the id must resolve to
+## nothing the instant the node leaves the tree (free() is immediate, not
+## deferred), not just eventually.
+func _test_storage_container_unregisters_on_exit() -> void:
+	var container: StorageContainer = await _make_container("general")
+	var id: int = container.container_id
+	_assert(id != 0, "a real, tree-added container should have registered and gotten a stable id")
+	_assert(WorldState.get_container(id) != null, "WorldState should resolve the id to the container's Inventory while it's alive")
+
+	container.free()
+	_assert(WorldState.get_container(id) == null, "WorldState.get_container(old_id) must become null the moment the container node exits the tree")
+
+## A HAUL job's source container destroyed before pickup (still
+## AWAITING_PICKUP) must be cancelled cleanly by periodic validation --
+## not linger, not corrupt the (now-gone) reservation.
+func _test_haul_source_destroyed_before_pickup() -> void:
+	var source: StorageContainer = await _make_container("general")
+	source.get_inventory().add_item(&"food_ration", 5)
+	var dest: StorageContainer = await _make_container("food")
+	var board := _make_job_board()
+
+	var job: Job = board.create_haul_job(source, dest, &"food_ration", 3, 1.0)
+	_assert(job != null, "haul job creation should succeed")
+	board.claim_job(job, 55)
+	_assert(job.haul_phase == Job.HaulPhase.AWAITING_PICKUP, "sanity check: not yet picked up")
+
+	var source_id: int = source.container_id
+	source.free() # destroyed before the survivor ever reaches it
+
+	_assert(WorldState.get_container(source_id) == null, "the source's registration must be gone once it's freed")
+	_assert(not job.is_target_valid(), "an AWAITING_PICKUP job whose source no longer exists must read as invalid")
+
+	board._validate_some_jobs()
+	_assert(WorldState.get_job(job.id) == null, "periodic validation must cancel (and deregister) the job once its source is gone")
+	_assert(job.status == Job.Status.CANCELLED, "the job should resolve to CANCELLED, not linger or get stuck")
+
+	# The 3 reserved units existed only in the now-freed source Inventory,
+	# which nothing else ever referenced -- conservation here means no
+	# OTHER container/survivor/drop ever received so much as 1 unit of them.
+	_assert(dest.get_inventory().get_count(&"food_ration") == 0, "the never-reached destination must receive nothing")
+	_assert(WorldState.drops.is_empty(), "no drop should be created for a job that never got as far as pickup")
+
+	dest.free()
+	board.free()
+
+## A HAUL destination destroyed after pickup (while cargo is in transit)
+## must be treated as permanently missing -- immediate redirect, no
+## retrying -- and land safely in a still-valid fallback (general storage).
+func _test_haul_destination_destroyed_redirects_to_fallback() -> void:
+	var settlement: Settlement = await _make_settlement(["general", "food"])
+	var general_container: StorageContainer = settlement.storage_containers["general"]
+	var food_container: StorageContainer = settlement.storage_containers["food"]
+	general_container.get_inventory().add_item(&"food_ration", 10)
+
+	var survivor: Survivor = await _make_survivor({"name": "Hauler"}, settlement)
+	var board: SettlementJobBoard = get_tree().get_first_node_in_group("job_board")
+	var job: Job = board.create_haul_job(general_container, food_container, &"food_ration", 4, 1.0)
+	var dest_position: Vector2 = job.dest_position
+	var dest_id: int = food_container.container_id
+
+	var action := ActionHaulSupplies.new()
+	survivor.global_position = general_container.global_position
+	action.enter(survivor.ai)
+	var pickup_finished: bool = action.tick(survivor.ai, 0.1) # pickup leg
+	_assert(not pickup_finished and action._picked_up, "the pickup leg should complete in one tick once already at the source")
+
+	food_container.free() # destination destroyed while cargo is in transit
+	_assert(WorldState.get_container(dest_id) == null, "the destroyed destination's registration must be gone")
+
+	survivor.global_position = dest_position # walk to where it used to be
+	var finished: bool = action.tick(survivor.ai, 0.1)
+	_assert(finished, "a destroyed (permanently missing) destination must redirect immediately, not retry")
+
+	_assert(job.status == Job.Status.FAILED, "the job resolves FAILED -- it never reached its original, now-destroyed destination")
+	_assert(general_container.get_inventory().get_count(&"food_ration") == 10, "fallback delivery returns the cargo to general: 6 never hauled + 4 redirected == 10")
+	_assert(survivor.carried_inventory.get_count(&"food_ration") == 0, "the survivor is no longer carrying it")
+	_assert(WorldState.drops.is_empty(), "the fallback succeeded, so no world drop was needed")
+
+	settlement.free()
+
+## When both the HAUL destination and the fallback (general storage) are
+## destroyed, the cargo must become a recoverable WorldDrop through a
+## ghost/stale Inventory reference never accepting it in between.
+func _test_haul_destination_and_fallback_destroyed_creates_world_drop() -> void:
+	var settlement: Settlement = await _make_settlement(["general", "food"])
+	var general_container: StorageContainer = settlement.storage_containers["general"]
+	var food_container: StorageContainer = settlement.storage_containers["food"]
+	general_container.get_inventory().add_item(&"food_ration", 4)
+
+	var survivor: Survivor = await _make_survivor({"name": "Hauler"}, settlement)
+	var board: SettlementJobBoard = get_tree().get_first_node_in_group("job_board")
+	var job: Job = board.create_haul_job(general_container, food_container, &"food_ration", 4, 1.0)
+	var dest_position: Vector2 = job.dest_position
+
+	var action := ActionHaulSupplies.new()
+	survivor.global_position = general_container.global_position
+	action.enter(survivor.ai)
+	action.tick(survivor.ai, 0.1) # pickup leg
+	_assert(action._picked_up, "pickup should have completed")
+
+	food_container.free() # destination destroyed
+	general_container.free() # fallback (general) ALSO destroyed
+
+	survivor.global_position = dest_position
+	var finished: bool = action.tick(survivor.ai, 0.1)
+	_assert(finished, "with no valid destination or fallback, the redirect must still resolve (to a world drop), not stall or crash reading a destroyed reference")
+
+	_assert(job.status == Job.Status.FAILED, "the job resolves FAILED exactly once")
+	_assert(WorldState.drops.size() == 1, "with neither the destination nor the fallback available, exactly one WorldDrop must be created")
+	var drop: WorldDrop = WorldState.drops.values()[0]
+	_assert(drop.inventory.get_count(&"food_ration") == 4, "the drop must hold exactly the cargo that could go nowhere else")
+	_assert(drop.reason == &"haul_stalled", "the drop's reason should identify it as a stalled haul")
+	_assert(survivor.carried_inventory.get_count(&"food_ration") == 0, "the survivor is no longer carrying it")
+
+	settlement.free()
+
+## Repeated create/free cycles on standalone containers must not leave
+## WorldState.containers growing without bound.
+func _test_repeated_container_create_free_does_not_grow_registry() -> void:
+	var initial_count: int = WorldState.containers.size()
+	for i in range(15):
+		var container: StorageContainer = await _make_container("general")
+		container.get_inventory().add_item(&"materials", 2)
+		var id: int = container.container_id
+		_assert(WorldState.get_container(id) != null, "cycle %d: a freshly created container should be registered" % i)
+		container.free() # container is invalid from here on -- read id, not container, below
+		_assert(WorldState.get_container(id) == null, "cycle %d: a freed container should be unregistered immediately" % i)
+	_assert(WorldState.containers.size() == initial_count, "15 create/free cycles must not grow WorldState.containers -- got %d, expected %d" % [WorldState.containers.size(), initial_count])

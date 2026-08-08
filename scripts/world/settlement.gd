@@ -28,6 +28,20 @@ func _ready() -> void:
 	for role in storage_containers:
 		data.storage_container_ids[role] = (storage_containers[role] as StorageContainer).container_id
 	SimulationClock.sim_tick.connect(_on_sim_tick)
+	child_exiting_tree.connect(_on_child_exiting_tree)
+
+## Direct children only (child_exiting_tree doesn't fire for grandchildren),
+## which matches how storage containers are actually parented -- keeps
+## storage_containers/data.storage_container_ids from ever holding a
+## reference to a container that's leaving the tree, instead of relying on
+## every reader to separately notice and clean up a stale entry.
+func _on_child_exiting_tree(node: Node) -> void:
+	if node is StorageContainer:
+		var container := node as StorageContainer
+		if storage_containers.get(container.storage_role) == container:
+			storage_containers.erase(container.storage_role)
+			if data:
+				data.storage_container_ids.erase(container.storage_role)
 
 func setup_jobs(job_board: SettlementJobBoard) -> void:
 	for post in guard_posts:
@@ -35,11 +49,15 @@ func setup_jobs(job_board: SettlementJobBoard) -> void:
 
 func get_container_id(role: String) -> int:
 	var container: StorageContainer = storage_containers.get(role)
-	return container.container_id if container else 0
+	if container == null or not is_instance_valid(container):
+		return 0
+	return container.container_id
 
 func get_inventory(role: String) -> Inventory:
 	var container: StorageContainer = storage_containers.get(role)
-	return container.get_inventory() if container else null
+	if container == null or not is_instance_valid(container):
+		return null
+	return container.get_inventory()
 
 func add_member(survivor_id: int) -> void:
 	if not data.member_ids.has(survivor_id):
