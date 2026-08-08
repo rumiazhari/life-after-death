@@ -97,10 +97,12 @@ func _physics_process(_delta: float) -> void:
 const NAV_RECHECK_INTERVAL := 1.0
 ## See Zombie.NAV_MAX_NO_PATH_RETRIES -- same bounded-retry contract.
 const NAV_MAX_NO_PATH_RETRIES := 3
+const NAV_TARGET_RESAMPLE_DISTANCE := 24.0
 var _nav_path: PackedVector2Array = PackedVector2Array()
 var _nav_path_index: int = 0
 var _nav_recheck_timer: float = 0.0
 var _nav_target: Vector2 = Vector2.ZERO
+var _nav_observed_revision: int = -1
 var _nav_path_revision: int = -1
 var _nav_no_path_retries: int = 0
 var _nav_failure_revision: int = -1
@@ -131,10 +133,15 @@ func move_toward_point(point: Vector2, delta: float) -> bool:
 	return false
 
 func _seek_direction(point: Vector2, to_point: Vector2, distance: float) -> Vector2:
-	if not point.is_equal_approx(_nav_target):
+	if _nav_target == Vector2.ZERO or point.distance_to(_nav_target) >= NAV_TARGET_RESAMPLE_DISTANCE:
 		_nav_target = point
 		begin_navigation_goal(point)
 	var revision := UrbanNavigationService.revision()
+	if _nav_observed_revision != revision:
+		_nav_observed_revision = revision
+		clear_cached_path()
+		clear_navigation_failure()
+		_nav_recheck_timer = 0.0
 	if _nav_failure_valid and _nav_failure_revision != revision:
 		clear_navigation_failure()
 		_nav_recheck_timer = 0.0
@@ -195,6 +202,7 @@ func reset_navigation_goal() -> void:
 	_nav_recheck_timer = 0.0
 	_nav_target = Vector2.ZERO
 	clear_navigation_failure()
+	_nav_observed_revision = UrbanNavigationService.revision()
 
 func clear_cached_path() -> void:
 	_clear_nav_path()

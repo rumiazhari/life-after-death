@@ -42,6 +42,7 @@ const NAV_RECHECK_INTERVAL := 1.0
 ## a bounded retry, not an infinite one, per Phase 3B.2's route-invalidation
 ## requirements.
 const NAV_MAX_NO_PATH_RETRIES := 3
+const NAV_TARGET_RESAMPLE_DISTANCE := 24.0
 var _nav_path: PackedVector2Array = PackedVector2Array()
 var _nav_path_index: int = 0
 var _nav_recheck_timer: float = 0.0
@@ -50,6 +51,8 @@ var _nav_recheck_timer: float = 0.0
 ## cached path may no longer be valid and must be discarded before use.
 var _nav_path_revision: int = -1
 var _nav_target: Vector2 = Vector2.ZERO
+var _nav_goal_identity: int = 0
+var _nav_observed_revision: int = -1
 var _nav_no_path_retries: int = 0
 var _nav_failure_revision: int = -1
 var _nav_failure_goal: Vector2 = Vector2.ZERO
@@ -122,10 +125,18 @@ func _seek_point(goal: Vector2) -> Vector2:
 
 	var target_id: int = perception.target.get_instance_id() if perception.target != null and is_instance_valid(perception.target) else 0
 	var revision := UrbanNavigationService.revision()
-	if not goal.is_equal_approx(_nav_target):
-		_nav_target = goal
+	if _nav_observed_revision != revision:
+		_nav_observed_revision = revision
+		clear_cached_path()
+		clear_navigation_failure()
+		_nav_recheck_timer = 0.0
+	if target_id != _nav_goal_identity or (target_id == 0 and not goal.is_equal_approx(_nav_target)):
 		begin_navigation_goal(goal, target_id)
-	if _nav_failure_valid and (_nav_failure_revision != revision or not _nav_failure_goal.is_equal_approx(goal) or _nav_failure_target_id != target_id):
+	elif target_id != 0 and goal.distance_to(_nav_target) >= NAV_TARGET_RESAMPLE_DISTANCE:
+		_nav_target = goal
+		_nav_recheck_timer = 0.0
+	var sampled_goal: Vector2 = _nav_target
+	if _nav_failure_valid and (_nav_failure_revision != revision or not _nav_failure_goal.is_equal_approx(sampled_goal) or _nav_failure_target_id != target_id):
 		clear_navigation_failure()
 		_nav_recheck_timer = 0.0
 	if not _nav_path.is_empty() and _nav_path_revision != revision:
@@ -136,14 +147,14 @@ func _seek_point(goal: Vector2) -> Vector2:
 	_nav_recheck_timer -= get_physics_process_delta_time()
 	if _nav_recheck_timer <= 0.0:
 		_nav_recheck_timer = NAV_RECHECK_INTERVAL
-		if UrbanNavigationService.is_direct_path_clear(global_position, goal):
+		if UrbanNavigationService.is_direct_path_clear(global_position, sampled_goal):
 			_clear_nav_path()
 			_nav_direct_clear = true
 			clear_navigation_failure()
 		else:
 			_nav_direct_clear = false
-			if _nav_path.is_empty() and not (_nav_failure_valid and _nav_failure_goal.is_equal_approx(goal) and _nav_failure_revision == revision and _nav_failure_target_id == target_id and nav_stuck):
-				var result: Dictionary = UrbanNavigationService.find_path_ex(global_position, goal)
+			if _nav_path.is_empty() and not (_nav_failure_valid and _nav_failure_goal.is_equal_approx(sampled_goal) and _nav_failure_revision == revision and _nav_failure_target_id == target_id and nav_stuck):
+				var result: Dictionary = UrbanNavigationService.find_path_ex(global_position, sampled_goal)
 				match result["status"]:
 					UrbanNavigationService.PathResult.SUCCESS:
 						_nav_path = result["path"]
@@ -156,7 +167,7 @@ func _seek_point(goal: Vector2) -> Vector2:
 						if _nav_no_path_retries >= NAV_MAX_NO_PATH_RETRIES:
 							nav_stuck = true
 							_nav_failure_valid = true
-							_nav_failure_goal = goal
+							_nav_failure_goal = sampled_goal
 							_nav_failure_revision = revision
 							_nav_failure_target_id = target_id
 					_: # BUDGET_DEFERRED / NOT_READY -- retry next recheck, doesn't count as a real no-path failure
@@ -192,6 +203,8 @@ func reset_navigation_goal() -> void:
 	_clear_nav_path()
 	_nav_recheck_timer = 0.0
 	clear_navigation_failure()
+	_nav_goal_identity = 0
+	_nav_observed_revision = UrbanNavigationService.revision()
 
 func clear_cached_path() -> void:
 	_clear_nav_path()
@@ -206,6 +219,7 @@ func clear_navigation_failure() -> void:
 
 func begin_navigation_goal(goal: Vector2, target_id: int = 0) -> void:
 	_nav_target = goal
+	_nav_goal_identity = target_id
 	_nav_failure_target_id = target_id
 	clear_cached_path()
 	clear_navigation_failure()

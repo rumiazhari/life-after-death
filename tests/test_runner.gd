@@ -161,6 +161,8 @@ func _run_all() -> void:
 	await _run_test("phase_3b5_navigation_counters_are_bounded_hooks", _test_phase_3b5_navigation_counters_are_bounded_hooks)
 	await _run_test("phase_3b5_handled_noise_history_is_bounded", _test_phase_3b5_handled_noise_history_is_bounded)
 	await _run_test("phase_3b5_noise_ring_sequences_are_bounded", _test_phase_3b5_noise_ring_sequences_are_bounded)
+	await _run_test("phase_3b6_survivor_direct_checks_are_interval_bounded", _test_phase_3b6_survivor_direct_checks_are_interval_bounded)
+	await _run_test("phase_3b6_zombie_direct_checks_are_interval_bounded", _test_phase_3b6_zombie_direct_checks_are_interval_bounded)
 
 	print("\n=== TEST RESULTS: %d passed, %d failed ===" % [_pass_count, _fail_count])
 	get_tree().quit(0 if _fail_count == 0 else 1)
@@ -206,6 +208,34 @@ func _test_phase_3b5_noise_ring_sequences_are_bounded() -> void:
 	var sequences := NoiseManager.current_sequences()
 	_assert(sequences.size() == NoiseManager.MAX_RECENT, "current sequence exposure must match the bounded ring")
 	_assert(sequences[0] < sequences[-1], "retained noise sequences must remain ordered")
+
+func _test_phase_3b6_survivor_direct_checks_are_interval_bounded() -> void:
+	var settlement: Settlement = await _make_settlement(["general"])
+	var survivor: Survivor = await _make_survivor({"name": "Cadence"}, settlement)
+	survivor.global_position = Vector2.ZERO
+	UrbanNavigationService.reset()
+	var before: int = UrbanNavigationService.direct_path_checks_total
+	for i in range(30):
+		survivor._seek_direction(Vector2(200, 0), Vector2(200, 0), 200.0)
+	var checks: int = UrbanNavigationService.direct_path_checks_total - before
+	_assert(checks <= 2, "a continuously clear survivor goal must not raycast every physics tick")
+	survivor.queue_free()
+	settlement.free()
+	await get_tree().process_frame
+
+func _test_phase_3b6_zombie_direct_checks_are_interval_bounded() -> void:
+	var zombie: Zombie = ZOMBIE_SCENE.instantiate()
+	add_child(zombie)
+	await get_tree().process_frame
+	zombie.global_position = Vector2.ZERO
+	UrbanNavigationService.reset()
+	var before: int = UrbanNavigationService.direct_path_checks_total
+	for i in range(30):
+		zombie._seek_point(Vector2(200, 0))
+	var checks: int = UrbanNavigationService.direct_path_checks_total - before
+	_assert(checks <= 2, "a continuously clear zombie goal must not raycast every physics tick")
+	zombie.queue_free()
+	await get_tree().process_frame
 
 ## --- Harness ---------------------------------------------------------
 
