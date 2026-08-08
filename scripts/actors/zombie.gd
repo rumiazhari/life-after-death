@@ -50,6 +50,10 @@ var _nav_recheck_timer: float = 0.0
 ## cached path may no longer be valid and must be discarded before use.
 var _nav_path_revision: int = -1
 var _nav_no_path_retries: int = 0
+var _nav_failure_revision: int = -1
+var _nav_failure_goal: Vector2 = Vector2.ZERO
+var _nav_failure_target_id: int = 0
+var _nav_failure_valid: bool = false
 ## True once NAV_MAX_NO_PATH_RETRIES has been reached with no route found --
 ## _seek_point stops retrying pathfinding (but keeps re-checking direct line
 ## of sight, so a route that opens back up still gets noticed) until the
@@ -115,10 +119,13 @@ func _seek_point(goal: Vector2) -> Vector2:
 		_clear_nav_path()
 		return Vector2.ZERO
 
-	if not _nav_path.is_empty() and _nav_path_revision != UrbanNavigationService.revision():
+	var target_id: int = perception.target.get_instance_id() if perception.target != null and is_instance_valid(perception.target) else 0
+	var revision := UrbanNavigationService.revision()
+	if _nav_failure_valid and (_nav_failure_revision != revision or not _nav_failure_goal.is_equal_approx(goal) or _nav_failure_target_id != target_id):
+		reset_navigation_goal()
+	if not _nav_path.is_empty() and _nav_path_revision != revision:
 		_clear_nav_path() # a door changed state (or the grid rebuilt) since this route was computed
-		_nav_no_path_retries = 0
-		nav_stuck = false
+		reset_navigation_goal()
 
 	_nav_recheck_timer -= get_physics_process_delta_time()
 	if _nav_recheck_timer <= 0.0:
@@ -126,10 +133,10 @@ func _seek_point(goal: Vector2) -> Vector2:
 		if UrbanNavigationService.is_direct_path_clear(global_position, goal):
 			_clear_nav_path()
 			_nav_direct_clear = true
-			nav_stuck = false
+			reset_navigation_goal()
 		else:
 			_nav_direct_clear = false
-			if _nav_path.is_empty() and not nav_stuck:
+			if _nav_path.is_empty() and not (_nav_failure_valid and _nav_failure_goal.is_equal_approx(goal) and _nav_failure_revision == revision and _nav_failure_target_id == target_id and nav_stuck):
 				var result: Dictionary = UrbanNavigationService.find_path_ex(global_position, goal)
 				match result["status"]:
 					UrbanNavigationService.PathResult.SUCCESS:
@@ -140,7 +147,12 @@ func _seek_point(goal: Vector2) -> Vector2:
 						nav_stuck = false
 					UrbanNavigationService.PathResult.NO_PATH:
 						_nav_no_path_retries += 1
-						nav_stuck = _nav_no_path_retries >= NAV_MAX_NO_PATH_RETRIES
+						if _nav_no_path_retries >= NAV_MAX_NO_PATH_RETRIES:
+							nav_stuck = true
+							_nav_failure_valid = true
+							_nav_failure_goal = goal
+							_nav_failure_revision = revision
+							_nav_failure_target_id = target_id
 					_: # BUDGET_DEFERRED / NOT_READY -- retry next recheck, doesn't count as a real no-path failure
 						pass
 
@@ -149,9 +161,9 @@ func _seek_point(goal: Vector2) -> Vector2:
 		# straight at a goal we just confirmed isn't directly reachable.
 		if nav_stuck:
 			if perception.state == ZombiePerceptionComponent.State.CHASE or perception.state == ZombiePerceptionComponent.State.ATTACK:
-				perception.call("_enter_state", ZombiePerceptionComponent.State.SEARCH)
+				perception.on_navigation_failed()
 			elif perception.state == ZombiePerceptionComponent.State.INVESTIGATE:
-				perception.call("_enter_state", ZombiePerceptionComponent.State.SEARCH)
+				perception.on_navigation_failed()
 		return direct.normalized() if _nav_direct_clear else Vector2.ZERO
 
 	while _nav_path_index < _nav_path.size() - 1 and global_position.distance_to(_nav_path[_nav_path_index]) <= arrive_threshold:
@@ -169,6 +181,16 @@ func _clear_nav_path() -> void:
 	_nav_path.clear()
 	_nav_path_index = 0
 	_nav_path_revision = -1
+
+func reset_navigation_goal() -> void:
+	_clear_nav_path()
+	_nav_recheck_timer = 0.0
+	_nav_no_path_retries = 0
+	nav_stuck = false
+	_nav_failure_valid = false
+	_nav_failure_revision = -1
+	_nav_failure_goal = Vector2.ZERO
+	_nav_failure_target_id = 0
 
 func _separation() -> Vector2:
 	if _swarm_manager == null:

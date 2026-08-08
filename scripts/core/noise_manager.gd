@@ -13,6 +13,7 @@ const MAX_RECENT := 32
 ## capped at MAX_RECENT (oldest dropped) -- a bounded log, not a growing one.
 var _recent: Array[Dictionary] = []
 var _next_sequence: int = 1
+var _epoch: int = 1
 
 ## Prefers `actor`'s own DetectableComponent (duck-typed via its `detectable`
 ## property, the same convention Player/Survivor already expose) so
@@ -31,6 +32,7 @@ func emit_noise(position: Vector2, loudness: float, category: StringName, source
 	if loudness <= 0.0:
 		return
 	_recent.append({
+		"epoch": _epoch,
 		"sequence": _next_sequence,
 		"position": position,
 		"loudness": loudness,
@@ -61,3 +63,7 @@ func recent_noises_near(listener_position: Vector2, hearing_radius: float, withi
 func reset() -> void:
 	_recent.clear()
 	_next_sequence = 1
+	_epoch += 1
+
+func epoch() -> int:
+	return _epoch

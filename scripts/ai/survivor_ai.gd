@@ -118,6 +118,7 @@ func _physics_process(delta: float) -> void:
 			# The shared movement helper has conclusively exhausted this target;
 			# exit through the action's normal interruption cleanup immediately.
 			_exit_current_action()
+			survivor.reset_navigation_goal()
 			_decision_timer = 0.0
 
 	_perception_timer -= delta

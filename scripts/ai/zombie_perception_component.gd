@@ -46,6 +46,8 @@ var _owner_actor: Node2D
 ## deliberately separate from CosmeticRng.
 var _gameplay_rng := RandomNumberGenerator.new()
 var _last_processed_noise_sequence: int = 0
+var _last_noise_epoch: int = 0
+var _handled_noise_sequences: Dictionary = {}
 
 func _ready() -> void:
 	_owner_actor = get_parent()
@@ -105,18 +107,33 @@ func _check_hearing(origin: Vector2) -> void:
 	var noises: Array[Dictionary] = NoiseManager.recent_noises_near(origin, hearing_radius)
 	if noises.is_empty():
 		return
-	var selected: Dictionary = noises[-1]
-	var sequence: int = int(selected.get("sequence", 0))
-	if sequence <= _last_processed_noise_sequence:
+	if _last_noise_epoch != NoiseManager.epoch():
+		_last_noise_epoch = NoiseManager.epoch()
+		_last_processed_noise_sequence = 0
+		_handled_noise_sequences.clear()
+	var candidates: Array[Dictionary] = []
+	for noise in noises:
+		var sequence: int = int(noise.get("sequence", 0))
+		if sequence > _last_processed_noise_sequence and not _handled_noise_sequences.has(sequence):
+			candidates.append(noise)
+	if candidates.is_empty():
 		return
-	_last_processed_noise_sequence = sequence
+	var selected: Dictionary = candidates[0]
+	var best_margin: float = -INF
+	for noise in candidates:
+		var margin: float = float(noise["loudness"]) * 20.0 - origin.distance_to(noise["position"])
+		if margin > best_margin:
+			best_margin = margin
+			selected = noise
+	var sequence: int = int(selected.get("sequence", 0))
 	var effective_loudness: float = float(selected["loudness"])
 	if not _hearing_line_clear(origin, selected["position"]):
 		# A single bounded raycast is applied only to the newest, nearest-filtered
 		# candidate. Strong sounds can cross one wall; quiet footsteps cannot.
 		effective_loudness *= 0.25
-		if effective_loudness * 20.0 < origin.distance_to(selected["position"]):
-			return
+	_handled_noise_sequences[sequence] = true
+	if effective_loudness * 20.0 < origin.distance_to(selected["position"]):
+		return
 	last_known_position = selected["position"]
 	_enter_state(State.INVESTIGATE)
 
@@ -178,6 +195,15 @@ func _enter_state(new_state: State) -> void:
 		target = null
 		_suspicion = 0.0
 	state = new_state
+
+func on_navigation_failed() -> void:
+	if state == State.CHASE or state == State.ATTACK:
+		_enter_state(State.SEARCH)
+	elif state == State.INVESTIGATE or state == State.SEARCH:
+		_enter_state(State.RETURN_TO_IDLE)
+
+func abandon_unreachable_goal() -> void:
+	on_navigation_failed()
 
 func has_target() -> bool:
 	return state == State.CHASE or state == State.ATTACK

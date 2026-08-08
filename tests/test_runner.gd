@@ -155,9 +155,35 @@ func _run_all() -> void:
 	await _run_test("room_context_a_to_b_crossing_stays_indoors", _test_room_context_a_to_b_crossing_stays_indoors)
 	await _run_test("room_context_clears_on_leaving_building", _test_room_context_clears_on_leaving_building)
 	await _run_test("room_context_rapid_oscillation_settles_correctly", _test_room_context_rapid_oscillation_settles_correctly)
+	await _run_test("phase_3b4_noise_reset_epoch_accepts_new_events", _test_phase_3b4_noise_reset_epoch_accepts_new_events)
+	await _run_test("phase_3b4_navigation_reset_invalidates_revision", _test_phase_3b4_navigation_reset_invalidates_revision)
+	await _run_test("phase_3b4_suppressed_noise_is_not_global", _test_phase_3b4_suppressed_noise_is_not_global)
 
 	print("\n=== TEST RESULTS: %d passed, %d failed ===" % [_pass_count, _fail_count])
 	get_tree().quit(0 if _fail_count == 0 else 1)
+
+func _test_phase_3b4_noise_reset_epoch_accepts_new_events() -> void:
+	NoiseManager.reset()
+	var old_epoch: int = NoiseManager.epoch()
+	NoiseManager.emit_noise(Vector2.ZERO, 4.0, &"test")
+	NoiseManager.reset()
+	_assert(NoiseManager.recent_noises_near(Vector2.ZERO, 100.0).is_empty(), "noise reset must remove pre-reset events")
+	_assert(NoiseManager.epoch() != old_epoch, "noise reset must advance the event epoch")
+	NoiseManager.emit_noise(Vector2.ZERO, 4.0, &"test")
+	_assert(not NoiseManager.recent_noises_near(Vector2.ZERO, 100.0).is_empty(), "post-reset noise must be available to surviving listeners")
+
+func _test_phase_3b4_navigation_reset_invalidates_revision() -> void:
+	var before: int = UrbanNavigationService.revision()
+	UrbanNavigationService.build(Vector2(128, 128))
+	var built: int = UrbanNavigationService.revision()
+	UrbanNavigationService.reset()
+	_assert(UrbanNavigationService.revision() > built and UrbanNavigationService.revision() > before, "navigation reset must invalidate cached revisions")
+	_assert(UrbanNavigationService.find_path_ex(Vector2.ZERO, Vector2(32, 32))["status"] == UrbanNavigationService.PathResult.NOT_READY, "navigation reset must clear the built grid")
+
+func _test_phase_3b4_suppressed_noise_is_not_global() -> void:
+	NoiseManager.reset()
+	NoiseManager.emit_noise(Vector2.ZERO, 0.0, &"suppressed")
+	_assert(NoiseManager.recent_noises_near(Vector2.ZERO, 100.0).is_empty(), "fully suppressed noise must not occupy the global buffer")
 
 ## --- Harness ---------------------------------------------------------
 

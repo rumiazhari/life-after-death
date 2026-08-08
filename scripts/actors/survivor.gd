@@ -103,6 +103,9 @@ var _nav_recheck_timer: float = 0.0
 var _nav_target: Vector2 = Vector2.ZERO
 var _nav_path_revision: int = -1
 var _nav_no_path_retries: int = 0
+var _nav_failure_revision: int = -1
+var _nav_failure_goal: Vector2 = Vector2.ZERO
+var _nav_failure_valid: bool = false
 ## True once NAV_MAX_NO_PATH_RETRIES has been reached with no route found
 ## to the current target -- a UtilityAction MAY check this to abandon the
 ## goal early instead of waiting out move_toward_point() returning false
@@ -130,13 +133,10 @@ func move_toward_point(point: Vector2, delta: float) -> bool:
 func _seek_direction(point: Vector2, to_point: Vector2, distance: float) -> Vector2:
 	if not point.is_equal_approx(_nav_target):
 		_nav_target = point
-		_clear_nav_path()
-		_nav_recheck_timer = 0.0
-		_nav_no_path_retries = 0
-		nav_stuck = false
-	if _nav_path_revision != -1 and _nav_path_revision != UrbanNavigationService.revision():
-		_nav_no_path_retries = 0
-		nav_stuck = false
+		reset_navigation_goal()
+	var revision := UrbanNavigationService.revision()
+	if _nav_failure_valid and _nav_failure_revision != revision:
+		reset_navigation_goal()
 	if not _nav_path.is_empty() and _nav_path_revision != UrbanNavigationService.revision():
 		_clear_nav_path() # a door changed state (or the grid rebuilt) since this route was computed
 
@@ -146,10 +146,10 @@ func _seek_direction(point: Vector2, to_point: Vector2, distance: float) -> Vect
 		if UrbanNavigationService.is_direct_path_clear(global_position, point):
 			_clear_nav_path()
 			_nav_direct_clear = true
-			nav_stuck = false
+			reset_navigation_goal()
 		else:
 			_nav_direct_clear = false
-			if _nav_path.is_empty() and not nav_stuck:
+			if _nav_path.is_empty() and not (_nav_failure_valid and _nav_failure_goal.is_equal_approx(point) and _nav_failure_revision == revision and nav_stuck):
 				var result: Dictionary = UrbanNavigationService.find_path_ex(global_position, point)
 				match result["status"]:
 					UrbanNavigationService.PathResult.SUCCESS:
@@ -160,7 +160,11 @@ func _seek_direction(point: Vector2, to_point: Vector2, distance: float) -> Vect
 						nav_stuck = false
 					UrbanNavigationService.PathResult.NO_PATH:
 						_nav_no_path_retries += 1
-						nav_stuck = _nav_no_path_retries >= NAV_MAX_NO_PATH_RETRIES
+						if _nav_no_path_retries >= NAV_MAX_NO_PATH_RETRIES:
+							nav_stuck = true
+							_nav_failure_valid = true
+							_nav_failure_goal = point
+							_nav_failure_revision = revision
 					_: # BUDGET_DEFERRED / NOT_READY -- retry next recheck
 						pass
 
@@ -184,6 +188,15 @@ func _clear_nav_path() -> void:
 	_nav_path.clear()
 	_nav_path_index = 0
 	_nav_path_revision = -1
+
+func reset_navigation_goal() -> void:
+	_clear_nav_path()
+	_nav_recheck_timer = 0.0
+	_nav_no_path_retries = 0
+	nav_stuck = false
+	_nav_failure_valid = false
+	_nav_failure_revision = -1
+	_nav_failure_goal = Vector2.ZERO
 
 func stop_moving(delta: float) -> void:
 	velocity = velocity.move_toward(Vector2.ZERO, steer_acceleration * delta)
