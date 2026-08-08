@@ -117,6 +117,8 @@ func _seek_point(goal: Vector2) -> Vector2:
 
 	if not _nav_path.is_empty() and _nav_path_revision != UrbanNavigationService.revision():
 		_clear_nav_path() # a door changed state (or the grid rebuilt) since this route was computed
+		_nav_no_path_retries = 0
+		nav_stuck = false
 
 	_nav_recheck_timer -= get_physics_process_delta_time()
 	if _nav_recheck_timer <= 0.0:
@@ -124,9 +126,10 @@ func _seek_point(goal: Vector2) -> Vector2:
 		if UrbanNavigationService.is_direct_path_clear(global_position, goal):
 			_clear_nav_path()
 			_nav_direct_clear = true
+			nav_stuck = false
 		else:
 			_nav_direct_clear = false
-			if _nav_path.is_empty():
+			if _nav_path.is_empty() and not nav_stuck:
 				var result: Dictionary = UrbanNavigationService.find_path_ex(global_position, goal)
 				match result["status"]:
 					UrbanNavigationService.PathResult.SUCCESS:
@@ -144,14 +147,22 @@ func _seek_point(goal: Vector2) -> Vector2:
 	if _nav_path.is_empty():
 		# Blocked with no known route (yet, or permanently) -- never steer
 		# straight at a goal we just confirmed isn't directly reachable.
+		if nav_stuck:
+			if perception.state == ZombiePerceptionComponent.State.CHASE or perception.state == ZombiePerceptionComponent.State.ATTACK:
+				perception.call("_enter_state", ZombiePerceptionComponent.State.SEARCH)
+			elif perception.state == ZombiePerceptionComponent.State.INVESTIGATE:
+				perception.call("_enter_state", ZombiePerceptionComponent.State.SEARCH)
 		return direct.normalized() if _nav_direct_clear else Vector2.ZERO
 
 	while _nav_path_index < _nav_path.size() - 1 and global_position.distance_to(_nav_path[_nav_path_index]) <= arrive_threshold:
 		_nav_path_index += 1
 	var waypoint: Vector2 = _nav_path[_nav_path_index]
 	if global_position.distance_to(waypoint) <= arrive_threshold and _nav_path_index >= _nav_path.size() - 1:
+		if UrbanNavigationService.is_direct_path_clear(global_position, goal):
+			_clear_nav_path()
+			return direct.normalized()
 		_clear_nav_path()
-		return direct.normalized()
+		_nav_direct_clear = false
 	return (waypoint - global_position).normalized()
 
 func _clear_nav_path() -> void:

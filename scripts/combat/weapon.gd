@@ -8,6 +8,7 @@ extends Node2D
 signal fired()
 
 @export var data: WeaponData
+@export var owning_actor_path: NodePath
 
 @onready var muzzle: Marker2D = $Muzzle
 @onready var muzzle_flash: Sprite2D = $Muzzle/MuzzleFlash
@@ -22,8 +23,10 @@ var _cooldown_remaining: float = 0.0
 var _reload_remaining: float = 0.0
 var _muzzle_flash_remaining: float = 0.0
 var _projectile_spawner: Node = null
+var _owning_actor: Node = null
 
 func _ready() -> void:
+	_resolve_owning_actor()
 	if data:
 		ammo_in_magazine = data.magazine_size
 		reserve_ammo = data.starting_reserve_ammo
@@ -51,11 +54,27 @@ func try_fire(direction: Vector2) -> bool:
 	ammo_in_magazine -= 1
 	_cooldown_remaining = 1.0 / maxf(data.fire_rate, 0.01)
 	_spawn_projectile(direction)
-	NoiseManager.emit_actor_noise(get_parent(), muzzle.global_position, 20.0, &"gunshot")
+	NoiseManager.emit_actor_noise(_owning_actor, muzzle.global_position, 20.0, &"gunshot")
 	GameEvents.weapon_fired.emit(ammo_in_magazine, data.magazine_size)
 	_notify_ammo()
 	fired.emit()
 	return true
+
+func setup_owning_actor(actor: Node) -> void:
+	_owning_actor = actor if actor != null and "detectable" in actor else null
+
+func _resolve_owning_actor() -> void:
+	if owning_actor_path != NodePath():
+		var explicit := get_node_or_null(owning_actor_path)
+		if explicit != null and "detectable" in explicit:
+			_owning_actor = explicit
+			return
+	var node: Node = get_parent()
+	while node != null:
+		if "detectable" in node:
+			_owning_actor = node
+			return
+		node = node.get_parent()
 
 func try_reload() -> bool:
 	if data == null or is_reloading:

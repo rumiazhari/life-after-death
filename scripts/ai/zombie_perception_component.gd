@@ -45,6 +45,7 @@ var _owner_actor: Node2D
 ## Private gameplay-only RNG stream (perception-tick stagger jitter) --
 ## deliberately separate from CosmeticRng.
 var _gameplay_rng := RandomNumberGenerator.new()
+var _last_processed_noise_sequence: int = 0
 
 func _ready() -> void:
 	_owner_actor = get_parent()
@@ -104,8 +105,26 @@ func _check_hearing(origin: Vector2) -> void:
 	var noises: Array[Dictionary] = NoiseManager.recent_noises_near(origin, hearing_radius)
 	if noises.is_empty():
 		return
-	last_known_position = noises[-1]["position"]
+	var selected: Dictionary = noises[-1]
+	var sequence: int = int(selected.get("sequence", 0))
+	if sequence <= _last_processed_noise_sequence:
+		return
+	_last_processed_noise_sequence = sequence
+	var effective_loudness: float = float(selected["loudness"])
+	if not _hearing_line_clear(origin, selected["position"]):
+		# A single bounded raycast is applied only to the newest, nearest-filtered
+		# candidate. Strong sounds can cross one wall; quiet footsteps cannot.
+		effective_loudness *= 0.25
+		if effective_loudness * 20.0 < origin.distance_to(selected["position"]):
+			return
+	last_known_position = selected["position"]
 	_enter_state(State.INVESTIGATE)
+
+func _hearing_line_clear(from: Vector2, to: Vector2) -> bool:
+	var space_state := _owner_actor.get_world_2d().direct_space_state
+	var query := PhysicsRayQueryParameters2D.create(from, to, 1 | 32)
+	query.exclude = [_owner_actor.get_rid()]
+	return space_state.intersect_ray(query).is_empty()
 
 ## Free (squared-distance + cone dot-product) filtering happens for every
 ## candidate; the raycast -- the only per-candidate cost that scales with

@@ -12,6 +12,7 @@ const MAX_RECENT := 32
 ## Array of {position, loudness, category, tick} dictionaries, newest last,
 ## capped at MAX_RECENT (oldest dropped) -- a bounded log, not a growing one.
 var _recent: Array[Dictionary] = []
+var _next_sequence: int = 1
 
 ## Prefers `actor`'s own DetectableComponent (duck-typed via its `detectable`
 ## property, the same convention Player/Survivor already expose) so
@@ -22,17 +23,22 @@ var _recent: Array[Dictionary] = []
 ## never added the component. Never requires an actor to make noise.
 func emit_actor_noise(actor: Node, position: Vector2, loudness: float, category: StringName) -> void:
 	if actor != null and "detectable" in actor and actor.detectable != null:
-		actor.detectable.report_activity_noise(loudness, category)
+		actor.detectable.report_activity_noise(loudness, category, position)
 	else:
 		emit_noise(position, loudness, category, actor)
 
 func emit_noise(position: Vector2, loudness: float, category: StringName, source: Node = null) -> void:
+	if loudness <= 0.0:
+		return
 	_recent.append({
+		"sequence": _next_sequence,
 		"position": position,
 		"loudness": loudness,
 		"category": category,
+		"source": source,
 		"tick": SimulationClock.tick_count,
 	})
+	_next_sequence += 1
 	if _recent.size() > MAX_RECENT:
 		_recent.remove_at(0)
 	noise_emitted.emit(position, loudness, category, source)
@@ -54,3 +60,4 @@ func recent_noises_near(listener_position: Vector2, hearing_radius: float, withi
 
 func reset() -> void:
 	_recent.clear()
+	_next_sequence = 1

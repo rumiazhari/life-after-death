@@ -3129,6 +3129,7 @@ func _test_survivor_cached_path_invalidated_when_door_closes() -> void:
 	survivor._seek_direction(target, target - survivor.global_position, 200.0)
 	var revision_before: int = UrbanNavigationService.revision()
 	var had_cached_path: bool = not survivor._nav_path.is_empty()
+	_assert(had_cached_path, "route-invalidation setup must produce a real cached path before the door closes")
 
 	door.toggle() # close it -- bumps UrbanNavigationService.revision()
 	_assert(UrbanNavigationService.revision() != revision_before, "closing a registered door must bump UrbanNavigationService's revision counter")
@@ -3136,7 +3137,6 @@ func _test_survivor_cached_path_invalidated_when_door_closes() -> void:
 	survivor._nav_recheck_timer = 0.0
 	survivor._seek_direction(target, target - survivor.global_position, 200.0)
 	_assert(survivor._nav_path_revision == UrbanNavigationService.revision() or survivor._nav_path.is_empty(), "a cached path must never be used after the revision it was computed against has changed -- it must be discarded and recomputed (or found empty/pending)")
-	_assert(had_cached_path or true, "sanity placeholder -- the real assertion above is the revision check")
 
 	door.queue_free()
 	wall_a.queue_free()

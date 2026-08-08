@@ -103,6 +103,8 @@ func _on_player_died() -> void:
 
 func _restart_game() -> void:
 	get_tree().paused = false
+	NoiseManager.reset()
+	UrbanNavigationService.reset()
 	# WorldState/SimulationClock are autoloads and survive
 	# reload_current_scene() (only the scene tree gets torn down and
 	# rebuilt) -- reset them explicitly here, before the reload, so the new

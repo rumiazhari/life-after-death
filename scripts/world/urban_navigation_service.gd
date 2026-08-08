@@ -155,5 +155,8 @@ func requests_this_frame() -> int:
 ## for a completely different part of the map.
 func reset() -> void:
 	_built = false
+	_grid = AStarGrid2D.new()
+	_origin = Vector2.ZERO
 	_door_cells.clear()
 	_requests_this_frame = 0
+	_revision += 1

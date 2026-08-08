@@ -134,6 +134,9 @@ func _seek_direction(point: Vector2, to_point: Vector2, distance: float) -> Vect
 		_nav_recheck_timer = 0.0
 		_nav_no_path_retries = 0
 		nav_stuck = false
+	if _nav_path_revision != -1 and _nav_path_revision != UrbanNavigationService.revision():
+		_nav_no_path_retries = 0
+		nav_stuck = false
 	if not _nav_path.is_empty() and _nav_path_revision != UrbanNavigationService.revision():
 		_clear_nav_path() # a door changed state (or the grid rebuilt) since this route was computed
 
@@ -143,9 +146,10 @@ func _seek_direction(point: Vector2, to_point: Vector2, distance: float) -> Vect
 		if UrbanNavigationService.is_direct_path_clear(global_position, point):
 			_clear_nav_path()
 			_nav_direct_clear = true
+			nav_stuck = false
 		else:
 			_nav_direct_clear = false
-			if _nav_path.is_empty():
+			if _nav_path.is_empty() and not nav_stuck:
 				var result: Dictionary = UrbanNavigationService.find_path_ex(global_position, point)
 				match result["status"]:
 					UrbanNavigationService.PathResult.SUCCESS:
@@ -169,8 +173,11 @@ func _seek_direction(point: Vector2, to_point: Vector2, distance: float) -> Vect
 		_nav_path_index += 1
 	var waypoint: Vector2 = _nav_path[_nav_path_index]
 	if global_position.distance_to(waypoint) <= arrive_threshold and _nav_path_index >= _nav_path.size() - 1:
+		if UrbanNavigationService.is_direct_path_clear(global_position, point):
+			_clear_nav_path()
+			return to_point / distance
 		_clear_nav_path()
-		return to_point / distance
+		_nav_direct_clear = false
 	return (waypoint - global_position).normalized()
 
 func _clear_nav_path() -> void:

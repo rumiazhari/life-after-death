@@ -111,14 +111,15 @@ func effective_visibility_multiplier() -> float:
 ## last_noise_time_ticks locally so a caller (a future UI/debug readout,
 ## or a test) can read "what did this actor just do" without re-deriving
 ## it from NoiseManager's own ring buffer.
-func report_activity_noise(loudness: float, category: StringName) -> void:
-	_emit_noise(loudness, category)
+func report_activity_noise(loudness: float, category: StringName, explicit_position: Vector2 = Vector2.INF) -> void:
+	_emit_noise(loudness, category, explicit_position)
 
-func _emit_noise(loudness: float, category: StringName) -> void:
+func _emit_noise(loudness: float, category: StringName, explicit_position: Vector2 = Vector2.INF) -> void:
 	last_noise_category = category
 	last_noise_time_ticks = SimulationClock.tick_count
 	var effective: float = maxf(loudness - concealment_modifier, 0.0)
-	NoiseManager.emit_noise(_owner_actor.global_position, effective, category, _owner_actor)
+	var origin := _owner_actor.global_position if explicit_position == Vector2.INF else explicit_position
+	NoiseManager.emit_noise(origin, effective, category, _owner_actor)
 	noise_reported.emit(effective, category)
 
 ## Effective loudness of this actor's current continuous movement (not

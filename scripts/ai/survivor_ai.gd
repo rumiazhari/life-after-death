@@ -114,6 +114,11 @@ func _physics_process(delta: float) -> void:
 		if finished:
 			_exit_current_action()
 			_decision_timer = 0.0
+		elif survivor.nav_stuck:
+			# The shared movement helper has conclusively exhausted this target;
+			# exit through the action's normal interruption cleanup immediately.
+			_exit_current_action()
+			_decision_timer = 0.0
 
 	_perception_timer -= delta
 	if _perception_timer <= 0.0:
