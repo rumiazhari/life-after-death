@@ -9,6 +9,11 @@ extends Node
 ## Builds serializable dictionaries via to_snapshot() in preparation for a
 ## future save/load system, but does not read/write them to disk yet.
 
+## Presentation hook only (e.g. WorldDropVisualManager) -- fires after the
+## drop is already registered in `drops`, so a listener can rely on
+## get_drop(id) returning it immediately.
+signal drop_registered(drop: WorldDrop)
+
 var survivors: Dictionary = {} ## int id -> SurvivorData
 var settlements: Dictionary = {} ## int id -> SettlementData
 var containers: Dictionary = {} ## int id -> Inventory
@@ -94,6 +99,7 @@ func register_drop(drop: WorldDrop) -> int:
 		drop.id = _next_drop_id
 		_next_drop_id += 1
 	drops[drop.id] = drop
+	drop_registered.emit(drop)
 	return drop.id
 
 func get_drop(id: int) -> WorldDrop:

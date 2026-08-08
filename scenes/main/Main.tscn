@@ -42,41 +42,39 @@ script = ExtResource("8")
 [node name="CameraRig" type="Camera2D" parent="." unique_id=203459741]
 script = ExtResource("9")
 
-[node name="Settlement" parent="." instance=ExtResource("15")]
+[node name="Settlement" parent="." unique_id=2000328190 instance=ExtResource("15")]
 
-[node name="SurvivorContainer" type="Node2D" parent="."]
+[node name="SurvivorContainer" type="Node2D" parent="." unique_id=1483629680]
 
-[node name="ScavengePoints" type="Node2D" parent="."]
+[node name="ScavengePoints" type="Node2D" parent="." unique_id=1561151316]
 
-[node name="Food1" parent="ScavengePoints" instance=ExtResource("16")]
+[node name="Food1" parent="ScavengePoints" unique_id=1754346820 instance=ExtResource("16")]
 position = Vector2(520, -80)
 item_id = &"food_ration"
 yield_per_scavenge = 2
 remaining_stock = 8
 danger = 15.0
 
-[node name="Water1" parent="ScavengePoints" instance=ExtResource("16")]
+[node name="Water1" parent="ScavengePoints" unique_id=415410396 instance=ExtResource("16")]
 position = Vector2(-540, 60)
 item_id = &"water_bottle"
 yield_per_scavenge = 2
 remaining_stock = 8
 danger = 15.0
 
-[node name="Materials1" parent="ScavengePoints" instance=ExtResource("16")]
+[node name="Materials1" parent="ScavengePoints" unique_id=173268166 instance=ExtResource("16")]
 position = Vector2(60, -620)
-item_id = &"materials"
-yield_per_scavenge = 3
 remaining_stock = 12
 danger = 25.0
 
-[node name="Food2" parent="ScavengePoints" instance=ExtResource("16")]
+[node name="Food2" parent="ScavengePoints" unique_id=450389635 instance=ExtResource("16")]
 position = Vector2(400, 560)
 item_id = &"food_ration"
 yield_per_scavenge = 2
 remaining_stock = 6
 danger = 35.0
 
-[node name="Medical1" parent="ScavengePoints" instance=ExtResource("16")]
+[node name="Medical1" parent="ScavengePoints" unique_id=1538303334 instance=ExtResource("16")]
 position = Vector2(-450, -520)
 item_id = &"medical_supplies"
 yield_per_scavenge = 1
@@ -91,8 +89,8 @@ danger = 40.0
 
 [node name="DeathOverlay" parent="UI" unique_id=1390326497 instance=ExtResource("12")]
 
-[node name="MobileControls" parent="UI" instance=ExtResource("13")]
+[node name="MobileControls" parent="UI" unique_id=2036443991 instance=ExtResource("13")]
 
-[node name="DebugOverlay" parent="UI" instance=ExtResource("14")]
+[node name="DebugOverlay" parent="UI" unique_id=2059187727 instance=ExtResource("14")]
 
-[node name="SurvivorInspector" parent="UI" instance=ExtResource("17")]
+[node name="SurvivorInspector" parent="UI" unique_id=1010038244 instance=ExtResource("17")]

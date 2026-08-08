@@ -41,6 +41,25 @@ godot --headless --path . res://tests/TestRunner.tscn
 
 Exits 0 if every test passes. See `tests/README.md`.
 
+### Visual asset pipeline (Phase 3A)
+
+Every texture under `assets/pixel/` is placeholder pixel art, generated
+(not downloaded, not copied from any reference/commercial game) by a
+deterministic headless script — no Pillow/Photoshop/Aseprite involved.
+Regenerate it with:
+
+```
+godot --headless --path . --script tools/generate_pixel_assets.gd
+```
+
+Every random choice inside the generator is seeded per-asset
+(`SEED xor tag.hash()`), so running it twice produces byte-identical PNGs
+(verified via `sha256sum` over `assets/pixel/**/*.png` during development).
+See `docs/art_direction.md` for the full locked spec (tile/frame
+dimensions, palette, layer order, naming conventions) and how to replace
+this placeholder art with licensed or hand-drawn assets later without
+touching gameplay code.
+
 ## Controls
 
 ### Desktop
@@ -75,14 +94,19 @@ Both input schemes drive the same `InputRouter` autoload
   mouse aiming decoupled from movement direction, health with brief
   post-hit invulnerability, and a death state.
 - **Combat**: a data-driven `WeaponData` resource, pooled projectiles,
-  reload, ammo HUD, and procedural muzzle-flash/hit feedback (no sprites).
+  reload, ammo HUD, a pixel muzzle-flash/hit-flash, and capped/recycled
+  blood decals on zombie death (`BloodDecalManager`, Phase 3A).
 - **Zombies**: cheap CharacterBody2D actors that seek the player and
   separate from nearby zombies via a spatial-grid broad phase
   (`SwarmManager`) instead of per-instance pathfinding — built to scale
   to hundreds of concurrent zombies.
-- **World**: a procedurally generated test arena (roads, pavement,
-  building obstacles, boundary walls) built entirely from primitives
-  (`Polygon2D` / `Line2D` / `StaticBody2D`) — no imported textures.
+- **World**: a procedurally generated test arena (roads, sidewalks/curbs,
+  crosswalks, ground variety, building obstacles with tiled rooftops,
+  boundary walls, decorative props) painted onto `TileMapLayer`s from the
+  generated pixel atlas (Phase 3A); collision geometry
+  (`StaticBody2D`/`RectangleShape2D`) and the seeded layout math are
+  unchanged from the original primitive-drawn build — see
+  `docs/architecture.md`'s "Rendering / visual layer" section.
 - **UI**: HUD (health, ammo, reload status, zombie count, kills, FPS),
   a pause menu, and a death/restart overlay. All screen-edge UI insets
   itself to the platform safe area (notches, rounded corners, system
@@ -166,9 +190,14 @@ scripts/
   items/    ItemData, Inventory, ItemDatabase
   jobs/     Job, SettlementJobBoard
   survivors/  SurvivorData
-  world/    procedural arena builder, camera rig, Settlement,
+  world/    procedural arena builder (TileMapLayer-based, Phase 3A),
+            shared PixelTilesetBuilder, camera rig, Settlement,
             SettlementData, StorageContainer, ScavengePoint, SleepSpot,
-            GuardPost
+            GuardPost, SafehouseInteriorBuilder, WorldDropVisualManager
+  visuals/  ActorVisual, ActorSpriteLibrary (Phase 3A shared sprite/
+            animation layer for Player/Survivor/Zombie)
+  combat/   weapon, weapon data, projectile, projectile manager,
+            BloodDecalManager (Phase 3A)
   ui/       HUD, pause menu, death overlay, safe area, mobile controls,
             virtual joystick, debug overlay, survivor inspector
 resources/
@@ -176,8 +205,14 @@ resources/
   items/    ItemData .tres instances (food_ration, water_bottle,
             medical_supplies, ammunition, materials)
   actors/   reserved for future actor-tuning resources
+  theme/    pixel_theme.tres (Phase 3A UI theme)
+assets/
+  pixel/    generated placeholder pixel art (environment, actors, props,
+            effects, ui) -- see "Visual asset pipeline" above and
+            docs/art_direction.md
 tests/      test_runner.gd + TestRunner.tscn — headless regression suite
-docs/       architecture.md
+docs/       architecture.md, art_direction.md, screenshots/phase-3a/
+tools/      generate_pixel_assets.gd — deterministic pixel-art generator
 export_presets.cfg   Android export preset (see Mobile / Android above)
 ```
 

@@ -182,17 +182,156 @@ directly by `main.gd`. See "Phase 2A" below for its AI.
 
 ## World — `scripts/world/`
 
-- `arena_builder.gd` (`ArenaBuilder`): procedurally builds pavement,
-  a road grid (with center-line markings), building obstacles
-  (`StaticBody2D` + `Polygon2D` + `Line2D` outline), and a perimeter
-  boundary — all primitive-drawn, seeded by `random_seed` for
-  reproducibility. This is the "test arena," not a real level; procedural
-  city/world generation (explicitly out of scope for this slice) would
-  replace or extend this builder later.
+- `arena_builder.gd` (`ArenaBuilder`): procedurally builds a road grid
+  (with sidewalks/curbs/markings), building obstacles
+  (`StaticBody2D` + tiled roof), and a perimeter boundary, seeded by
+  `random_seed` for reproducibility. This is the "test arena," not a real
+  level; procedural city/world generation (explicitly out of scope for
+  this slice) would replace or extend this builder later. Visuals are
+  `TileMapLayer`-painted as of Phase 3A — see "Rendering / visual layer"
+  below for the full writeup; the seeded layout math (arena size, road
+  positions, building collision footprints) is unchanged.
 - `camera_rig.gd` (`CameraRig`): a `Camera2D` that lerps toward an
   assigned `target`. Kept separate from `Player.tscn` so the player scene
   has no camera dependency and the camera can be retargeted (e.g. a
   future spectator/cutscene camera) without touching player code.
+
+## Rendering / visual layer — Phase 3A pixel-art overhaul
+
+Everything in this section is presentation-only: no gameplay rule
+(simulation, inventory, jobs, spawning, weapon balance, zombie health,
+movement speeds, collision sizes, or world dimensions) changed to add it.
+See `docs/art_direction.md` for the locked art spec (tile/frame
+dimensions, palette, layer order, naming conventions, and how to replace
+this placeholder art later).
+
+**Asset generation.** `tools/generate_pixel_assets.gd` is a headless
+`SceneTree` script (`godot --headless --script tools/generate_pixel_assets.gd`)
+that draws every PNG under `assets/pixel/` with Godot's `Image` API only —
+no external tools, nothing downloaded or copied from a reference/
+commercial game. Every random choice is made through a
+per-asset-tag-seeded `RandomNumberGenerator` (`SEED xor tag.hash()`), so
+re-running the generator reproduces byte-identical files regardless of
+call order. `PixelAtlasMap` (`scripts/visuals/pixel_atlas_map.gd`) is the
+single source of truth for the environment atlas's tile-name → cell
+mapping and the actor atlases' frame layout; both the generator and every
+consumer below read from it instead of hard-coding a raw atlas
+column/row anywhere else.
+
+**Pixel-perfect rendering.** `project.godot` sets
+`rendering/textures/canvas_textures/default_texture_filter = 0` (nearest)
+and `rendering/2d/snap/snap_2d_transforms_to_pixel` /
+`snap_2d_vertices_to_pixel = true` project-wide, so no sprite or tile
+needs a per-node filter override. The 1280x720 viewport and
+`canvas_items` + `expand` stretch mode (desktop and Android) are
+unchanged from Phase 0/1.
+
+**World — `scripts/world/arena_builder.gd` (`ArenaBuilder`), `scripts/world/pixel_tileset_builder.gd` (`PixelTilesetBuilder`).**
+`PixelTilesetBuilder.get_tileset()` builds (once, cached for the process)
+the one `TileSet`/`TileSetAtlasSource` wrapping the generated environment
+atlas; every `TileMapLayer` in the project shares this same `TileSet`.
+`ArenaBuilder` paints five `TileMapLayer`s (`Ground`, `Roads`,
+`Sidewalks`, `RoadMarkings`, `BuildingRoofs`) plus a purely-decorative
+`Props` node, in place of the old `Polygon2D`/`Line2D` pavement/road/
+building visuals — but keeps every `StaticBody2D`/`RectangleShape2D`
+collider, the arena's world-space dimensions, and the building
+placement/skip-chance logic byte-for-byte identical. This is enforced by
+using **two independent `RandomNumberGenerator` streams**: `_rng` (the
+original stream, driving building position/size/empty-lot skip chance —
+untouched) and a new `_visual_rng` (seeded `random_seed xor 0x5A5AF00D`,
+driving every cosmetic choice: ground/asphalt/roof tile variants,
+rooftop-detail placement, prop scatter). Adding, removing, or reordering
+a cosmetic random draw can therefore never shift which building a
+gameplay-relevant roll lands on. Building roofs are painted as a 9-slice
+(`center`/`edge_<dir>`/`corner_<dir>`) across each building's own
+footprint in tile units, in one of 4 material variants (`roofA`–`roofD`).
+
+**Safehouse — `scripts/world/safehouse_interior_builder.gd` (`SafehouseInteriorBuilder`).**
+A presentation-only companion node (`Safehouse.tscn`'s `Interior` child)
+that paints the safehouse's floor and perimeter-wall `TileMapLayer`s at
+`_ready()`, leaving a tile-wide gap in the south wall aligned with the
+existing `Entrance` node. Every functional node (`StorageGeneral/Food/
+Water/Medical`, `SleepSpot1-4`, `GuardPostLeft/Right`, `Entrance`) kept
+its exact name, script, and position — only each one's `Visual` child
+changed from a flat-color `Polygon2D` to a `Sprite2D` using a
+category-specific texture (crate / ration-box / bottle-crate / medical
+case for storage, a bed sprite for sleep spots, a sandbag-and-post sprite
+for guard posts). `Settlement`'s own logic (`settlement.gd`) was not
+touched.
+
+**Actors — `scripts/visuals/actor_visual.gd` (`ActorVisual`), `scripts/visuals/actor_sprite_library.gd` (`ActorSpriteLibrary`, autoload).**
+`ActorSpriteLibrary` builds one shared `SpriteFrames` resource per actor
+type (`player`/`survivor`/`zombie`) from that type's atlas — every
+instance of a type references the *same* `SpriteFrames` object rather
+than each constructing/duplicating its own, which is what keeps hundreds
+of concurrent zombies cheap. Each variant gets two 1-frame animations
+(`idle_<n>`, `walk_<n>`) instead of a multi-frame walk cycle — a
+deliberate simplification (see "Known simplifications" in
+`docs/art_direction.md`). `ActorVisual` (an `AnimatedSprite2D` subclass)
+replaces the old `BodyVisual` `Polygon2D` in `Player.tscn`/
+`Survivor.tscn`/`Zombie.tscn` under the same node name; its
+`update_from_velocity(velocity)` (called once per physics tick from each
+actor's own script) only sets `flip_h` and picks between the idle/walk
+animation — it never reads or writes movement/gameplay state. Damage
+flash in `player.gd`/`survivor.gd`/`zombie.gd` needed no logic change:
+it only ever tweens `modulate`, a `CanvasItem` property every one of
+`Polygon2D`/`AnimatedSprite2D` shares, so only each script's `body_visual`
+type annotation changed. A `Shadow` `Sprite2D` sibling (one shared
+`shadow.png`) was added per actor, drawn beneath the body sprite. Variant
+assignment is deterministic, not random: survivors use
+`ActorSpriteLibrary.variant_for(&"survivor", data.id)` (stable per
+survivor id), zombies use one `randi()` pick at spawn (purely cosmetic,
+doesn't affect any gameplay-relevant RNG stream since `Zombie` has none).
+
+**Combat — `scripts/combat/blood_decal_manager.gd` (`BloodDecalManager`).**
+`Projectile.tscn`'s `Visual` and `Player.tscn`/`Survivor.tscn`'s
+`MuzzleFlash` swapped from `Polygon2D` to `Sprite2D` using generated
+textures; `weapon.gd`'s `muzzle_flash` type annotation is the only script
+change (still just `.visible` toggles). `BloodDecalManager` (a plain
+`Node2D` child of `Main`) listens to the existing `GameEvents.zombie_died`
+signal and drops one blood-decal sprite per death, capped at `MAX_DECALS`
+(40) via a ring buffer — once the cap is reached, the *oldest* sprite is
+repositioned and reused instead of a new node being created, so decal
+count can never grow unbounded regardless of how many zombies die in a
+run. A restart's `reload_current_scene()` frees this node (and its pooled
+children) along with everything else, so no separate reset hook is
+needed.
+
+**Scavenge points and world drops — `scripts/world/scavenge_point.gd`, `scripts/world/world_drop_visual_manager.gd` (`WorldDropVisualManager`).**
+`ScavengePoint._ready()` now also picks a category-specific texture
+(food/water/medical/materials) for its `Visual` `Sprite2D` from
+`item_id`, purely additive to its existing harvest logic. `WorldState`
+gained one new signal, `drop_registered(drop: WorldDrop)`, emitted from
+`register_drop()` right after the drop is added to `WorldState.drops` —
+`WorldDropVisualManager` subscribes to it (plus a one-time scan of
+whatever drops already existed at `_ready()`) instead of scanning every
+frame, and adds one loot-bag `Sprite2D` per drop, tinted by
+`WorldDrop.reason` (`death`/`haul_stalled`/`storage_destroyed`) so the
+three causes read as visually distinct without three separate textures.
+It never reads or mutates `WorldDrop`/`Inventory` data and adds no
+looting mechanic — `WorldDrop` itself is unchanged.
+
+**UI — `resources/theme/pixel_theme.tres`.** Applied project-wide via
+`project.godot`'s `gui/theme/custom`, so `HUD`/`PauseMenu`/`DeathOverlay`/
+`MobileControls`/`SurvivorInspector`/`DebugOverlay` all picked up dark
+semi-opaque `StyleBoxFlat` panels, a light 2px border, and an
+outlined/drop-shadowed font (Godot's built-in font — no external/
+unlicensed font file) without per-scene styling code. `HUD.tscn`'s
+`TopLeft`/`TopRight` groups were each wrapped in a `PanelContainer` (and
+gained small category-icon `TextureRect`s next to the health/ammo/
+zombie-count/kills labels); `hud.gd`'s `@onready` paths were updated to
+match, and that is the only script change this required — every signal
+this HUD reacts to (`GameEvents.player_health_changed`, etc.) is
+unchanged.
+
+**Performance.** No per-actor shader materials, no per-actor lights, no
+`NavigationAgent2D` additions, no per-frame environment reconstruction or
+world-drop scanning, no per-zombie procedural texture generation at
+runtime. All generated art is produced once (by the offline generator)
+and loaded as ordinary shared `Texture2D`/`SpriteFrames` resources before
+gameplay begins. See the Phase 3A validation report for measured FPS/
+node-count/draw-call numbers across the 50/100/150/250 zombie population
+profiles.
 
 ## UI — `scripts/ui/`
 

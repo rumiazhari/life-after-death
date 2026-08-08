@@ -10,7 +10,7 @@ signal fired()
 @export var data: WeaponData
 
 @onready var muzzle: Marker2D = $Muzzle
-@onready var muzzle_flash: Polygon2D = $Muzzle/MuzzleFlash
+@onready var muzzle_flash: Sprite2D = $Muzzle/MuzzleFlash
 
 const MUZZLE_FLASH_DURATION := 0.05
 

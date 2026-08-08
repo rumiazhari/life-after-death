@@ -12,7 +12,7 @@ extends CharacterBody2D
 @onready var health_component: HealthComponent = $HealthComponent
 @onready var weapon_pivot: Node2D = $WeaponPivot
 @onready var weapon: Weapon = $WeaponPivot/Weapon
-@onready var body_visual: Polygon2D = $BodyVisual
+@onready var body_visual: ActorVisual = $BodyVisual
 @onready var ai: SurvivorAI = $SurvivorAI
 @onready var screen_notifier: VisibleOnScreenNotifier2D = $VisibleOnScreenNotifier2D
 
@@ -66,6 +66,7 @@ func setup(profile: Dictionary, home_settlement: Settlement) -> void:
 	data.max_health = health_component.max_health
 	data.health = data.max_health
 	WorldState.register_survivor(data)
+	body_visual.variant = ActorSpriteLibrary.variant_for(&"survivor", data.id)
 	if home_settlement:
 		data.current_settlement = home_settlement.data.id
 		home_settlement.add_member(data.id)
@@ -80,6 +81,7 @@ func _physics_process(_delta: float) -> void:
 	# health mirror in sync for the inspector/HUD.
 	if data:
 		data.health = health_component.current_health
+	body_visual.update_from_velocity(velocity)
 
 ## Seeks `point`, returns true once within arrive_threshold. Shared by every
 ## movement-driven action instead of each one re-implementing steering.

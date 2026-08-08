@@ -26,7 +26,7 @@ extends CharacterBody2D
 @export var survivor_detection_radius: float = 500.0
 
 @onready var health_component: HealthComponent = $HealthComponent
-@onready var body_visual: Polygon2D = $BodyVisual
+@onready var body_visual: ActorVisual = $BodyVisual
 @onready var attack_area: Area2D = $AttackArea
 
 var _target: Node2D = null
@@ -37,6 +37,7 @@ var _retarget_remaining: float = 0.0
 
 func _ready() -> void:
 	add_to_group("zombies")
+	body_visual.variant = randi() % ActorSpriteLibrary.get_variant_count(&"zombie")
 	health_component.died.connect(_on_died)
 	health_component.damaged.connect(_on_damaged)
 	attack_area.body_entered.connect(_on_attack_area_body_entered)
@@ -63,6 +64,7 @@ func _physics_process(delta: float) -> void:
 	else:
 		velocity = Vector2.ZERO
 	move_and_slide()
+	body_visual.update_from_velocity(velocity)
 
 func take_damage(amount: float, source: Node = null) -> void:
 	health_component.take_damage(amount, source)

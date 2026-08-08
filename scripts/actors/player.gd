@@ -12,7 +12,7 @@ extends CharacterBody2D
 @onready var health_component: HealthComponent = $HealthComponent
 @onready var weapon_pivot: Node2D = $WeaponPivot
 @onready var weapon: Weapon = $WeaponPivot/Weapon
-@onready var body_visual: Polygon2D = $BodyVisual
+@onready var body_visual: ActorVisual = $BodyVisual
 
 var aim_direction: Vector2 = Vector2.RIGHT
 var is_dead: bool = false
@@ -33,6 +33,7 @@ func _physics_process(delta: float) -> void:
 	_update_aim()
 	_update_movement(delta)
 	_update_firing()
+	body_visual.update_from_velocity(velocity)
 
 func _update_aim() -> void:
 	if InputRouter.aim_vector != Vector2.ZERO:

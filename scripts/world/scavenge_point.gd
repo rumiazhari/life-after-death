@@ -13,8 +13,23 @@ extends Node2D
 ## for points further from the settlement or historically zombie-heavy.
 @export var danger: float = 20.0
 
+## item_id -> scavenge-visual texture path, keyed on the item categories
+## actually used by ScavengePoint instances in Main.tscn. Falls back to the
+## materials/scrap-pile art for anything else so a new item id never shows
+## a missing texture.
+const VISUAL_TEXTURE_PATHS := {
+	&"food_ration": "res://assets/pixel/props/loot_food.png",
+	&"water_bottle": "res://assets/pixel/props/loot_water.png",
+	&"materials": "res://assets/pixel/props/loot_materials.png",
+	&"medical_supplies": "res://assets/pixel/props/loot_medical.png",
+}
+
+@onready var _visual: Sprite2D = $Visual
+
 func _ready() -> void:
 	add_to_group("scavenge_point")
+	var path: String = VISUAL_TEXTURE_PATHS.get(item_id, "res://assets/pixel/props/loot_materials.png")
+	_visual.texture = load(path)
 
 func is_depleted() -> bool:
 	return remaining_stock <= 0

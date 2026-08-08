@@ -1,7 +1,11 @@
-[gd_scene load_steps=3 format=3]
+[gd_scene load_steps=7 format=3]
 
 [ext_resource type="Script" path="res://scripts/ui/hud.gd" id="1"]
 [ext_resource type="Script" path="res://scripts/ui/safe_area.gd" id="2"]
+[ext_resource type="Texture2D" path="res://assets/pixel/ui/icon_health.png" id="3"]
+[ext_resource type="Texture2D" path="res://assets/pixel/ui/icon_ammo.png" id="4"]
+[ext_resource type="Texture2D" path="res://assets/pixel/ui/icon_zombie.png" id="5"]
+[ext_resource type="Texture2D" path="res://assets/pixel/ui/icon_kills.png" id="6"]
 
 [node name="HUD" type="CanvasLayer"]
 script = ExtResource("1")
@@ -24,51 +28,101 @@ grow_vertical = 2
 mouse_filter = 2
 script = ExtResource("2")
 
-[node name="TopLeft" type="VBoxContainer" parent="Root/SafeArea"]
+[node name="TopLeftPanel" type="PanelContainer" parent="Root/SafeArea"]
 layout_mode = 1
 anchors_preset = 0
-offset_left = 16.0
-offset_top = 16.0
-offset_right = 260.0
-offset_bottom = 120.0
+offset_left = 12.0
+offset_top = 12.0
+offset_right = 244.0
+offset_bottom = 108.0
 mouse_filter = 2
 
-[node name="HealthLabel" type="Label" parent="Root/SafeArea/TopLeft"]
+[node name="TopLeft" type="VBoxContainer" parent="Root/SafeArea/TopLeftPanel"]
+layout_mode = 2
+mouse_filter = 2
+
+[node name="HealthRow" type="HBoxContainer" parent="Root/SafeArea/TopLeftPanel/TopLeft"]
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="HealthIcon" type="TextureRect" parent="Root/SafeArea/TopLeftPanel/TopLeft/HealthRow"]
+custom_minimum_size = Vector2(16, 16)
+layout_mode = 2
+texture = ExtResource("3")
+stretch_mode = 4
+
+[node name="HealthLabel" type="Label" parent="Root/SafeArea/TopLeftPanel/TopLeft/HealthRow"]
 layout_mode = 2
 text = "HP: 100 / 100"
 
-[node name="AmmoLabel" type="Label" parent="Root/SafeArea/TopLeft"]
+[node name="AmmoRow" type="HBoxContainer" parent="Root/SafeArea/TopLeftPanel/TopLeft"]
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="AmmoIcon" type="TextureRect" parent="Root/SafeArea/TopLeftPanel/TopLeft/AmmoRow"]
+custom_minimum_size = Vector2(16, 16)
+layout_mode = 2
+texture = ExtResource("4")
+stretch_mode = 4
+
+[node name="AmmoLabel" type="Label" parent="Root/SafeArea/TopLeftPanel/TopLeft/AmmoRow"]
 layout_mode = 2
 text = "Ammo: 30 / 180"
 
-[node name="ReloadLabel" type="Label" parent="Root/SafeArea/TopLeft"]
+[node name="ReloadLabel" type="Label" parent="Root/SafeArea/TopLeftPanel/TopLeft"]
 layout_mode = 2
 text = "Reloading..."
 
-[node name="TopRight" type="VBoxContainer" parent="Root/SafeArea"]
+[node name="TopRightPanel" type="PanelContainer" parent="Root/SafeArea"]
 layout_mode = 1
 anchors_preset = 1
 anchor_left = 1.0
 anchor_right = 1.0
-offset_left = -220.0
-offset_top = 16.0
-offset_right = -16.0
-offset_bottom = 120.0
+offset_left = -228.0
+offset_top = 12.0
+offset_right = -12.0
+offset_bottom = 108.0
 grow_horizontal = 0
-alignment = 2
 mouse_filter = 2
 
-[node name="ZombieCountLabel" type="Label" parent="Root/SafeArea/TopRight"]
+[node name="TopRight" type="VBoxContainer" parent="Root/SafeArea/TopRightPanel"]
+layout_mode = 2
+mouse_filter = 2
+alignment = 2
+
+[node name="ZombieRow" type="HBoxContainer" parent="Root/SafeArea/TopRightPanel/TopRight"]
+layout_mode = 2
+alignment = 2
+theme_override_constants/separation = 6
+
+[node name="ZombieIcon" type="TextureRect" parent="Root/SafeArea/TopRightPanel/TopRight/ZombieRow"]
+custom_minimum_size = Vector2(16, 16)
+layout_mode = 2
+texture = ExtResource("5")
+stretch_mode = 4
+
+[node name="ZombieCountLabel" type="Label" parent="Root/SafeArea/TopRightPanel/TopRight/ZombieRow"]
 layout_mode = 2
 horizontal_alignment = 2
 text = "Zombies: 0"
 
-[node name="KillsLabel" type="Label" parent="Root/SafeArea/TopRight"]
+[node name="KillsRow" type="HBoxContainer" parent="Root/SafeArea/TopRightPanel/TopRight"]
+layout_mode = 2
+alignment = 2
+theme_override_constants/separation = 6
+
+[node name="KillsIcon" type="TextureRect" parent="Root/SafeArea/TopRightPanel/TopRight/KillsRow"]
+custom_minimum_size = Vector2(16, 16)
+layout_mode = 2
+texture = ExtResource("6")
+stretch_mode = 4
+
+[node name="KillsLabel" type="Label" parent="Root/SafeArea/TopRightPanel/TopRight/KillsRow"]
 layout_mode = 2
 horizontal_alignment = 2
 text = "Kills: 0"
 
-[node name="FPSLabel" type="Label" parent="Root/SafeArea/TopRight"]
+[node name="FPSLabel" type="Label" parent="Root/SafeArea/TopRightPanel/TopRight"]
 layout_mode = 2
 horizontal_alignment = 2
 text = "FPS: 0"

@@ -22,11 +22,16 @@ InputRouter="*res://scripts/core/input_router.gd"
 SimulationClock="*res://scripts/core/simulation_clock.gd"
 ItemDatabase="*res://scripts/items/item_database.gd"
 WorldState="*res://scripts/core/world_state.gd"
+ActorSpriteLibrary="*res://scripts/visuals/actor_sprite_library.gd"
 _mcp_game_helper="*res://addons/godot_ai/runtime/game_helper.gd"
 
 [debug]
 
 mobile_controls/force_visible=false
+
+[gui]
+
+theme/custom="res://resources/theme/pixel_theme.tres"
 
 [display]
 
@@ -100,3 +105,6 @@ restart={
 
 rendering_device/driver.windows="d3d12"
 renderer/rendering_method="mobile"
+textures/canvas_textures/default_texture_filter=0
+2d/snap/snap_2d_transforms_to_pixel=true
+2d/snap/snap_2d_vertices_to_pixel=true
