@@ -187,3 +187,17 @@ equipment beyond the restaurant's own), and building-specific roof
 elements beyond the shared 4-letter roof-material system were not
 generated this pass -- see the Phase 3B completion report for the full
 deferred-art list.
+
+## Phase 3B.1 -- Apartment01 / Workshop01 art reuse
+
+No new sprites were generated for the two new building archetypes; both
+furnish their rooms entirely from existing Phase 3A/3B assets rather than
+widening the generator's coverage further. Apartment01's bedroom reuses
+`assets/pixel/props/bed.png` (originally the Phase 3A safehouse sleep
+spot) and its living-room/kitchen dresser reuses
+`assets/pixel/props/medical_cabinet.png` as a plain storage-stand-in.
+Workshop01's loading bay and storage room reuse
+`assets/pixel/props/crate.png` and `assets/pixel/props/pallet.png`
+(originally the safehouse's own storage art). This keeps both new
+buildings' known-gaps list from the table above unchanged -- dedicated
+apartment/workshop fixtures are still deferred, not added this pass.

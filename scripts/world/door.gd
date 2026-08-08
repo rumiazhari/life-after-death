@@ -12,6 +12,13 @@ extends Node2D
 ## node's own transient state, so a scene reload restores exactly how the
 ## player left it (see docs/interaction_system.md).
 
+## Fired whenever `_apply_state()` runs, open or closed, whether triggered
+## by a real interaction, a programmatic toggle(), or the initial
+## WorldState-restored load. BuildingVisibilityController (Phase 3B.1)
+## listens to this so opening/closing a door recomputes room-portal
+## visibility immediately, even while the player is stationary.
+signal state_changed(is_open: bool)
+
 const CLOSED_TEXTURE := preload("res://assets/pixel/props/door_closed.png")
 const OPEN_TEXTURE := preload("res://assets/pixel/props/door_open.png")
 
@@ -85,6 +92,7 @@ func _apply_state(emit_noise: bool) -> void:
 			UrbanNavigationService.mark_door_closed(door_id)
 	if emit_noise:
 		NoiseManager.emit_noise(global_position, noise_loudness, &"door", self)
+	state_changed.emit(is_open)
 
 func _on_body_entered(_body: Node) -> void:
 	_blocked_by_body = true

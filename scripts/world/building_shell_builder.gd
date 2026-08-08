@@ -133,6 +133,7 @@ static func fill_floor(parent: Node2D, half_extent: Vector2, floor_tile_name: St
 ## it in one shot sidesteps that entirely.
 static func add_loot_furniture(parent: Node2D, local_position: Vector2, texture: Texture2D, collision_size: Vector2, prop_id: StringName, capacity_weight: float, starting_items: Dictionary, interact_label: String = "Search") -> void:
 	var root := _make_physical_prop(local_position, texture, collision_size)
+	root.name = String(prop_id).get_file() # e.g. "restaurant_01/shelf_0" -> "shelf_0", so a baked/saved scene shows a readable name instead of an auto-generated "@Node2D@N" in the editor
 	var area := _make_interact_area(collision_size)
 	var interactable := InteractableComponent.new()
 	interactable.name = "InteractableComponent" # get_node_or_null("InteractableComponent") depends on this exact name
@@ -152,6 +153,7 @@ static func add_loot_furniture(parent: Node2D, local_position: Vector2, texture:
 ## materials yield.
 static func add_salvage_prop(parent: Node2D, local_position: Vector2, texture: Texture2D, collision_size: Vector2, prop_id: StringName, material_yield: int) -> void:
 	var root := _make_physical_prop(local_position, texture, collision_size)
+	root.name = String(prop_id).get_file()
 	var area := _make_interact_area(collision_size)
 	var interactable := InteractableComponent.new()
 	interactable.name = "InteractableComponent"

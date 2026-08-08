@@ -15,6 +15,7 @@ extends CharacterBody2D
 @onready var body_visual: ActorVisual = $BodyVisual
 @onready var ai: SurvivorAI = $SurvivorAI
 @onready var screen_notifier: VisibleOnScreenNotifier2D = $VisibleOnScreenNotifier2D
+@onready var detectable: DetectableComponent = $DetectableComponent
 
 var data: SurvivorData
 var carried_inventory: Inventory
@@ -82,6 +83,22 @@ func _physics_process(_delta: float) -> void:
 	if data:
 		data.health = health_component.current_health
 	body_visual.update_from_velocity(velocity)
+	detectable.report_movement_speed(velocity.length())
+
+## Path-around-walls fallback (Phase 3B.1): only consulted when direct
+## steering toward the current goal is actually blocked, re-evaluated on
+## `_nav_recheck_timer` rather than every physics frame -- the same
+## design Zombie._seek_point() uses (see docs/perception_system.md
+## "Navigation"), applied here at the single shared move_toward_point()
+## every UtilityAction already calls, so no individual action needed its
+## own pathfinding logic. Shares UrbanNavigationService's global per-frame
+## request budget with every zombie -- never an unrestricted
+## NavigationAgent2D of its own.
+const NAV_RECHECK_INTERVAL := 1.0
+var _nav_path: PackedVector2Array = PackedVector2Array()
+var _nav_path_index: int = 0
+var _nav_recheck_timer: float = 0.0
+var _nav_target: Vector2 = Vector2.ZERO
 
 ## Seeks `point`, returns true once within arrive_threshold. Shared by every
 ## movement-driven action instead of each one re-implementing steering.
@@ -90,14 +107,38 @@ func move_toward_point(point: Vector2, delta: float) -> bool:
 	var distance: float = to_point.length()
 	var speed: float = data.movement_speed if data else 190.0
 	if distance <= arrive_threshold:
+		_nav_path.clear()
 		velocity = velocity.move_toward(Vector2.ZERO, steer_acceleration * delta)
 		move_and_slide()
 		return true
-	var dir: Vector2 = to_point / distance
+	var dir: Vector2 = _seek_direction(point, to_point, distance)
 	_face(dir)
 	velocity = velocity.move_toward(dir * speed, steer_acceleration * delta)
 	move_and_slide()
 	return false
+
+func _seek_direction(point: Vector2, to_point: Vector2, distance: float) -> Vector2:
+	if not point.is_equal_approx(_nav_target):
+		_nav_target = point
+		_nav_path.clear()
+		_nav_recheck_timer = 0.0
+	_nav_recheck_timer -= get_physics_process_delta_time()
+	if _nav_recheck_timer <= 0.0:
+		_nav_recheck_timer = NAV_RECHECK_INTERVAL
+		if UrbanNavigationService.is_direct_path_clear(global_position, point):
+			_nav_path.clear()
+		elif _nav_path.is_empty():
+			_nav_path = UrbanNavigationService.find_path(global_position, point)
+			_nav_path_index = 0
+	if _nav_path.is_empty():
+		return to_point / distance
+	while _nav_path_index < _nav_path.size() - 1 and global_position.distance_to(_nav_path[_nav_path_index]) <= arrive_threshold:
+		_nav_path_index += 1
+	var waypoint: Vector2 = _nav_path[_nav_path_index]
+	if global_position.distance_to(waypoint) <= arrive_threshold and _nav_path_index >= _nav_path.size() - 1:
+		_nav_path.clear()
+		return to_point / distance
+	return (waypoint - global_position).normalized()
 
 func stop_moving(delta: float) -> void:
 	velocity = velocity.move_toward(Vector2.ZERO, steer_acceleration * delta)

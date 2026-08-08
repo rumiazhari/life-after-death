@@ -1,4 +1,4 @@
-# Interaction and persistence system (Phase 3B)
+# Interaction and persistence system (Phase 3B, updated for Phase 3B.1)
 
 The component framework behind every door, loot container, and salvage
 prop; how the player selects and triggers one; and how the resulting
@@ -81,6 +81,11 @@ from `WorldState.get_door_open(door_id)` instead of always starting
 closed, so re-entering a scene (or, later, a save/load) restores exactly
 how it was left.
 
+`Door` also emits `state_changed(is_open: bool)` (Phase 3B.1) whenever
+`_apply_state()` runs — the event `BuildingVisibilityController` listens
+to so opening/closing a door recomputes room-portal reveal immediately,
+even while the player is stationary (see `docs/building_system.md`).
+
 ## Windows — `scripts/world/window.gd` (`class_name BuildingWindow`)
 
 Named `BuildingWindow`, not `Window` — Godot's own `Window` class (an OS
@@ -112,6 +117,25 @@ depletion durable — the second time anything asks for a shelf's
 inventory, it gets back the already-searched (possibly empty) one, not a
 freshly reseeded one. `WorldState.reset()` clears all three dictionaries
 alongside its Phase 2A ones, restoring a clean new-game state.
+
+**Snapshot serialization and restore (Phase 3B.1).**
+`WorldState.to_snapshot()` now includes all three dictionaries:
+`door_states` and `prop_states` copied directly (already plain
+`StringName`/`bool`/`Dictionary` data), `prop_containers` converted via
+each `Inventory.to_dict()` (`{capacity_weight, counts}`) since an
+`Inventory` object itself isn't snapshot-safe data.
+`WorldState.restore_phase_3b_state(snapshot)` is the matching read path
+-- **idempotent** (each of the three dictionaries is fully replaced, not
+merged, so restoring the same snapshot twice in a row is identical to
+restoring it once: no duplicate registrations, no doubled loot) and
+exact (a depleted/empty container restores as still empty, not
+resurrected). Deliberately scoped to just these three -- survivors/
+settlements/containers/jobs/drops remain snapshot-*only* preparation for
+a future save/load system (see `docs/architecture.md`'s
+`WorldState.to_snapshot()` note); reconstructing their live runtime nodes
+is a separate, larger undertaking this pass doesn't attempt. `WorldState.reset()`
+still fully clears all three afterward regardless of whether a restore
+ever happened.
 
 ## Minimal HUD — `scenes/ui/HUD.tscn`, `scripts/ui/hud.gd`
 

@@ -36,6 +36,7 @@ const PLAYER_SCENE: PackedScene = preload("res://scenes/actors/Player.tscn")
 const DOOR_SCENE: PackedScene = preload("res://scenes/world/Door.tscn")
 const WINDOW_SCENE: PackedScene = preload("res://scenes/world/Window.tscn")
 const CONVENIENCE_STORE_SCENE: PackedScene = preload("res://scenes/world/buildings/ConvenienceStore01.tscn")
+const CLINIC_SCENE: PackedScene = preload("res://scenes/world/buildings/Clinic01.tscn")
 
 func _ready() -> void:
 	call_deferred("_run_all")
@@ -70,8 +71,37 @@ func _run_all() -> void:
 	await _run_test("cosmetic_rng_does_not_affect_zombie_retarget_timing", _test_cosmetic_rng_does_not_affect_zombie_retarget_timing)
 	await _run_test("cosmetic_rng_does_not_affect_spawn_positions", _test_cosmetic_rng_does_not_affect_spawn_positions)
 
+	## --- Phase 3B.1: authored-region spawning ------------------------------
+	await _run_test("spawn_region_production_spawn_lands_in_authored_region", _test_spawn_region_production_spawn_lands_in_authored_region)
+	await _run_test("spawn_region_selection_is_deterministic_for_same_seed", _test_spawn_region_selection_is_deterministic_for_same_seed)
+	await _run_test("spawn_region_rejects_point_inside_wall", _test_spawn_region_rejects_point_inside_wall)
+	await _run_test("spawn_region_rejects_point_inside_player_current_room", _test_spawn_region_rejects_point_inside_player_current_room)
+	await _run_test("spawn_region_rejects_point_inside_safehouse", _test_spawn_region_rejects_point_inside_safehouse)
+	await _run_test("spawn_region_failed_search_delays_spawn_safely", _test_spawn_region_failed_search_delays_spawn_safely)
+	await _run_test("cosmetic_rng_does_not_affect_spawn_region_selection", _test_cosmetic_rng_does_not_affect_spawn_region_selection)
+	await _run_test("snapshot_includes_and_restores_phase_3b_state", _test_snapshot_includes_and_restores_phase_3b_state)
+	await _run_test("snapshot_restore_is_idempotent_no_duplication", _test_snapshot_restore_is_idempotent_no_duplication)
+	await _run_test("detectable_visibility_multiplier_affects_detection_range", _test_detectable_visibility_multiplier_affects_detection_range)
+	await _run_test("detectable_missing_component_defaults_to_full_visibility", _test_detectable_missing_component_defaults_to_full_visibility)
+	await _run_test("detectable_walking_noise_heard_only_nearby", _test_detectable_walking_noise_heard_only_nearby)
+	await _run_test("detectable_running_noise_reaches_farther_than_walking", _test_detectable_running_noise_reaches_farther_than_walking)
+	await _run_test("detectable_search_and_salvage_emit_configured_noise", _test_detectable_search_and_salvage_emit_configured_noise)
+	await _run_test("detectable_indoor_target_blocked_by_wall_and_visible_through_open_door", _test_detectable_indoor_target_blocked_by_wall_and_visible_through_open_door)
+	await _run_test("survivor_routes_around_wall_when_direct_path_blocked", _test_survivor_routes_around_wall_when_direct_path_blocked)
+	await _run_test("survivor_route_updates_when_door_state_changes", _test_survivor_route_updates_when_door_state_changes)
+	await _run_test("survivor_move_toward_unreachable_point_terminates_safely", _test_survivor_move_toward_unreachable_point_terminates_safely)
+	await _run_test("survivor_entering_and_leaving_building_updates_detectable_context", _test_survivor_entering_and_leaving_building_updates_detectable_context)
+	await _run_test("building_portal_outside_view_cone_stays_hidden", _test_building_portal_outside_view_cone_stays_hidden)
+	await _run_test("building_portal_door_toggle_updates_reveal_immediately_while_stationary", _test_building_portal_door_toggle_updates_reveal_immediately_while_stationary)
+	await _run_test("building_portal_reveals_two_hops_through_open_doors", _test_building_portal_reveals_two_hops_through_open_doors)
+	await _run_test("building_portal_blocks_two_hop_room_when_either_door_closed", _test_building_portal_blocks_two_hop_room_when_either_door_closed)
+	await _run_test("building_portal_intact_window_reveals_but_still_blocks_movement", _test_building_portal_intact_window_reveals_but_still_blocks_movement)
+	await _run_test("building_portal_boarded_window_blocks_reveal", _test_building_portal_boarded_window_blocks_reveal)
+	await _run_test("building_portal_visual_fade_never_changes_collision", _test_building_portal_visual_fade_never_changes_collision)
+
 	## --- Phase 3B: fixed district, buildings, interaction, perception -----
 	await _run_test("district_layout_checksum_matches_committed_baseline", _test_district_layout_checksum_matches_committed_baseline)
+	await _run_test("baked_district_scene_has_expected_structure", _test_baked_district_scene_has_expected_structure)
 	await _run_test("door_closed_blocks_and_open_permits_movement_and_vision", _test_door_closed_blocks_and_open_permits_movement_and_vision)
 	await _run_test("door_interact_toggles_exactly_once_and_persists", _test_door_interact_toggles_exactly_once_and_persists)
 	await _run_test("door_refuses_to_close_on_blocking_body", _test_door_refuses_to_close_on_blocking_body)
@@ -104,6 +134,7 @@ func _run_test(test_name: String, fn: Callable) -> void:
 	WorldState.reset()
 	SimulationClock.reset()
 	NoiseManager.reset()
+	UrbanNavigationService.reset()
 	await fn.call()
 	if _test_failed:
 		_fail_count += 1
@@ -1118,6 +1149,884 @@ func _test_cosmetic_rng_does_not_affect_spawn_positions() -> void:
 
 	_assert(pos_a.is_equal_approx(pos_b), "same rng_seed must produce identical spawn positions regardless of interleaved CosmeticRng usage (got %s vs %s)" % [pos_a, pos_b])
 
+## --- Phase 3B.1: authored-region spawning --------------------------------
+
+func _make_spawn_manager(seed_value: int) -> SpawnManager:
+	var manager := SpawnManager.new()
+	manager.zombie_scene = ZOMBIE_SCENE
+	manager.rng_seed = seed_value
+	add_child(manager)
+	await get_tree().process_frame
+	return manager
+
+func _make_spawn_region(region_id: StringName, pos: Vector2, radius: float) -> SpawnRegion:
+	var region := SpawnRegion.new()
+	region.region_id = region_id
+	region.radius = radius
+	add_child(region)
+	region.global_position = pos
+	await get_tree().process_frame
+	return region
+
+func _test_spawn_region_production_spawn_lands_in_authored_region() -> void:
+	var container := Node2D.new()
+	add_child(container)
+	container.add_to_group("entity_container")
+	var region := await _make_spawn_region(&"test/region_a", Vector2(70000, 70000), 100.0)
+	var manager := await _make_spawn_manager(555)
+
+	var zombie: Node2D = manager._spawn_one()
+	_assert(zombie != null, "with one valid authored region, a production spawn must succeed")
+	_assert(zombie.global_position.distance_to(region.global_position) <= region.radius + 0.01, "the spawned position must fall within the authored region's own radius")
+
+	zombie.queue_free()
+	region.queue_free()
+	container.queue_free()
+	manager.queue_free()
+	await get_tree().process_frame
+
+func _test_spawn_region_selection_is_deterministic_for_same_seed() -> void:
+	var region_a := await _make_spawn_region(&"test/det_a", Vector2(70500, 70000), 120.0)
+	var region_b := await _make_spawn_region(&"test/det_b", Vector2(70500, 70400), 120.0)
+
+	var manager_1 := await _make_spawn_manager(9001)
+	var pos_1: Variant = manager_1._pick_region_spawn_position()
+	manager_1.queue_free()
+	await get_tree().process_frame
+
+	var manager_2 := await _make_spawn_manager(9001)
+	var pos_2: Variant = manager_2._pick_region_spawn_position()
+	manager_2.queue_free()
+	await get_tree().process_frame
+
+	_assert(pos_1 != null and pos_2 != null, "sanity: both picks should succeed with two open regions")
+	_assert((pos_1 as Vector2).is_equal_approx(pos_2), "the same rng_seed against the same regions must pick the identical region and point")
+
+	region_a.queue_free()
+	region_b.queue_free()
+	await get_tree().process_frame
+
+func _test_spawn_region_rejects_point_inside_wall() -> void:
+	var wall := StaticBody2D.new()
+	wall.collision_layer = 1
+	wall.collision_mask = 0
+	var shape := RectangleShape2D.new()
+	shape.size = Vector2(400, 400)
+	var collider := CollisionShape2D.new()
+	collider.shape = shape
+	wall.add_child(collider)
+	wall.position = Vector2(71000, 70000)
+	add_child(wall)
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+
+	# Small region fully inside the wall's own footprint -- every candidate must be rejected.
+	var region := await _make_spawn_region(&"test/walled_region", Vector2(71000, 70000), 50.0)
+	var manager := await _make_spawn_manager(42)
+
+	var position: Variant = manager._pick_region_spawn_position()
+	_assert(position == null, "a region entirely inside World collision must never yield a valid spawn candidate")
+
+	manager.queue_free()
+	region.queue_free()
+	wall.queue_free()
+	await get_tree().process_frame
+
+func _test_spawn_region_rejects_point_inside_player_current_room() -> void:
+	var room := Room.new()
+	room.room_id = &"test_room"
+	room.building_id = &"test_building"
+	var room_shape := RectangleShape2D.new()
+	room_shape.size = Vector2(300, 300)
+	var room_collider := CollisionShape2D.new()
+	room_collider.shape = room_shape
+	room.add_child(room_collider)
+	room.position = Vector2(72000, 70000)
+	add_child(room)
+	await get_tree().physics_frame
+
+	var player: Player = PLAYER_SCENE.instantiate()
+	add_child(player)
+	player.global_position = room.global_position
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+
+	_assert(Room.room_containing(player) == room, "sanity: the player must read as inside the room once physically overlapping it")
+
+	# Region entirely inside the room's own bounds.
+	var region := await _make_spawn_region(&"test/room_region", room.global_position, 80.0)
+	var manager := await _make_spawn_manager(7)
+
+	var position: Variant = manager._pick_region_spawn_position()
+	_assert(position == null, "a region entirely inside the player's current room must never yield a valid spawn candidate")
+
+	manager.queue_free()
+	region.queue_free()
+	player.queue_free()
+	room.queue_free()
+	await get_tree().process_frame
+
+func _test_spawn_region_rejects_point_inside_safehouse() -> void:
+	var settlement := Settlement.new()
+	settlement.settlement_name = "TestSafehouse"
+	settlement.safe_radius = 200.0
+	add_child(settlement)
+	settlement.global_position = Vector2(73000, 70000)
+	await get_tree().process_frame
+
+	var region := await _make_spawn_region(&"test/safehouse_region", settlement.global_position, 60.0)
+	var manager := await _make_spawn_manager(11)
+
+	var position: Variant = manager._pick_region_spawn_position()
+	_assert(position == null, "a region entirely inside the safehouse's safe_radius must never yield a valid spawn candidate")
+
+	manager.queue_free()
+	region.queue_free()
+	settlement.queue_free()
+	await get_tree().process_frame
+
+## "Delay" is observed as a skipped spawn (null, zero-count) rather than a
+## crash or a forced arbitrary-position fallback -- SpawnManager's own
+## periodic timer is what retries it later, nothing this test needs to
+## simulate directly.
+func _test_spawn_region_failed_search_delays_spawn_safely() -> void:
+	var container := Node2D.new()
+	add_child(container)
+	container.add_to_group("entity_container")
+
+	var wall := StaticBody2D.new()
+	wall.collision_layer = 1
+	var shape := RectangleShape2D.new()
+	shape.size = Vector2(400, 400)
+	var collider := CollisionShape2D.new()
+	collider.shape = shape
+	wall.add_child(collider)
+	wall.position = Vector2(74000, 70000)
+	add_child(wall)
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+
+	var region := await _make_spawn_region(&"test/always_blocked", Vector2(74000, 70000), 50.0)
+	var manager := await _make_spawn_manager(3)
+
+	var zombie: Node2D = manager._spawn_one()
+	_assert(zombie == null, "a spawn attempt with no valid candidate must be skipped, not forced through")
+	_assert(manager.active_zombie_count() == 0, "a skipped spawn must not register a phantom zombie")
+
+	manager.queue_free()
+	region.queue_free()
+	wall.queue_free()
+	container.queue_free()
+	await get_tree().process_frame
+
+func _test_cosmetic_rng_does_not_affect_spawn_region_selection() -> void:
+	var region_a := await _make_spawn_region(&"test/rng_a", Vector2(75000, 70000), 120.0)
+	var region_b := await _make_spawn_region(&"test/rng_b", Vector2(75000, 70400), 120.0)
+
+	var manager_1 := await _make_spawn_manager(4242)
+	var pos_1: Variant = manager_1._pick_region_spawn_position()
+	manager_1.queue_free()
+	await get_tree().process_frame
+
+	for i in range(1000):
+		CosmeticRng.randf()
+		CosmeticRng.randi_range(0, 7)
+
+	var manager_2 := await _make_spawn_manager(4242)
+	var pos_2: Variant = manager_2._pick_region_spawn_position()
+	manager_2.queue_free()
+	await get_tree().process_frame
+
+	_assert(pos_1 != null and pos_2 != null, "sanity: both picks should succeed")
+	_assert((pos_1 as Vector2).is_equal_approx(pos_2), "same rng_seed must produce identical spawn-region selection regardless of interleaved CosmeticRng usage")
+
+	region_a.queue_free()
+	region_b.queue_free()
+	await get_tree().process_frame
+
+## --- Phase 3B.1: snapshot serialization of persistent prop state ---------
+
+## The full round trip Section 7 asks for: state -> snapshot -> reset ->
+## restore -> identical state, covering an open door, a salvaged prop
+## flag, a partially-searched (non-empty) container, AND a fully-depleted
+## (empty) one -- "depleted" is exactly the case a naive restore could get
+## wrong by treating an empty counts dict as "nothing to restore."
+func _test_snapshot_includes_and_restores_phase_3b_state() -> void:
+	WorldState.set_door_open(&"test/snap_door", true)
+	WorldState.set_prop_state_flag(&"test/snap_wreck", &"salvaged", true)
+	var partial: Inventory = WorldState.get_or_create_prop_container(&"test/snap_shelf", 50.0, {"food_ration": 3, "materials": 2})
+	partial.remove_item(&"food_ration", 1) # 2 food_ration + 2 materials left -- a "partially searched" container
+	var depleted: Inventory = WorldState.get_or_create_prop_container(&"test/snap_empty_fridge", 40.0, {"water_bottle": 1})
+	depleted.remove_item(&"water_bottle", 1) # now fully empty -- a "depleted" container
+
+	var snapshot: Dictionary = WorldState.to_snapshot()
+	_assert(snapshot.has("door_states") and snapshot.has("prop_states") and snapshot.has("prop_containers"), "to_snapshot() must include all three Phase 3B.1 dictionaries")
+	_assert(snapshot["door_states"][&"test/snap_door"] == true, "the snapshot must capture the door's open state")
+	_assert(snapshot["prop_states"][&"test/snap_wreck"][&"salvaged"] == true, "the snapshot must capture the salvaged flag")
+	_assert(snapshot["prop_containers"][&"test/snap_shelf"]["counts"][&"food_ration"] == 2, "the snapshot must capture the exact partially-searched contents")
+	_assert(snapshot["prop_containers"][&"test/snap_empty_fridge"]["counts"].is_empty(), "the snapshot must capture a depleted container as truly empty, not omit it")
+
+	WorldState.reset()
+	_assert(WorldState.door_states.is_empty() and WorldState.prop_states.is_empty() and WorldState.prop_containers.is_empty(), "sanity: reset() must clear all three before restoring")
+
+	WorldState.restore_phase_3b_state(snapshot)
+	_assert(WorldState.get_door_open(&"test/snap_door"), "restore must reproduce the door's exact open state")
+	_assert(WorldState.get_prop_state_flag(&"test/snap_wreck", &"salvaged", false), "restore must reproduce the salvaged flag")
+
+	var restored_shelf: Inventory = WorldState.get_or_create_prop_container(&"test/snap_shelf", 999.0, {"materials": 999})
+	_assert(restored_shelf.get_count(&"food_ration") == 2, "restore must reproduce the exact partially-searched food_ration count")
+	_assert(restored_shelf.get_count(&"materials") == 2, "restore must reproduce the exact partially-searched materials count")
+	_assert(restored_shelf.capacity_weight == 50.0, "restore must reproduce the container's original capacity, not whatever a later get_or_create_prop_container call happens to pass")
+
+	var restored_fridge: Inventory = WorldState.get_or_create_prop_container(&"test/snap_empty_fridge", 999.0, {"water_bottle": 999})
+	_assert(restored_fridge.is_empty(), "restore must reproduce a depleted container as still empty, not resurrect its original stock")
+
+func _test_snapshot_restore_is_idempotent_no_duplication() -> void:
+	WorldState.set_door_open(&"test/idem_door", true)
+	WorldState.get_or_create_prop_container(&"test/idem_shelf", 50.0, {"materials": 4})
+	var snapshot: Dictionary = WorldState.to_snapshot()
+
+	WorldState.restore_phase_3b_state(snapshot)
+	WorldState.restore_phase_3b_state(snapshot) # restoring twice must not double anything
+
+	_assert(WorldState.prop_containers.size() == 1, "restoring the same snapshot twice must not grow prop_containers")
+	_assert(WorldState.get_or_create_prop_container(&"test/idem_shelf", 50.0, {}).get_count(&"materials") == 4, "restoring the same snapshot twice must not duplicate a container's contents")
+	_assert(WorldState.door_states.size() == 1, "restoring the same snapshot twice must not grow door_states")
+
+## --- Phase 3B.1: DetectableComponent + noise-aware perception -----------
+## All fixtures live in an isolated coordinate region (80000+) for the
+## same reason the Phase 3B perception tests do -- see the note near
+## _test_zombie_perception_detects_and_chases_visible_target.
+
+func _make_detectable(owner_node: Node2D) -> DetectableComponent:
+	var detectable := DetectableComponent.new()
+	detectable.name = "DetectableComponent" # get_node_or_null("DetectableComponent") depends on this exact name
+	owner_node.add_child(detectable)
+	return detectable
+
+## A target beyond the STATIONARY-reduced effective vision range (but
+## within the full range) must go undetected while stationary and become
+## detectable the instant it starts moving, at the identical distance --
+## the range-based version of "stationary takes longer to detect" (in the
+## limit, "never" while it stays out of the reduced range).
+func _test_detectable_visibility_multiplier_affects_detection_range() -> void:
+	var target := _make_attackable_target(Vector2(80000, 80220)) # 220 units away
+	var detectable := _make_detectable(target)
+
+	var zombie: Zombie = ZOMBIE_SCENE.instantiate()
+	add_child(zombie)
+	zombie.global_position = Vector2(80000, 80000)
+	zombie.perception.facing = Vector2.DOWN
+
+	detectable.report_movement_speed(0.0) # stationary: effective range 260 * 0.7 = 182 -- 220 is out of range
+	zombie.perception._tick_perception()
+	_assert(zombie.perception.state == ZombiePerceptionComponent.State.IDLE, "a stationary target beyond the reduced stationary-visibility range must not be detected")
+
+	detectable.report_movement_speed(200.0) # moving: effective range back to the full 260 -- 220 is in range
+	zombie.perception._tick_perception()
+	_assert(zombie.perception.state == ZombiePerceptionComponent.State.SUSPICIOUS, "the same target, now moving, must become detectable at the same distance a stationary reading missed")
+
+	zombie.queue_free()
+	target.queue_free()
+	await get_tree().process_frame
+
+func _test_detectable_missing_component_defaults_to_full_visibility() -> void:
+	var target := _make_attackable_target(Vector2(80100, 80100)) # no DetectableComponent attached at all
+	var zombie: Zombie = ZOMBIE_SCENE.instantiate()
+	add_child(zombie)
+	zombie.global_position = Vector2(80100, 80000)
+	zombie.perception.facing = Vector2.DOWN
+
+	zombie.perception._tick_perception()
+	_assert(zombie.perception.state == ZombiePerceptionComponent.State.SUSPICIOUS, "a target with no DetectableComponent must still be detectable normally -- the 1.0-visibility fallback default")
+
+	zombie.queue_free()
+	target.queue_free()
+	await get_tree().process_frame
+
+func _test_detectable_walking_noise_heard_only_nearby() -> void:
+	var actor := Node2D.new()
+	add_child(actor)
+	actor.global_position = Vector2(81000, 80000)
+	var detectable := _make_detectable(actor)
+	detectable.report_movement_speed(50.0) # walking (below running_speed_threshold)
+	detectable.report_activity_noise(detectable.effective_movement_loudness(), &"footstep")
+
+	var near: Array[Dictionary] = NoiseManager.recent_noises_near(Vector2(81000, 80030), 220.0) # 30 units -- within walking's ~40 radius
+	var far: Array[Dictionary] = NoiseManager.recent_noises_near(Vector2(81000, 80100), 220.0) # 100 units -- beyond it
+	_assert(not near.is_empty(), "walking noise must be heard by a listener close by")
+	_assert(far.is_empty(), "walking noise must NOT be heard by a listener far away")
+
+	actor.queue_free()
+	await get_tree().process_frame
+
+func _test_detectable_running_noise_reaches_farther_than_walking() -> void:
+	var actor := Node2D.new()
+	add_child(actor)
+	actor.global_position = Vector2(82000, 80000)
+	var detectable := _make_detectable(actor)
+	detectable.report_movement_speed(200.0) # running
+	detectable.report_activity_noise(detectable.effective_movement_loudness(), &"footstep")
+
+	var listener_pos := Vector2(82000, 80090) # 90 units -- beyond walking's ~40 radius, within running's ~120 radius
+	var heard: Array[Dictionary] = NoiseManager.recent_noises_near(listener_pos, 220.0)
+	_assert(not heard.is_empty(), "running noise must reach a listener that walking noise from the same spot would not")
+
+	actor.queue_free()
+	await get_tree().process_frame
+
+func _test_detectable_search_and_salvage_emit_configured_noise() -> void:
+	var parent := Node2D.new()
+	add_child(parent)
+	BuildingShellBuilder.add_loot_furniture(parent, Vector2(83000, 80000), null, Vector2(20, 20), &"test/detect_shelf", 60.0, {"food_ration": 1})
+	BuildingShellBuilder.add_salvage_prop(parent, Vector2(83100, 80000), null, Vector2(20, 20), &"test/detect_wreck", 2)
+	await get_tree().process_frame
+
+	var loot_area: Area2D = null
+	for child in (parent.get_child(0) as Node2D).get_children():
+		if child is Area2D:
+			loot_area = child
+	var salvage_area: Area2D = null
+	for child in (parent.get_child(1) as Node2D).get_children():
+		if child is Area2D:
+			salvage_area = child
+
+	var actor: Player = PLAYER_SCENE.instantiate()
+	add_child(actor)
+	await get_tree().process_frame
+
+	actor.global_position = Vector2(83000, 80000)
+	(loot_area.get_node("InteractableComponent") as InteractableComponent).interact(actor)
+	var search_noise: Array[Dictionary] = NoiseManager.recent_noises_near(actor.global_position, 220.0)
+	_assert(not search_noise.is_empty() and search_noise[-1]["category"] == &"search", "searching a loot container must emit a 'search' noise")
+
+	NoiseManager.reset()
+	actor.global_position = Vector2(83100, 80000)
+	(salvage_area.get_node("InteractableComponent") as InteractableComponent).interact(actor)
+	var salvage_noise: Array[Dictionary] = NoiseManager.recent_noises_near(actor.global_position, 220.0)
+	_assert(not salvage_noise.is_empty() and salvage_noise[-1]["category"] == &"salvage", "salvaging a prop must emit a 'salvage' noise")
+
+	parent.free()
+	actor.free()
+	await get_tree().process_frame
+
+## Proves indoor status is purely descriptive (DetectableComponent.is_indoors)
+## and never grants automatic invisibility -- a closed door (a wall) blocks
+## detection of the exact same indoor target that an open door reveals.
+func _test_detectable_indoor_target_blocked_by_wall_and_visible_through_open_door() -> void:
+	var door: Door = DOOR_SCENE.instantiate()
+	add_child(door)
+	door.global_position = Vector2(84000, 80050)
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+
+	var target := _make_attackable_target(Vector2(84000, 80100))
+	var detectable := _make_detectable(target)
+	detectable.set_indoor_context(&"test_building", &"test_room")
+	_assert(detectable.is_indoors, "sanity: the target reads as indoors")
+
+	var zombie: Zombie = ZOMBIE_SCENE.instantiate()
+	add_child(zombie)
+	zombie.global_position = Vector2(84000, 80000)
+	zombie.perception.facing = Vector2.DOWN
+
+	zombie.perception._tick_perception()
+	_assert(zombie.perception.state == ZombiePerceptionComponent.State.IDLE, "a closed door must block detection of an indoor target -- being indoors is never itself what hides it")
+
+	door.toggle() # open it
+	await get_tree().physics_frame
+	zombie.perception._tick_perception()
+	_assert(zombie.perception.state == ZombiePerceptionComponent.State.SUSPICIOUS, "the same indoor target, now visible through the open door, must become detectable")
+
+	zombie.queue_free()
+	target.queue_free()
+	door.queue_free()
+	await get_tree().process_frame
+
+## --- Phase 3B.1: survivor navigation via UrbanNavigationService ---------
+
+## A direct path blocked by a real wall must produce a routed path around
+## it -- mirrors Zombie._seek_point()'s own contract, exercised here at
+## Survivor.move_toward_point() (the single shared steering helper every
+## UtilityAction already calls, so this covers all of them at once rather
+## than needing a per-action test).
+func _test_survivor_routes_around_wall_when_direct_path_blocked() -> void:
+	UrbanNavigationService.build(Vector2(400, 400))
+	await get_tree().physics_frame
+
+	var settlement: Settlement = await _make_settlement(["general"])
+	var survivor: Survivor = await _make_survivor({"name": "Router"}, settlement)
+	survivor.global_position = Vector2(0, 0)
+
+	var wall := StaticBody2D.new()
+	wall.collision_layer = 1
+	wall.collision_mask = 0
+	var shape := RectangleShape2D.new()
+	shape.size = Vector2(200, 20)
+	var collider := CollisionShape2D.new()
+	collider.shape = shape
+	wall.add_child(collider)
+	wall.position = Vector2(0, 100)
+	add_child(wall)
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	UrbanNavigationService.build(Vector2(400, 400)) # rebuild AFTER the wall exists so the grid knows about it
+
+	var target := Vector2(0, 200)
+	survivor._nav_recheck_timer = 0.0 # force an immediate recheck instead of waiting out NAV_RECHECK_INTERVAL
+	survivor.move_toward_point(target, 0.1)
+
+	_assert(not survivor._nav_path.is_empty(), "a direct path blocked by a wall must produce a real routed path around it, not just stall on a blocked straight line")
+
+	wall.queue_free()
+	settlement.free()
+	await get_tree().process_frame
+
+## The mechanism Survivor's route-recheck depends on: a closed door blocks
+## the direct line, and opening it restores that line -- proven through a
+## real Door (not just direct grid manipulation), matching how
+## DistrictBuilder wires door state into UrbanNavigationService in
+## production.
+func _test_survivor_route_updates_when_door_state_changes() -> void:
+	UrbanNavigationService.build(Vector2(400, 400))
+	await get_tree().physics_frame
+
+	var door: Door = DOOR_SCENE.instantiate()
+	door.door_id = &"test/survivor_nav_door"
+	add_child(door)
+	door.global_position = Vector2(0, 100)
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	UrbanNavigationService.register_door(door.door_id, door.global_position)
+	UrbanNavigationService.mark_door_closed(door.door_id)
+
+	var target := Vector2(0, 200)
+	_assert(not UrbanNavigationService.is_direct_path_clear(Vector2(0, 0), target), "sanity: the closed door must block the direct line to the target")
+
+	door.toggle() # open it
+	await get_tree().physics_frame
+	_assert(UrbanNavigationService.is_direct_path_clear(Vector2(0, 0), target), "opening the door must restore the direct line")
+
+	door.queue_free()
+	await get_tree().process_frame
+
+## A target so far away no reasonable route exists (grid unbuilt/no path)
+## must never crash or produce NaN/Inf velocity -- move_toward_point's
+## fallback (plain direct-line steering) always terminates safely.
+func _test_survivor_move_toward_unreachable_point_terminates_safely() -> void:
+	UrbanNavigationService.reset()
+	var settlement: Settlement = await _make_settlement(["general"])
+	var survivor: Survivor = await _make_survivor({"name": "Stuck"}, settlement)
+	survivor.global_position = Vector2(0, 0)
+	survivor._nav_recheck_timer = 0.0
+
+	var arrived: bool = survivor.move_toward_point(Vector2(999999, 999999), 0.1)
+	_assert(not arrived, "a very distant target should not report arrival in one tick")
+	_assert(is_finite(survivor.velocity.x) and is_finite(survivor.velocity.y), "movement toward an unreachable/out-of-bounds target must never produce NaN/Inf velocity")
+
+	settlement.free()
+	await get_tree().process_frame
+
+## Section 5 ("enters and leaves every authored building") + Section 6
+## (DetectableComponent indoor context) together: a real Survivor
+## physically entering/leaving a room updates its own DetectableComponent,
+## the same mechanism already proven for the player.
+func _test_survivor_entering_and_leaving_building_updates_detectable_context() -> void:
+	var building: ConvenienceStore01 = CONVENIENCE_STORE_SCENE.instantiate()
+	add_child(building)
+	building.global_position = Vector2(90000, 90000)
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+
+	var settlement: Settlement = await _make_settlement(["general"])
+	var survivor: Survivor = await _make_survivor({"name": "Visitor"}, settlement)
+	var retail_room: Room = building.get_node("Rooms/RetailFloor")
+	survivor.global_position = retail_room.global_position
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+
+	_assert(survivor.detectable.is_indoors, "a survivor physically inside a room must read as indoors via its DetectableComponent")
+	_assert(survivor.detectable.current_room_id == &"retail_floor", "the survivor's DetectableComponent must record the correct current room")
+	_assert(survivor.detectable.current_building_id == &"convenience_store_01", "the survivor's DetectableComponent must record the correct current building")
+
+	survivor.global_position = Vector2(99000, 99000) # leave entirely
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+
+	_assert(not survivor.detectable.is_indoors, "leaving every room must clear indoor status")
+
+	settlement.free()
+	building.queue_free()
+	await get_tree().process_frame
+
+## --- Phase 3B.1: bounded room-portal visibility --------------------------
+
+func _find_first_static_body(node: Node) -> StaticBody2D:
+	for child in node.get_children():
+		if child is StaticBody2D:
+			return child
+		var nested: StaticBody2D = _find_first_static_body(child)
+		if nested:
+			return nested
+	return null
+
+## An open door's room only reveals if the player is actually facing
+## toward it -- a door open behind the player's back must stay hidden.
+func _test_building_portal_outside_view_cone_stays_hidden() -> void:
+	var building: ConvenienceStore01 = CONVENIENCE_STORE_SCENE.instantiate()
+	add_child(building)
+	building.global_position = Vector2(91000, 91000)
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+
+	var back_door: Door = building.get_node("Doors/BackRoomDoor")
+	back_door.toggle() # open before the player enters
+
+	var player: Player = PLAYER_SCENE.instantiate()
+	add_child(player)
+	var retail_room: Room = building.get_node("Rooms/RetailFloor")
+	player.global_position = retail_room.global_position
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+
+	# Set aim_direction as the LAST synchronous step, then force a recompute
+	# directly -- no further physics frame may elapse first, since Player's
+	# own _physics_process re-derives aim_direction from
+	# InputRouter.aim_vector (a fixed, meaningless value in this headless
+	# test context) every tick and would otherwise clobber this assignment.
+	player.aim_direction = Vector2.UP # facing AWAY from the back door (which is south/down)
+	building._apply_states()
+
+	var back_room: Room = building.get_node("Rooms/BackRoom")
+	_assert(back_room.modulate.a < 0.01, "an open door's room must stay hidden while the player is facing away from it")
+
+	player.queue_free()
+	building.queue_free()
+	await get_tree().process_frame
+
+## Toggling a door must recompute visibility synchronously, with the
+## player never moving -- proves the event-driven Door.state_changed wiring,
+## not just the room-enter/exit path.
+func _test_building_portal_door_toggle_updates_reveal_immediately_while_stationary() -> void:
+	var building: ConvenienceStore01 = CONVENIENCE_STORE_SCENE.instantiate()
+	add_child(building)
+	building.global_position = Vector2(92000, 92000)
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+
+	var player: Player = PLAYER_SCENE.instantiate()
+	add_child(player)
+	var retail_room: Room = building.get_node("Rooms/RetailFloor")
+	player.global_position = retail_room.global_position
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+
+	var back_room: Room = building.get_node("Rooms/BackRoom")
+	var back_door: Door = building.get_node("Doors/BackRoomDoor")
+	_assert(back_room.modulate.a < 0.01, "sanity: closed door -- back room starts hidden")
+
+	# Set aim_direction as the LAST synchronous step before toggling -- no
+	# further physics frame may elapse in between, since Player's own
+	# _physics_process re-derives aim_direction from InputRouter.aim_vector
+	# each tick (a fixed, meaningless value in this headless test context)
+	# and would otherwise clobber this assignment before it's ever read.
+	player.aim_direction = Vector2.DOWN
+	back_door.toggle() # open, WITHOUT the player moving or any frame elapsing
+	_assert(back_room.modulate.a > 0.99, "opening a door must reveal its room immediately, even while the player is stationary (a=%f)" % back_room.modulate.a)
+
+	player.aim_direction = Vector2.DOWN
+	back_door.toggle() # close again
+	_assert(back_room.modulate.a < 0.01, "closing a door must hide its room immediately, even while the player is stationary")
+
+	player.queue_free()
+	building.queue_free()
+	await get_tree().process_frame
+
+## Builds an isolated, furniture-free 3-room chain
+## (room_a -door_ab- room_b -door_bc- room_c), fully wired and added to the
+## tree at `origin`, for portal-depth tests. A synthetic fixture rather
+## than a real building's hand-authored geometry -- deliberately so, since
+## a real building's tightly-fit wall gaps and furniture placement made
+## the exact raycast angles this test needs fragile to hand-tune; this
+## isolates the portal-graph ALGORITHM itself from any one building's
+## specific layout.
+func _make_room_chain_fixture(origin: Vector2, id_prefix: String) -> Dictionary:
+	var controller := BuildingVisibilityController.new()
+	controller.building_id = StringName(id_prefix)
+	controller.rooms_container_path = NodePath("Rooms")
+
+	var rooms_container := Node2D.new()
+	rooms_container.name = "Rooms"
+
+	var room_a := Room.new()
+	room_a.room_id = &"room_a"
+	var shape_a := RectangleShape2D.new()
+	shape_a.size = Vector2(80, 80)
+	var collider_a := CollisionShape2D.new()
+	collider_a.shape = shape_a
+	room_a.add_child(collider_a)
+	room_a.position = Vector2(-120, 0)
+
+	var room_b := Room.new()
+	room_b.room_id = &"room_b"
+	var shape_b := RectangleShape2D.new()
+	shape_b.size = Vector2(80, 80)
+	var collider_b := CollisionShape2D.new()
+	collider_b.shape = shape_b
+	room_b.add_child(collider_b)
+	room_b.position = Vector2(0, 0)
+
+	var room_c := Room.new()
+	room_c.room_id = &"room_c"
+	var shape_c := RectangleShape2D.new()
+	shape_c.size = Vector2(80, 80)
+	var collider_c := CollisionShape2D.new()
+	collider_c.shape = shape_c
+	room_c.add_child(collider_c)
+	room_c.position = Vector2(120, 0)
+
+	rooms_container.add_child(room_a)
+	rooms_container.add_child(room_b)
+	rooms_container.add_child(room_c)
+	controller.add_child(rooms_container)
+
+	var door_ab: Door = DOOR_SCENE.instantiate()
+	door_ab.door_id = StringName(id_prefix + "/door_ab")
+	door_ab.position = Vector2(-60, 0)
+	controller.add_child(door_ab)
+
+	var door_bc: Door = DOOR_SCENE.instantiate()
+	door_bc.door_id = StringName(id_prefix + "/door_bc")
+	door_bc.position = Vector2(60, 0)
+	controller.add_child(door_bc)
+
+	add_child(controller)
+	controller.global_position = origin
+	room_a.doors = [door_ab]
+	room_b.doors = [door_ab, door_bc]
+	room_c.doors = [door_bc]
+
+	return {
+		"controller": controller,
+		"room_a": room_a, "room_b": room_b, "room_c": room_c,
+		"door_ab": door_ab, "door_bc": door_bc,
+	}
+
+## A room two portals away reveals only when BOTH hops are open and
+## line-of-sight-clear -- the positive case for MAX_PORTAL_DEPTH = 2.
+func _test_building_portal_reveals_two_hops_through_open_doors() -> void:
+	var f := _make_room_chain_fixture(Vector2(98000, 98000), "test_chain_open")
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+
+	f["door_ab"].toggle()
+	f["door_bc"].toggle()
+
+	var player: Player = PLAYER_SCENE.instantiate()
+	add_child(player)
+	player.global_position = f["room_a"].global_position
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+
+	player.aim_direction = Vector2.RIGHT # straight down the a -> b -> c line
+	f["controller"]._apply_states()
+
+	_assert(f["room_b"].modulate.a > 0.99, "the middle room (depth 1, open door, inside the view cone) must be revealed")
+	_assert(f["room_c"].modulate.a > 0.99, "the far room (depth 2, through a second open door) must also be revealed")
+
+	player.queue_free()
+	f["controller"].queue_free()
+	await get_tree().process_frame
+
+## The same two-hop room stays hidden if EITHER boundary along the chain
+## is closed -- "room behind two opaque boundaries stays hidden" (closing
+## the FIRST hop alone already blocks the whole chain, which is the
+## correct/expected behavior, not a partial reveal).
+func _test_building_portal_blocks_two_hop_room_when_either_door_closed() -> void:
+	var f := _make_room_chain_fixture(Vector2(99000, 99000), "test_chain_closed")
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	# Both doors start closed -- left untouched.
+
+	var player: Player = PLAYER_SCENE.instantiate()
+	add_child(player)
+	player.global_position = f["room_a"].global_position
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+
+	player.aim_direction = Vector2.RIGHT
+	f["controller"]._apply_states()
+
+	_assert(f["room_b"].modulate.a < 0.01, "a closed door at depth 1 must keep that room hidden")
+	_assert(f["room_c"].modulate.a < 0.01, "a room only reachable behind a closed depth-1 door must stay hidden too, regardless of the depth-2 door's own state")
+
+	player.queue_free()
+	f["controller"].queue_free()
+	await get_tree().process_frame
+
+## An intact window is a portal too (visual reveal only) -- built from raw
+## Room/BuildingWindow fixtures since none of the 5 authored buildings
+## happen to have an interior-facing window; see
+## building_visibility_controller.gd's own doc comment.
+func _test_building_portal_intact_window_reveals_but_still_blocks_movement() -> void:
+	var controller := BuildingVisibilityController.new()
+	controller.building_id = &"test_synthetic_window"
+	controller.rooms_container_path = NodePath("Rooms")
+
+	var rooms_container := Node2D.new()
+	rooms_container.name = "Rooms"
+	var room_a := Room.new()
+	room_a.room_id = &"room_a"
+	var shape_a := RectangleShape2D.new()
+	shape_a.size = Vector2(100, 100)
+	var collider_a := CollisionShape2D.new()
+	collider_a.shape = shape_a
+	room_a.add_child(collider_a)
+	room_a.position = Vector2(-60, 0)
+	var room_b := Room.new()
+	room_b.room_id = &"room_b"
+	var shape_b := RectangleShape2D.new()
+	shape_b.size = Vector2(100, 100)
+	var collider_b := CollisionShape2D.new()
+	collider_b.shape = shape_b
+	room_b.add_child(collider_b)
+	room_b.position = Vector2(60, 0)
+	rooms_container.add_child(room_a)
+	rooms_container.add_child(room_b)
+	controller.add_child(rooms_container)
+
+	var window: BuildingWindow = WINDOW_SCENE.instantiate()
+	window.window_id = &"test/synthetic_window"
+	window.is_boarded = false
+	controller.add_child(window)
+
+	add_child(controller)
+	controller.global_position = Vector2(95000, 95000)
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	room_a.windows = [window]
+	room_b.windows = [window]
+
+	var player: Player = PLAYER_SCENE.instantiate()
+	add_child(player)
+	player.global_position = room_a.global_position
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+
+	player.aim_direction = Vector2.RIGHT # toward room_b/the window
+	controller._apply_states()
+
+	_assert(controller.current_room_id() == &"room_a", "sanity: the player is in room_a")
+	_assert(room_b.modulate.a > 0.99, "an intact window connecting two rooms, inside the view cone with clear line of sight, must reveal the far room")
+
+	var space_state := get_tree().root.get_world_2d().direct_space_state
+	var query := PhysicsPointQueryParameters2D.new()
+	query.position = window.global_position
+	query.collision_mask = 1 # World
+	query.collide_with_bodies = true
+	_assert(not space_state.intersect_point(query, 1).is_empty(), "a window must still physically block movement even while permitting visual reveal")
+
+	player.queue_free()
+	controller.queue_free()
+	await get_tree().process_frame
+
+func _test_building_portal_boarded_window_blocks_reveal() -> void:
+	var controller := BuildingVisibilityController.new()
+	controller.building_id = &"test_synthetic_boarded_window"
+	controller.rooms_container_path = NodePath("Rooms")
+
+	var rooms_container := Node2D.new()
+	rooms_container.name = "Rooms"
+	var room_a := Room.new()
+	room_a.room_id = &"room_a"
+	var shape_a := RectangleShape2D.new()
+	shape_a.size = Vector2(100, 100)
+	var collider_a := CollisionShape2D.new()
+	collider_a.shape = shape_a
+	room_a.add_child(collider_a)
+	room_a.position = Vector2(-60, 0)
+	var room_b := Room.new()
+	room_b.room_id = &"room_b"
+	var shape_b := RectangleShape2D.new()
+	shape_b.size = Vector2(100, 100)
+	var collider_b := CollisionShape2D.new()
+	collider_b.shape = shape_b
+	room_b.add_child(collider_b)
+	room_b.position = Vector2(60, 0)
+	rooms_container.add_child(room_a)
+	rooms_container.add_child(room_b)
+	controller.add_child(rooms_container)
+
+	var window: BuildingWindow = WINDOW_SCENE.instantiate()
+	window.window_id = &"test/synthetic_boarded_window"
+	window.is_boarded = true
+	controller.add_child(window)
+
+	add_child(controller)
+	controller.global_position = Vector2(96000, 96000)
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	room_a.windows = [window]
+	room_b.windows = [window]
+
+	var player: Player = PLAYER_SCENE.instantiate()
+	add_child(player)
+	player.global_position = room_a.global_position
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+
+	player.aim_direction = Vector2.RIGHT # facing directly toward the (boarded) window/room_b
+	controller._apply_states()
+
+	_assert(room_b.modulate.a < 0.01, "a boarded window must never act as a reveal portal, even facing it directly")
+
+	player.queue_free()
+	controller.queue_free()
+	await get_tree().process_frame
+
+## BuildingVisibilityController must only ever touch modulate/.visible --
+## a prop's own collision must be identical whether its room is currently
+## revealed or hidden.
+func _test_building_portal_visual_fade_never_changes_collision() -> void:
+	var building: ConvenienceStore01 = CONVENIENCE_STORE_SCENE.instantiate()
+	add_child(building)
+	building.global_position = Vector2(97000, 97000)
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+
+	var back_room: Room = building.get_node("Rooms/BackRoom")
+	_assert(back_room.modulate.a < 0.01, "sanity: back_room starts hidden (outside, no player yet)")
+	var fridge_body: StaticBody2D = _find_first_static_body(back_room)
+	_assert(fridge_body != null, "sanity: found the back room's fridge collision body")
+	var collider: CollisionShape2D = null
+	for child in fridge_body.get_children():
+		if child is CollisionShape2D:
+			collider = child
+	_assert(collider != null, "sanity: found the fridge body's collision shape")
+	_assert(not collider.disabled, "a prop's collision must never be disabled while its room is hidden")
+
+	var player: Player = PLAYER_SCENE.instantiate()
+	add_child(player)
+	var retail_room: Room = building.get_node("Rooms/RetailFloor")
+	player.global_position = retail_room.global_position
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+
+	_assert(not collider.disabled, "the same prop's collision must remain unchanged after the player entered and the building's overall reveal state changed")
+
+	player.queue_free()
+	building.queue_free()
+	await get_tree().process_frame
+
 ## --- Phase 3B: fixed district, buildings, interaction, perception ---------
 
 ## A Node2D fixture standing in for a survivor/player as a raw perception
@@ -1151,8 +2060,81 @@ func _make_vision_wall(local_position: Vector2) -> StaticBody2D:
 ## deliberate map change should update this literal alongside the edit.
 func _test_district_layout_checksum_matches_committed_baseline() -> void:
 	var checksum: String = DistrictLayoutChecksum.compute()
-	_assert(checksum == "ffb96cfd56a6ef66a6f11b05b3213d9a054de741e72f8c817b967ce39795399d", "the fixed district's layout checksum drifted from the committed baseline (got %s) -- update the baseline deliberately if this was an intentional map change" % checksum)
+	_assert(checksum == "6166fdb924030593248c418cc6c39e7eb51176777cc9d470cbd1d0ddb71aa389", "the fixed district's layout checksum drifted from the committed baseline (got %s) -- update the baseline deliberately if this was an intentional map change" % checksum)
 	_assert(DistrictLayoutChecksum.compute() == checksum, "compute() must be perfectly deterministic across repeated calls")
+
+## Section 1 ("the fixed-layout checksum must validate the baked scene
+## content rather than only hashing constants in a script"): loads and
+## instantiates the ACTUAL baked UrbanDistrict01.tscn and validates its
+## real node structure directly -- complementing (not replacing) the
+## constants-based checksum above, which still guards
+## district_builder.gd's own authored source data (the bake tool's own
+## input). A bake that silently dropped a building, door, or spawn region
+## would fail here even if the source constants were untouched, and this
+## is also what proves the SHIPPED scene runs the lightweight
+## AuthoredDistrict glue script, not the heavy procedural DistrictBuilder.
+func _test_baked_district_scene_has_expected_structure() -> void:
+	var district_scene: PackedScene = load("res://scenes/world/maps/UrbanDistrict01.tscn")
+	var district: Node2D = district_scene.instantiate()
+	add_child(district)
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+
+	_assert(district is AuthoredDistrict, "the shipped district scene must run the lightweight AuthoredDistrict glue script, not DistrictBuilder, at runtime")
+
+	# get_node_or_null (not $-style get_node) deliberately here: a missing
+	# container must fail this test loudly via _assert, not abort the whole
+	# test function silently -- calling a method on a null get_node() result
+	# raises a script error that aborts fn.call() without setting
+	# _test_failed, which once let a badly-baked scene missing every
+	# top-level container still print PASS.
+	var buildings: Node = district.get_node_or_null("Buildings")
+	_assert(buildings != null, "the baked scene must contain a top-level Buildings container")
+	if buildings != null:
+		var building_ids: Array = []
+		for child in buildings.get_children():
+			if "building_id" in child:
+				building_ids.append(child.building_id)
+		for expected_id in [&"restaurant_01", &"convenience_store_01", &"clinic_01", &"apartment_01", &"workshop_01"]:
+			_assert(building_ids.has(expected_id), "the baked scene must contain a real, enterable %s building instance" % expected_id)
+
+	var doors: Array = []
+	for node in get_tree().get_nodes_in_group("doors"):
+		if district.is_ancestor_of(node):
+			doors.append(node)
+	_assert(doors.size() == 19, "the baked scene must contain exactly the 19 authored doors across all 5 buildings (got %d)" % doors.size())
+
+	var spawn_regions: Array = []
+	for node in get_tree().get_nodes_in_group("spawn_regions"):
+		if district.is_ancestor_of(node):
+			spawn_regions.append(node)
+	_assert(spawn_regions.size() == 7, "the baked scene must contain exactly the 7 authored spawn regions (got %d)" % spawn_regions.size())
+
+	# DynamicEntities holds every prop that needs Y-sorting against actors at
+	# runtime, not just ScavengePoint instances -- it also carries the
+	# abandoned/wrecked cars and the alley dumpster (see
+	# district_builder.gd's _build_street_props(), which places those
+	# specific props via the same "entity_container" group lookup as
+	# _build_scavenge_points()). Checking the "scavenge_point" group
+	# directly is what actually pins down "exactly 5 scavenge points",
+	# independent of that container also holding other entities.
+	var dynamic_entities: Node = district.get_node_or_null("DynamicEntities")
+	_assert(dynamic_entities != null, "the baked scene must contain a top-level DynamicEntities container")
+	if dynamic_entities != null:
+		var scavenge_points: Array = []
+		for node in get_tree().get_nodes_in_group("scavenge_point"):
+			if dynamic_entities.is_ancestor_of(node):
+				scavenge_points.append(node)
+		_assert(scavenge_points.size() == 5, "the baked scene must contain exactly the 5 authored scavenge points (got %d)" % scavenge_points.size())
+		_assert(dynamic_entities.get_child_count() == 8, "the baked scene's DynamicEntities container must hold exactly the 5 scavenge points plus the 3 Y-sorted street props (car_1, car_wreck_1, dumpster_alley) (got %d)" % dynamic_entities.get_child_count())
+
+	var ground: TileMapLayer = district.get_node_or_null("GroundLayers/Ground")
+	_assert(ground != null, "the baked scene must contain a GroundLayers/Ground TileMapLayer")
+	if ground != null:
+		_assert(ground.get_used_cells().size() > 0, "the baked Ground TileMapLayer must carry real painted cell data, not an empty layer")
+
+	district.queue_free()
+	await get_tree().process_frame
 
 ## A closed door's own CollisionShape2D must block a straight World|Vision
 ## raycast through it (movement AND vision, the same shape for both);
@@ -1187,6 +2169,14 @@ func _test_door_interact_toggles_exactly_once_and_persists() -> void:
 	var door: Door = DOOR_SCENE.instantiate()
 	door.door_id = &"test/door_persist"
 	add_child(door)
+	# An explicit, isolated position (not the default origin) plus a real
+	# physics frame -- other tests' fixtures also default to/pass through
+	# world origin, and Area2D body_entered/exited signals need at least
+	# one physics step to fully settle after add_child(); without both,
+	# this test has occasionally picked up a stray _blocked_by_body=true
+	# from unrelated leftover physics state.
+	door.global_position = Vector2(600, 600)
+	await get_tree().physics_frame
 	await get_tree().process_frame
 	_assert(not door.is_open, "sanity: a fresh door starts closed")
 
@@ -1412,9 +2402,17 @@ func _test_building_adjacent_room_reveals_through_open_door() -> void:
 	await get_tree().physics_frame
 	await get_tree().physics_frame
 
+	# Set aim_direction as the LAST synchronous step, then force a recompute
+	# directly -- Player's own _physics_process re-derives aim_direction
+	# from InputRouter.aim_vector (a fixed, meaningless value in this
+	# headless test context) every tick and would otherwise clobber this
+	# assignment before the controller ever reads it.
+	player.aim_direction = Vector2.DOWN # facing toward the back door -- the portal graph only reveals through a portal inside the player's view cone
+	building._apply_states()
+
 	_assert(building.current_room_id() == &"retail_floor", "sanity: the player is in the retail floor")
 	var back_room: Room = building.get_node("Rooms/BackRoom")
-	_assert(back_room.modulate.a > 0.99, "an adjacent room sharing a currently-OPEN door with the player's room must be revealed")
+	_assert(back_room.modulate.a > 0.99, "an adjacent room sharing a currently-OPEN door, inside the player's view cone and with a clear line of sight to it, must be revealed")
 
 	player.queue_free()
 	building.queue_free()

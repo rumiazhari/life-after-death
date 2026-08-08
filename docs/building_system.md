@@ -1,4 +1,4 @@
-# Building system (Phase 3B)
+# Building system (Phase 3B, updated for Phase 3B.1)
 
 How an enterable building is authored, how roof/interior visibility works,
 and the door/window/room identity rules everything else (persistence,
@@ -6,18 +6,28 @@ navigation, perception) depends on.
 
 ## Archetypes implemented
 
-Ground floor only, 3 of the spec's 5 requested archetypes:
+Ground floor only. All 5 of the spec's requested archetypes now exist
+(Apartment/Workshop added in Phase 3B.1):
 
 | Archetype | Scene | Rooms |
 |---|---|---|
 | Restaurant/café | `scenes/world/buildings/Restaurant01.tscn` | Dining Room, Kitchen, Pantry (+ an outdoor patio, not a Room) |
 | Convenience store | `scenes/world/buildings/ConvenienceStore01.tscn` | Retail Floor, Back Room |
 | Clinic/pharmacy | `scenes/world/buildings/Clinic01.tscn` | Waiting Area, Exam Room, Medical Storage |
+| Apartment/residential | `scenes/world/buildings/Apartment01.tscn` | Lobby, Living Room, Kitchen, Bedroom, Bathroom (shotgun layout -- see below) |
+| Workshop/warehouse | `scenes/world/buildings/Workshop01.tscn` | Loading Bay (service entrance), Work Floor (main entrance), Storage, Office |
 
-**Not implemented this pass:** Apartment/residential, Workshop/office/
-warehouse. Both would follow the exact same authoring pattern below —
-they were cut for scope, not because the architecture doesn't support
-them.
+Apartment01 and Workshop01 both use a **row layout**: rooms in a straight
+line, divided by simple full-height/full-width vertical partitions (the
+same `BuildingShellBuilder.build_partition` call repeated N times), rather
+than a 2D grid of partitions. This was a deliberate authoring-simplicity
+choice — a grid needs partitions to intersect cleanly at corners, which is
+easy to get subtly wrong by hand; a row never has that problem, at the
+cost of a less "realistic" floor plan. Apartment01 reuses `bed.png` (from
+the Phase 3A safehouse sleep-spot art) for its bedroom and
+`medical_cabinet.png` as a generic dresser/storage stand-in; Workshop01
+reuses `crate.png`/`pallet.png` (from the safehouse's own storage art) for
+its loading bay and storage room.
 
 ## Authoring pattern
 
@@ -79,36 +89,59 @@ change what blocks movement — a fully-verified property
 (`tests/test_runner.gd::_test_building_roof_hides_and_room_reveals_on_enter_restores_on_exit`
 never observes a collision change across enter/exit).
 
-**This is a deliberately simplified subset** of the full spec's
-room-portal-graph / aim-cone reveal:
+**Phase 3B.1: a real bounded room-portal graph**, replacing the earlier
+"current room + any room sharing an open door" rule:
 
-- The room currently containing the player → fully revealed
+- The room currently containing the player → always fully revealed
   (`Color(1,1,1,1)`).
-- A room sharing a currently-**open** door with the current room → also
-  revealed.
-- Every other room in the same building → fully **hidden**
+- A `Door` (open) or `BuildingWindow` (intact, not boarded) connects two
+  `Room`s (`Room.doors`/`Room.windows`, hand-authored per building — see
+  "Room/door/prop id convention" above). Starting from the player's
+  current room, a neighboring room reveals only if its connecting portal
+  is currently open/intact, **inside the player's current view cone**
+  (`view_cone_degrees`, default 120°; aim direction preferred, recent
+  movement direction as a fallback — see `_player_view_direction()`), and
+  a raycast from the player to the portal is unobstructed (so a portal on
+  the far side of another wall never counts — "walls block reveal").
+- From each such revealed room, **one further hop** is allowed
+  (`MAX_PORTAL_DEPTH = 2`) through another open/intact, line-of-sight-clear
+  portal — "look through one room into the next," not an unbounded chain.
+  The second hop only re-checks line of sight, not the view cone, since
+  the player is already looking "through" the first portal.
+- Every room outside that revealed set → fully **hidden**
   (`Color(1,1,1,0)`), not merely dimmed.
 - The roof hides for the whole building while the player is anywhere
   inside it, and restores the instant they leave every room.
 
-What the full spec asked for and this doesn't implement: no aim-direction
-/ view-cone-based reveal (a room is either fully revealed or fully
-hidden, never "revealed because you're facing that way"), no
-raycast-per-portal check, no partial dim state for "seen but not
-currently occupied." Detection of "am I still inside any room" uses
-`Area2D.get_overlapping_bodies()` (`_find_room_still_containing_player()`)
-rather than a cached portal graph, since with at most 2–3 rooms per
-building this is cheap and needed no further optimization this pass.
+**The line-of-sight raycast uses the Vision layer only (32), deliberately
+not `World | Vision` together** — real walls/closed doors/boarded windows
+all carry the Vision bit alongside World, so they still correctly block
+reveal, but an *intact* window carries World (still physically solid,
+blocking movement) and never Vision, so it does **not** block this
+raycast: "intact windows allow visual reveal but not movement." A
+`World | Vision` mask (the one every other line-of-sight check in this
+codebase uses, e.g. `ZombiePerceptionComponent`/`SpawnManager`) would
+incorrectly treat every intact window as opaque.
 
-**Reveal state only recomputes on room enter/exit** (`_on_room_body_entered`/
-`_on_room_body_exited`), not on a door's own state change. Opening a door
-while standing still in a room does not retroactively reveal a
-newly-connected room until the player next enters/exits a room — this is
-a known limitation of the simplified subset (the full portal-graph
-version would re-evaluate reveal state on every door toggle too). See
-`tests/test_runner.gd::_test_building_adjacent_room_reveals_through_open_door`
-for the exact tested contract: the door must be opened *before* the
-player enters, not after.
+**Scope still limited by the roof being building-wide, not per-room:**
+reveal is only computed while the player is inside the building. Seeing
+*into* a room through an exterior window from *outside* would need the
+roof itself to be segmented per-room (a per-room cutout, not a single
+`.visible` toggle for the whole `TileMapLayer`) — out of scope this pass.
+Every `BuildingWindow` in the current 5 buildings only borders the
+exterior (none connect two interior rooms), so the window-portal code
+path never actually fires for any of them today; it's exercised directly
+by a synthetic two-room test fixture instead, ready for a future building
+authored with a real interior-facing window.
+
+**Updates on room enter/exit (event-driven) and any door in the scene
+changing state** (`Door.state_changed`, a new signal — event-driven, so
+"opening or closing a door immediately recalculates visibility even when
+the player is stationary" holds), plus a low-frequency timer
+(`view_recheck_interval`, default 0.2s, **only running while the player
+is actually inside that specific building** via `set_physics_process`)
+to pick up aim/movement direction changes without raycasting every
+physics frame for every building in the district.
 
 ## Doors and windows
 
@@ -129,18 +162,17 @@ and `Vision` (32); doors' larger `InteractReachArea` uses `Interactable`
 
 ## Known limitations
 
-- Only 3 of 5 requested archetypes (see above).
-- Simplified room-reveal (see above) — no view-cone/aim-direction reveal,
-  no partial-dim "previously seen" state, reveal doesn't react to a door
-  toggling while the player is stationary.
+- All 5 requested archetypes now exist (see above).
+- Room reveal doesn't segment the roof per-room, so a window can't yet
+  reveal a room's interior to a player standing *outside* the building
+  (see "Scope still limited..." above).
+- No partial-dim "previously seen but not currently visible" state — a
+  room is always either fully revealed or fully hidden, never dimmed.
 - No upper floors, no basements — ground floor only, per the spec's
   explicit "do not add" list.
-- `UrbanNavigationService` is wired into `Zombie` movement (see
-  `docs/perception_system.md`) but **not** into `Survivor` movement this
-  pass — survivors don't yet path through building doors on their own;
-  this was deliberately deferred as lower-risk (avoids destabilizing the
-  existing, well-tested `SurvivorAI`/`UtilityAction` movement system this
-  late in the pass).
+- `UrbanNavigationService` is wired into both `Zombie` and `Survivor`
+  movement now (Phase 3B.1 — see `docs/perception_system.md`), sharing
+  the same per-frame request budget.
 
 ## Authoring another building
 
@@ -154,5 +186,8 @@ and `Vision` (32); doors' larger `InteractReachArea` uses `Interactable`
    the exact call shape.
 4. `_link_doors_to_rooms()` assigning each `Room.doors` array.
 5. Add its `BUILDING_SCENES`/`BUILDING_POSITIONS` entry in
-   `scripts/world/district_builder.gd` and update the
-   `DistrictLayoutChecksum` baseline test if committing a layout change.
+   `scripts/world/district_builder.gd`, re-run
+   `godot --headless --path . --script tools/bake_district.gd` to bake it
+   into the committed `UrbanDistrict01.tscn` (Phase 3B.1 — see
+   `docs/urban_map_design.md` "Baked, not runtime-built"), and update the
+   `DistrictLayoutChecksum` baseline test to match.

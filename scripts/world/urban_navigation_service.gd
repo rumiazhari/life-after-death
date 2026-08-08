@@ -61,6 +61,19 @@ func mark_door_closed(door_id: StringName) -> void:
 	if _door_cells.has(door_id):
 		_grid.set_point_solid(_door_cells[door_id], true)
 
+## True when `pos`'s grid cell exists and isn't solid -- used by
+## SpawnManager to reject a candidate spawn point that would land inside
+## an out-of-bounds or wall-occupied cell. Before `build()` has run (grid
+## not yet established) everything reads as free, since there is no
+## solidity data to reject against yet.
+func is_position_free(pos: Vector2) -> bool:
+	if not _built:
+		return true
+	var cell: Vector2i = world_to_cell(pos)
+	if not _grid.is_in_boundsv(cell):
+		return false
+	return not _grid.is_point_solid(cell)
+
 func world_to_cell(pos: Vector2) -> Vector2i:
 	return Vector2i(floori((pos.x - _origin.x) / CELL_SIZE), floori((pos.y - _origin.y) / CELL_SIZE))
 
@@ -92,3 +105,12 @@ func find_path(from: Vector2, to: Vector2) -> PackedVector2Array:
 
 func requests_this_frame() -> int:
 	return _requests_this_frame
+
+## Clears the built grid and door registry -- used by the test harness so
+## one test's `build(small_area)` can never make a later, unrelated test's
+## `is_position_free()`/`find_path()` calls see stale out-of-bounds data
+## for a completely different part of the map.
+func reset() -> void:
+	_built = false
+	_door_cells.clear()
+	_requests_this_frame = 0

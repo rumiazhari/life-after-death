@@ -40,20 +40,27 @@ const BUILDING_SCENES := {
 	"restaurant_01": "res://scenes/world/buildings/Restaurant01.tscn",
 	"convenience_store_01": "res://scenes/world/buildings/ConvenienceStore01.tscn",
 	"clinic_01": "res://scenes/world/buildings/Clinic01.tscn",
+	"apartment_01": "res://scenes/world/buildings/Apartment01.tscn",
+	"workshop_01": "res://scenes/world/buildings/Workshop01.tscn",
 }
-## Fixed positions for the 3 fully-enterable authored buildings.
+## Fixed positions for the 5 fully-enterable authored buildings.
+## apartment_01/workshop_01 (Phase 3B.1) replace the two shell buildings
+## that previously occupied these two slots ("A" at (-150,-700), "C" at
+## (950,-950) -- workshop_01 nudged to (950,-1000) since its larger
+## footprint would otherwise clip the concealed_ne spawn region).
 const BUILDING_POSITIONS := {
 	"restaurant_01": Vector2(150, 250),
 	"convenience_store_01": Vector2(850, -500),
 	"clinic_01": Vector2(-850, 500),
+	"apartment_01": Vector2(-150, -700),
+	"workshop_01": Vector2(950, -1000),
 }
 
 ## Fixed non-enterable "shell" background buildings for street density --
-## {position, half_extent, roof_letter}.
+## {position, half_extent, roof_letter}. Down to 2 (from 4) since Phase
+## 3B.1 promoted the "A"/"C" slots to real enterable buildings above.
 const SHELL_BUILDINGS := [
 	{"position": Vector2(950, 700), "half_extent": Vector2(90, 70), "roof": "D"},
-	{"position": Vector2(-150, -700), "half_extent": Vector2(80, 65), "roof": "A"},
-	{"position": Vector2(950, -950), "half_extent": Vector2(85, 90), "roof": "C"},
 	{"position": Vector2(-950, -300), "half_extent": Vector2(80, 100), "roof": "B"},
 ]
 

@@ -8,6 +8,7 @@
 [ext_resource type="Script" path="res://scripts/visuals/actor_visual.gd" id="6"]
 [ext_resource type="Texture2D" path="res://assets/pixel/actors/shadow.png" id="7"]
 [ext_resource type="Texture2D" path="res://assets/pixel/effects/muzzle_flash.png" id="8"]
+[ext_resource type="Script" path="res://scripts/core/detectable_component.gd" id="9"]
 
 [sub_resource type="CircleShape2D" id="CircleShape2D_survivor"]
 radius = 15.0
@@ -59,3 +60,6 @@ script = ExtResource("5")
 
 [node name="VisibleOnScreenNotifier2D" type="VisibleOnScreenNotifier2D" parent="."]
 shape = SubResource("RectangleShape2D_notifier")
+
+[node name="DetectableComponent" type="Node" parent="."]
+script = ExtResource("9")

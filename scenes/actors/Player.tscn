@@ -8,6 +8,7 @@
 [ext_resource type="Texture2D" path="res://assets/pixel/actors/shadow.png" id="6"]
 [ext_resource type="Texture2D" path="res://assets/pixel/effects/muzzle_flash.png" id="7"]
 [ext_resource type="Script" path="res://scripts/interaction/player_interactor.gd" id="8"]
+[ext_resource type="Script" path="res://scripts/core/detectable_component.gd" id="9"]
 
 [sub_resource type="CircleShape2D" id="CircleShape2D_player"]
 radius = 16.0
@@ -53,6 +54,9 @@ position = Vector2(24, 0)
 [node name="MuzzleFlash" type="Sprite2D" parent="WeaponPivot/Weapon/Muzzle"]
 visible = false
 texture = ExtResource("7")
+
+[node name="DetectableComponent" type="Node" parent="."]
+script = ExtResource("9")
 
 [node name="PlayerInteractor" type="Area2D" parent="."]
 script = ExtResource("8")

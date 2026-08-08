@@ -76,7 +76,13 @@ func _tick_perception() -> void:
 	var origin: Vector2 = _owner_actor.global_position
 	var candidate: Node2D = _find_best_visible_candidate(origin)
 	if candidate:
-		_suspicion = minf(_suspicion + suspicion_buildup, suspicion_threshold * 2.0)
+		# A visible target's own DetectableComponent (if present) scales how
+		# fast suspicion builds -- a stationary/low-visibility target takes
+		# longer to commit a zombie to CHASE than an obviously-moving one,
+		# even at the identical distance/angle. See detectable_component.gd
+		# "effective_visibility_multiplier."
+		var multiplier: float = _visibility_multiplier_for(candidate)
+		_suspicion = minf(_suspicion + suspicion_buildup * multiplier, suspicion_threshold * 2.0)
 		target = candidate
 		last_known_position = candidate.global_position
 		if _suspicion >= suspicion_threshold or state == State.CHASE or state == State.ATTACK:
@@ -104,9 +110,13 @@ func _check_hearing(origin: Vector2) -> void:
 ## Free (squared-distance + cone dot-product) filtering happens for every
 ## candidate; the raycast -- the only per-candidate cost that scales with
 ## actual physics-server work -- only runs for whatever survives that.
+## Each candidate's own effective vision range (vision_distance scaled by
+## its DetectableComponent's visibility multiplier, if it has one) is
+## checked individually, but ranking among candidates that pass is still
+## plain nearest-first.
 func _find_best_visible_candidate(origin: Vector2) -> Node2D:
 	var best: Node2D = null
-	var best_dist_sq: float = vision_distance * vision_distance
+	var best_dist_sq: float = INF
 	var half_cone_cos: float = cos(deg_to_rad(vision_cone_degrees * 0.5))
 	for node in _owner_actor.get_tree().get_nodes_in_group("attackable"):
 		if not is_instance_valid(node):
@@ -114,6 +124,9 @@ func _find_best_visible_candidate(origin: Vector2) -> Node2D:
 		var n2d: Node2D = node as Node2D
 		var offset: Vector2 = n2d.global_position - origin
 		var dist_sq: float = offset.length_squared()
+		var effective_range: float = vision_distance * _visibility_multiplier_for(n2d)
+		if dist_sq > effective_range * effective_range:
+			continue
 		if dist_sq > best_dist_sq:
 			continue
 		if dist_sq > 1.0:
@@ -125,6 +138,12 @@ func _find_best_visible_candidate(origin: Vector2) -> Node2D:
 		best_dist_sq = dist_sq
 		best = n2d
 	return best
+
+## 1.0 (fully neutral) for any candidate without a DetectableComponent --
+## the fallback contract every consumer of this component relies on.
+func _visibility_multiplier_for(node: Node2D) -> float:
+	var detectable: DetectableComponent = node.get_node_or_null("DetectableComponent")
+	return detectable.effective_visibility_multiplier() if detectable else 1.0
 
 func _has_line_of_sight(from: Vector2, to: Vector2) -> bool:
 	var space_state := _owner_actor.get_world_2d().direct_space_state

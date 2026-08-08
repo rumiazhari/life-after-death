@@ -163,6 +163,12 @@ func to_snapshot() -> Dictionary:
 	var drop_dicts: Dictionary = {}
 	for id in drops:
 		drop_dicts[id] = (drops[id] as WorldDrop).to_dict()
+	# Phase 3B.1: door/prop persistent state, keyed by the same stable
+	# StringName ids used everywhere else (never a node reference) -- see
+	# restore_phase_3b_state() below for the matching read path.
+	var prop_container_dicts: Dictionary = {}
+	for prop_id in prop_containers:
+		prop_container_dicts[prop_id] = (prop_containers[prop_id] as Inventory).to_dict()
 	return {
 		"sim_day": SimulationClock.game_day,
 		"sim_hour": SimulationClock.game_hour,
@@ -173,7 +179,46 @@ func to_snapshot() -> Dictionary:
 		"jobs": job_dicts,
 		"drops": drop_dicts,
 		"world_flags": world_flags.duplicate(),
+		"door_states": door_states.duplicate(),
+		"prop_states": prop_states.duplicate(true),
+		"prop_containers": prop_container_dicts,
 	}
+
+## Restores the Phase 3B.1 persistent-world-prop dictionaries
+## (door_states/prop_states/prop_containers) from a snapshot produced by
+## to_snapshot(). Deliberately scoped to just these three -- survivors/
+## settlements/containers/jobs/drops remain snapshot-only preparation for
+## a future save/load system (see to_snapshot()'s own doc comment above),
+## not restored here, since reconstructing their live runtime nodes is a
+## separate, larger undertaking this pass doesn't attempt.
+##
+## Idempotent: each of the three dictionaries is fully replaced (cleared,
+## then rebuilt from the snapshot), never merged on top of whatever state
+## already exists -- restoring the same snapshot twice in a row produces
+## the identical end state, never a duplicate registration or doubled
+## loot. Every restored Inventory is a fresh instance built from the
+## snapshot's own counts, so a later get_or_create_prop_container() call
+## for the same prop_id resolves to THIS restored instance (matching the
+## normal "same id always resolves to the same Inventory" contract) rather
+## than reseeding from that call's starting_items.
+func restore_phase_3b_state(snapshot: Dictionary) -> void:
+	door_states.clear()
+	prop_states.clear()
+	prop_containers.clear()
+	var restored_doors: Dictionary = snapshot.get("door_states", {})
+	for door_id in restored_doors:
+		door_states[StringName(door_id)] = bool(restored_doors[door_id])
+	var restored_prop_states: Dictionary = snapshot.get("prop_states", {})
+	for prop_id in restored_prop_states:
+		prop_states[StringName(prop_id)] = (restored_prop_states[prop_id] as Dictionary).duplicate(true)
+	var restored_containers: Dictionary = snapshot.get("prop_containers", {})
+	for prop_id in restored_containers:
+		var data: Dictionary = restored_containers[prop_id]
+		var inv := Inventory.new(float(data.get("capacity_weight", 0.0)))
+		var counts: Dictionary = data.get("counts", {})
+		for item_id in counts:
+			inv.add_item(StringName(item_id), int(counts[item_id]))
+		prop_containers[StringName(prop_id)] = inv
 
 func reset() -> void:
 	survivors.clear()

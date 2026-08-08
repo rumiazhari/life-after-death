@@ -949,14 +949,87 @@ own private gameplay RNG — never inside the safehouse, never using any
 RNG stream but the caller's own (same cosmetic/gameplay RNG isolation
 rule as Phase 3A.1's `CosmeticRng`).
 
-**Known limitations** (see each doc's own "Known limitations" section for
-the full list): only 3 of 5 requested building archetypes; simplified
-(non-portal-graph) room reveal; navigation is Zombie-only; several
-Section-13-style street/interior art items (van/truck, bicycles, vending
-machines, shopping carts, apartment/workshop-specific fixtures) were not
-generated this pass; no perception/nav telemetry counters were added to
-`DebugOverlay` (performance was measured via a temporary profiling probe
-instead).
+**Known limitations at the end of Phase 3B** (superseded where noted --
+see Phase 3B.1 immediately below): only 3 of 5 requested building
+archetypes; simplified (non-portal-graph) room reveal; navigation was
+Zombie-only; the district was still runtime-generated at boot, not baked;
+several Section-13-style street/interior art items (van/truck, bicycles,
+vending machines, shopping carts) were not generated; no perception/nav
+telemetry counters were added to `DebugOverlay` (performance was measured
+via a temporary profiling probe instead, still true).
+
+## Phase 3B.1: completing the authored district and local stealth systems
+
+Everything below completes items Phase 3B deliberately deferred, additive
+to Phase 3B above.
+
+**The district is now baked, not runtime-built.**
+`scenes/world/maps/UrbanDistrict01.tscn` is committed, editor-editable
+scene content (real nodes for every tile layer, building, prop, door,
+spawn region, scavenge point) produced once by
+`tools/bake_district.gd` from `DistrictBuilder`'s same fixed layout
+constants, verified byte-for-byte deterministic across repeated bakes
+(aside from Godot's own opaque per-save `unique_id` annotations). Normal
+gameplay no longer runs `DistrictBuilder` at all; the baked scene ships
+with the much smaller `scripts/world/authored_district.gd`
+(`AuthoredDistrict`), which only reparents scavenge points into the
+Y-sorted `EntityContainer` and builds `UrbanNavigationService`'s grid --
+the two things that genuinely can't be serialized into a `.tscn`. See
+`docs/urban_map_design.md` "Baked, not runtime-built."
+
+**Two more enterable buildings.** Apartment (Lobby/Living Room/Kitchen/
+Bedroom/Bathroom) and Workshop (Loading Bay/Work Floor/Storage/Office)
+now exist, all 5 of the spec's requested archetypes, using the same
+`BuildingVisibilityController`/`BuildingShellBuilder` framework, in a
+row-layout style chosen for authoring simplicity over a 2D partition grid.
+
+**`SpawnManager` now actually uses the district's authored `SpawnRegion`s**
+for production spawning, with real per-candidate rejection (World
+collision, safehouse, player's current room, invalid nav cell, actor
+overlap, too-close-to-player, directly-visible-to-player) within a
+bounded search -- never a silent fallback to an arbitrary camera-relative
+position. See `docs/urban_map_design.md` "Spawn regions."
+
+**Room-portal visibility is now the real bounded graph** the original
+spec asked for: view-cone-gated (aim preferred, movement fallback),
+line-of-sight-checked reveal through open doors and intact windows, up to
+`MAX_PORTAL_DEPTH = 2` hops, event-driven on door-toggle (not just
+room-enter/exit). See `docs/building_system.md`.
+
+**`UrbanNavigationService` is wired into `Survivor` movement too**, at
+the single shared `Survivor.move_toward_point()` every `UtilityAction`
+already calls -- every existing survivor behavior gained door/wall-aware
+routing for free, sharing the same global per-frame request budget with
+every zombie.
+
+**`DetectableComponent`** (`scripts/core/detectable_component.gd`) gives
+Player and Survivor a shared "how detectable am I" profile --
+`visibility_multiplier` (reduced further while stationary), movement/
+activity noise reporting through the existing `NoiseManager`, and indoor/
+room context (purely descriptive; never grants invisibility on its own).
+`ZombiePerceptionComponent` consumes it when present, defaulting to
+neutral full detectability when absent. See `docs/perception_system.md`
+"Detectability."
+
+**`WorldState.to_snapshot()`/`restore_phase_3b_state()`** now cover
+`door_states`/`prop_states`/`prop_containers`, idempotent and exact
+(searched/depleted/salvaged state round-trips precisely, restoring the
+same snapshot twice never duplicates anything). See
+`docs/interaction_system.md` "Snapshot serialization and restore."
+
+**Known limitations after Phase 3B.1:** the roof stays a single
+building-wide toggle, so a window can't yet reveal a room's interior to
+someone standing outside; no per-room partial-dim "previously seen"
+state; the baked scene's drift-detection is structural (counts/ids), not
+a full pixel-perfect tile hash; gunfire noise doesn't route through the
+firer's own `DetectableComponent`; no perception/nav telemetry counters
+in `DebugOverlay` (still measured via a temporary profiling probe); live
+Godot AI MCP interactive validation (entering buildings, watching
+perception debug draws, etc.) could not be performed for this specific
+pass since no editor session was connected -- headless boot checks, the
+full automated test suite, and direct scene-file inspection were used
+instead. See each system doc's own "Known limitations" for the complete,
+per-system list.
 
 ## Where the remaining excluded systems would attach
 
