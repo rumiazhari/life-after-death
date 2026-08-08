@@ -17,11 +17,28 @@ const CELL_SIZE := 32
 const MAX_REQUESTS_PER_FRAME := 8
 const WORLD_MASK := 1 # World layer only -- Vision-only occluders (e.g. boarded windows with no physical body) never affect walkability.
 
+## Distinguishes WHY a path request didn't return a usable path -- callers
+## (Survivor/Zombie) must treat these differently rather than collapsing
+## every failure into "steer straight at the goal anyway," which is exactly
+## what could walk an actor straight into an obstacle when the real path is
+## blocked but the request was merely deferred or the grid isn't ready yet.
+enum PathResult { SUCCESS, BUDGET_DEFERRED, NO_PATH, NOT_READY }
+
 var _grid := AStarGrid2D.new()
 var _origin: Vector2 = Vector2.ZERO ## world position of cell (0,0)'s top-left corner
 var _built: bool = false
 var _requests_this_frame: int = 0
 var _door_cells: Dictionary = {} ## StringName door_id -> Vector2i cell
+## Bumped whenever the grid is rebuilt or any door's walkability changes --
+## a path cached by a caller becomes stale the instant this changes, since
+## the route it was computed against may no longer be valid (or a
+## previously-blocked route may have just opened up). Callers store the
+## revision alongside their cached path and discard it on mismatch rather
+## than re-validating the path's own cells themselves.
+var _revision: int = 0
+
+func revision() -> int:
+	return _revision
 
 func _physics_process(_delta: float) -> void:
 	_requests_this_frame = 0
@@ -49,6 +66,7 @@ func build(half_extent: Vector2) -> void:
 			_grid.set_point_solid(Vector2i(gx, gy), solid)
 	_built = true
 	_door_cells.clear()
+	_revision += 1
 
 func register_door(door_id: StringName, world_position: Vector2) -> void:
 	_door_cells[door_id] = world_to_cell(world_position)
@@ -56,10 +74,12 @@ func register_door(door_id: StringName, world_position: Vector2) -> void:
 func mark_door_open(door_id: StringName) -> void:
 	if _door_cells.has(door_id):
 		_grid.set_point_solid(_door_cells[door_id], false)
+		_revision += 1
 
 func mark_door_closed(door_id: StringName) -> void:
 	if _door_cells.has(door_id):
 		_grid.set_point_solid(_door_cells[door_id], true)
+		_revision += 1
 
 ## True when `pos`'s grid cell exists and isn't solid -- used by
 ## SpawnManager to reject a candidate spawn point that would land inside
@@ -102,6 +122,29 @@ func find_path(from: Vector2, to: Vector2) -> PackedVector2Array:
 	if not _grid.is_in_boundsv(from_cell) or not _grid.is_in_boundsv(to_cell):
 		return PackedVector2Array()
 	return _grid.get_point_path(from_cell, to_cell)
+
+## Status-aware sibling of find_path() -- returns
+## {status: PathResult, path: PackedVector2Array, revision: int}. Prefer this
+## over find_path() for any caller that caches its result across frames
+## (Survivor/Zombie): BUDGET_DEFERRED and NO_PATH must not be handled the
+## same way (a deferred request should retry, a real no-path result should
+## give up and report failure), and `revision` is what a caller compares
+## against a fresh UrbanNavigationService.revision() to know its cached path
+## is still valid.
+func find_path_ex(from: Vector2, to: Vector2) -> Dictionary:
+	if not _built:
+		return {"status": PathResult.NOT_READY, "path": PackedVector2Array(), "revision": _revision}
+	if _requests_this_frame >= MAX_REQUESTS_PER_FRAME:
+		return {"status": PathResult.BUDGET_DEFERRED, "path": PackedVector2Array(), "revision": _revision}
+	_requests_this_frame += 1
+	var from_cell: Vector2i = world_to_cell(from)
+	var to_cell: Vector2i = world_to_cell(to)
+	if not _grid.is_in_boundsv(from_cell) or not _grid.is_in_boundsv(to_cell):
+		return {"status": PathResult.NO_PATH, "path": PackedVector2Array(), "revision": _revision}
+	var path: PackedVector2Array = _grid.get_point_path(from_cell, to_cell)
+	if path.is_empty():
+		return {"status": PathResult.NO_PATH, "path": path, "revision": _revision}
+	return {"status": PathResult.SUCCESS, "path": path, "revision": _revision}
 
 func requests_this_frame() -> int:
 	return _requests_this_frame

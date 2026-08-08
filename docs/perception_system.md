@@ -105,35 +105,57 @@ pathfinding every frame.
   (`MAX_REQUESTS_PER_FRAME = 8`, reset every physics frame) so a burst of
   simultaneous requests (a whole swarm losing line of sight at once)
   can never spike one frame's cost. Returns an empty path on budget
-  exhaustion, an out-of-bounds request, or before `build()` has run —
-  callers must treat all three as "fall back to direct steering," never
-  as an error.
+  exhaustion, an out-of-bounds request, or before `build()` has run.
+- `find_path_ex(from, to)` (Phase 3B.2) — the status-aware sibling every
+  caller that CACHES its result across frames should prefer:
+  `{status: PathResult, path: PackedVector2Array, revision: int}`, where
+  `PathResult` is `SUCCESS | BUDGET_DEFERRED | NO_PATH | NOT_READY`. The
+  three failure cases are NOT interchangeable: `BUDGET_DEFERRED`/
+  `NOT_READY` should simply be retried later (this frame's budget was
+  exhausted, or the grid isn't built yet), while `NO_PATH` means a real
+  route genuinely doesn't exist and should count against a bounded retry
+  before the caller gives up on that goal. Collapsing all three into "fall
+  back to direct steering" (the old `find_path()`-only behavior) is
+  exactly what could walk an actor straight into an obstacle it had just
+  confirmed was blocking the direct line.
+- `revision()` (Phase 3B.2) — bumped whenever `build()` reruns or any
+  door's walkability changes (`mark_door_open`/`mark_door_closed`).
+  `Zombie`/`Survivor` each store the revision their cached path was
+  computed against and discard it the instant `revision()` no longer
+  matches, rather than trusting a path forever once found — this is what
+  makes closing a door immediately invalidate a route that used it, and
+  opening one immediately make a new route available.
 - Door-aware: `register_door(door_id, world_position)` records a door's
   grid cell once; `mark_door_open`/`mark_door_closed` (called by `Door`
-  itself, from `toggle()`) flip that one cell's solidity, so a
-  since-closed door invalidates a previously-valid route and a
-  newly-opened one immediately becomes available. Closed doors block
-  zombie pathing (door destruction/breaking is explicitly out of scope
-  this phase).
+  itself, from `toggle()`) flip that one cell's solidity AND bump
+  `revision()`. Closed doors block zombie pathing (door destruction/
+  breaking is explicitly out of scope this phase).
 
 `Zombie._seek_point()` is the integration point: it steers directly
 toward its current goal by default, and only consults
 `UrbanNavigationService` on a 1-second recheck timer
 (`NAV_RECHECK_INTERVAL`) when the direct line is actually blocked —
 caching whatever path it gets and following its waypoints until either
-arrival or the next recheck finds a clear direct line again. This keeps
-navigation a **fallback**, not a per-frame cost, for every zombie.
+arrival or the next recheck finds a clear direct line again. **Phase
+3B.2:** an empty cached path no longer automatically means "steer direct" —
+a `_nav_direct_clear` flag (set by the same recheck) distinguishes "empty
+because the line is genuinely clear" from "empty because it's blocked and
+no route has been found yet (or after `NAV_MAX_NO_PATH_RETRIES` bounded
+retries, never will)," and only the former falls back to direct steering;
+the latter holds position instead. `nav_stuck` becomes `true` once that
+retry bound is reached, for a caller that wants to abandon the goal early.
+This keeps navigation a **fallback**, not a per-frame cost, for every
+zombie.
 
-**Phase 3B.1: `Survivor` uses the identical pattern**, at the single
-shared `Survivor.move_toward_point()` helper every `UtilityAction`
-already calls for movement (`_seek_direction()`, mirroring
-`Zombie._seek_point()` exactly: direct steering by default, a
-`NAV_RECHECK_INTERVAL`-gated fallback to a cached `find_path()` route
-when blocked). Wiring it at this one shared point means every existing
-action (retrieve supplies, haul, scavenge, flee, guard, ...) gained
-door/wall-aware routing without any of them needing their own
-pathfinding logic. Shares the exact same global per-frame request budget
-with every zombie — never an unrestricted `NavigationAgent2D` of its own.
+**`Survivor` uses the identical pattern**, at the single shared
+`Survivor.move_toward_point()` helper every `UtilityAction` already calls
+for movement (`_seek_direction()`, mirroring `Zombie._seek_point()`
+exactly, including the Phase 3B.2 status/revision/bounded-retry behavior
+above). Wiring it at this one shared point means every existing action
+(retrieve supplies, haul, scavenge, flee, guard, ...) gained door/wall-aware
+routing without any of them needing their own pathfinding logic. Shares
+the exact same global per-frame request budget with every zombie — never
+an unrestricted `NavigationAgent2D` of its own.
 
 **Debug visualization:** off by default. `ZombiePerceptionComponent.
 debug_draw_enabled` is a **per-instance** flag (not `static` — an earlier
@@ -158,24 +180,38 @@ exists yet, but the component is already shaped to support one.
 **Movement noise.** The owning actor calls `report_movement_speed(speed)`
 once per physics tick (never reads `CharacterBody2D.velocity` itself, so
 this stays decoupled from any one actor's own movement code): stationary
-(< 1 u/s) is silent, below `running_speed_threshold` (90 u/s default) is
-`walking_noise` (2.0), above it is `running_noise` (6.0) — through
-`NoiseManager`'s loudness-as-radius rule, running reaches roughly 3x
-farther than walking. `effective_visibility_multiplier()` further
-multiplies the base `visibility_multiplier` by `stationary_visibility_factor`
-(0.7 default) whenever the actor isn't currently moving — "a stationary
-actor is quieter *and* harder to spot than one moving in the open."
+(< `minimum_speed`, 1 u/s default) is silent, below
+`running_speed_threshold` (90 u/s default) is `walking_noise` (2.0), above
+it is `running_noise` (6.0). `report_movement_speed()` only updates this
+state; `DetectableComponent`'s own `_physics_process()` is what actually
+**emits** a footstep event (Phase 3B.2) — gated by a countdown timer
+(`walking_step_interval` 0.6s / `running_step_interval` 0.3s, running is
+therefore both louder AND more frequent) so a long walk never floods
+`NoiseManager`'s fixed-size ring buffer with a near-duplicate event every
+physics frame; the timer resets to zero the instant the actor stops, so
+starting to move always produces an audible first footstep rather than
+waiting out a leftover countdown. Through `NoiseManager`'s
+loudness-as-radius rule, running reaches roughly 3x farther than walking.
+`effective_visibility_multiplier()` further multiplies the base
+`visibility_multiplier` by `stationary_visibility_factor` (0.7 default)
+whenever the actor isn't currently moving — "a stationary actor is quieter
+*and* harder to spot than one moving in the open."
 
 **Activity noise.** `report_activity_noise(loudness, category)` is a
 one-shot call for door/search/salvage/gunshot-style events, routing
 through the SAME `NoiseManager` every other noise source uses (never a
 parallel hearing system) and recording `last_noise_category`/
-`last_noise_time_ticks` locally. The pre-existing `LootContainerComponent`/
-`SalvageableComponent`/`Door` noise calls were left calling
-`NoiseManager.emit_noise()` directly rather than being rewired through
-this — `NoiseManager` is already the correct sink either way, and this
-avoids touching several already-tested call sites for no behavioral
-change.
+`last_noise_time_ticks` locally. **Phase 3B.2:** `LootContainerComponent`,
+`SalvageableComponent`, `Door`, and `Weapon` now all call
+`NoiseManager.emit_actor_noise(actor, position, loudness, category)`
+instead of `emit_noise()` directly — a thin dispatcher that routes through
+the interacting actor's own `DetectableComponent` (applying
+`concealment_modifier`, recording `last_noise_category`/
+`last_noise_time_ticks` on that actor) when it has one, duck-typed via
+`"detectable" in actor`, and falls back to a plain `emit_noise()` call
+otherwise (an actor type without the component, or no actor at all — a
+programmatic `Door.toggle()` with no interacting actor still makes noise;
+`actor` is an optional parameter, never required).
 
 **Indoor context.** `BuildingVisibilityController._update_detectable_context()`
 sets `current_building_id`/`current_room_id`/`is_indoors` on ANY body

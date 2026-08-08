@@ -36,10 +36,18 @@ existed (Phase 0/1) but had no listener until now.
   `Inventory.move_all_to()`, and emits a `search` noise
   (`NoiseManager`, loudness 4). Searching an already-empty container is a
   silent no-op — the exact mechanism that prevents duplicate loot.
-- **`SalvageableComponent`** — one-time `materials` yield. Disables its
-  own sibling `InteractableComponent` the moment it's spent (rather than
-  tracking a separate "used" flag), so a depleted prop simply stops
-  appearing as a candidate at all. Emits a `salvage` noise (loudness 5).
+- **`SalvageableComponent`** — up to `material_yield` `materials`, with
+  **exact conservation across partial pickups** (Phase 3B.2): each
+  interaction transfers only `min(remaining_yield, actor's free capacity)`
+  and persists the unclaimed remainder as `remaining_yield` in
+  `WorldState.prop_states[prop_id]` (never a plain "salvaged" bool)
+  instead of destroying whatever didn't fit. Disables its own sibling
+  `InteractableComponent` only once `remaining_yield` reaches exactly
+  zero (rather than after one interaction), so a prop the actor's
+  inventory couldn't fully absorb stays interactable for a later pickup;
+  a zero-free-capacity interaction changes neither side. Emits a
+  `salvage` noise (loudness 5) through `NoiseManager.emit_actor_noise()`
+  (see "Noise routing" below) whenever any amount actually transfers.
 - **`RestPointComponent`** — minimal foundation only (`last_used_tick`),
   no sleep/rest simulation implemented this pass.
 
@@ -64,15 +72,33 @@ avoids it entirely.
 
 Closed by default. `is_open` drives **one** `CollisionShape2D`
 (`_collision.disabled = is_open`) that gates both movement and vision —
-the same shape, never two flags that could desync. `toggle()` swaps the
-sprite, updates the collision, persists to `WorldState`, tells
-`UrbanNavigationService` to flip that door's grid cell, and (except on
-the initial silent `_ready()` load) emits a `door` noise. A door refuses
-to close on top of a physically-present actor
-(`_block_check_area.body_entered`/`body_exited` tracking a
-`_blocked_by_body` flag, checked at the top of `toggle()`) — closing is
-simply skipped, safely, rather than trapping or displacing whatever's in
-the doorway.
+the same shape, never two flags that could desync. `toggle(actor: Node =
+null)` swaps the sprite, updates the collision, persists to `WorldState`,
+tells `UrbanNavigationService` to flip that door's grid cell (bumping its
+`revision()` — see `docs/perception_system.md` "Navigation"), and (except
+on the initial silent `_ready()` load) emits a `door` noise routed through
+`actor`'s `DetectableComponent` when one was passed (a real interaction
+passes the interacting actor; a programmatic toggle, e.g.
+`DistrictBuilder`/tests, leaves `actor` at its default `null` and still
+emits safely — see "Noise routing" below). A door refuses to close on top
+of a physically-present actor — **Phase 3B.2:** tracked as a set of
+overlapping body instance IDs (`_blocking_bodies`, a
+`Dictionary`-as-set), not a single bool, so two actors standing in the
+same doorway are counted independently and one exiting can't clear the
+other's occupancy; `_is_blocked_by_body()` also prunes any tracked body
+that was freed without ever firing `body_exited`, so a stale reference can
+never permanently wedge a door open. Closing is simply skipped, safely,
+rather than trapping or displacing whatever's in the doorway.
+
+**Noise routing (Phase 3B.2).** `NoiseManager.emit_actor_noise(actor,
+position, loudness, category)` is the shared dispatcher every
+interaction/weapon noise call now goes through: it prefers `actor`'s own
+`DetectableComponent` (duck-typed via `"detectable" in actor`, applying
+`concealment_modifier` and recording `last_noise_category`/
+`last_noise_time_ticks` on that actor) and falls back to a direct
+`emit_noise()` call when `actor` is null or has no such component. See
+`docs/perception_system.md`'s Detectability section for the full
+contract.
 
 `door_id` (a stable authored `StringName`, e.g.
 `"restaurant_01/door_entrance"`) is what makes state persistent: on

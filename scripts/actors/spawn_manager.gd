@@ -56,8 +56,17 @@ const POPULATION_PROFILES := {
 ## Bounded search per spawn attempt -- see class doc "no arbitrary
 ## camera-ring fallback."
 @export var max_region_search_attempts: int = 24
+## Zombie's own physical collision radius (CircleShape2D, Zombie.tscn) --
+## candidates are validated by this full footprint, not just their center
+## point, so a candidate whose center clears a wall/actor but whose body
+## would still clip it gets rejected too.
+@export var zombie_collision_radius: float = 13.0
+## Extra clearance beyond the raw collision radius -- keeps a spawn from
+## landing pixel-perfect flush against a wall or another actor.
+@export var spawn_clearance_margin: float = 4.0
 const ACTOR_OVERLAP_MASK := 2 | 4 | 16 # Player | Zombie | Survivor
 const WORLD_MASK := 1 # World collision (walls, furniture, closed doors)
+const FOOTPRINT_MASK := WORLD_MASK | ACTOR_OVERLAP_MASK
 
 var _entity_container: Node = null
 var _camera: Camera2D = null
@@ -169,16 +178,17 @@ func _pick_region_spawn_position() -> Variant:
 	return null
 
 func _is_valid_spawn_candidate(candidate: Vector2, player: Node2D, player_room: Room) -> bool:
-	# Inside World collision (walls, furniture, closed doors).
-	if _point_hits_mask(candidate, WORLD_MASK):
+	# Full zombie footprint against World collision (walls, furniture,
+	# closed doors) AND every actor layer in one shape query -- not just
+	# the center point, so a candidate whose center clears an obstacle but
+	# whose body would still overlap it gets rejected too.
+	if _footprint_overlaps(candidate):
 		return false
 	if _is_inside_any_settlement(candidate):
 		return false
 	if player_room != null and player_room.get_bounds_rect().has_point(candidate):
 		return false
-	if not UrbanNavigationService.is_position_free(candidate):
-		return false
-	if _point_hits_mask(candidate, ACTOR_OVERLAP_MASK):
+	if not _footprint_fully_navigable(candidate):
 		return false
 	if player:
 		var dist: float = candidate.distance_to(player.global_position)
@@ -188,14 +198,36 @@ func _is_valid_spawn_candidate(candidate: Vector2, player: Node2D, player_room: 
 			return false
 	return true
 
-func _point_hits_mask(point: Vector2, mask: int) -> bool:
+## True if a circle matching the zombie's own collision radius (plus
+## clearance) overlaps World collision or any actor at `candidate` --
+## never instantiates a zombie just to test this.
+func _footprint_overlaps(candidate: Vector2) -> bool:
 	var space_state := get_tree().root.get_world_2d().direct_space_state
-	var query := PhysicsPointQueryParameters2D.new()
-	query.position = point
-	query.collision_mask = mask
+	var shape := CircleShape2D.new()
+	shape.radius = zombie_collision_radius + spawn_clearance_margin
+	var query := PhysicsShapeQueryParameters2D.new()
+	query.shape = shape
+	query.transform = Transform2D(0.0, candidate)
+	query.collision_mask = FOOTPRINT_MASK
 	query.collide_with_bodies = true
 	query.collide_with_areas = false
-	return not space_state.intersect_point(query, 1).is_empty()
+	return not space_state.intersect_shape(query, 1).is_empty()
+
+## Checks the candidate's center plus 8 points around the footprint's own
+## edge against the nav grid -- rejects a candidate sitting in a free cell
+## whose edge nonetheless overlaps a wall/out-of-bounds cell (e.g. a narrow
+## doorway the zombie's body can't actually fit through), not just the
+## single cell the center point happens to land in.
+func _footprint_fully_navigable(candidate: Vector2) -> bool:
+	if not UrbanNavigationService.is_position_free(candidate):
+		return false
+	var radius: float = zombie_collision_radius + spawn_clearance_margin
+	for i in range(8):
+		var angle: float = i * TAU / 8.0
+		var sample: Vector2 = candidate + Vector2.RIGHT.rotated(angle) * radius
+		if not UrbanNavigationService.is_position_free(sample):
+			return false
+	return true
 
 ## World | Vision raycast -- the same mask convention
 ## ZombiePerceptionComponent/SurvivorAI use elsewhere for "can these two

@@ -95,10 +95,20 @@ func _physics_process(_delta: float) -> void:
 ## request budget with every zombie -- never an unrestricted
 ## NavigationAgent2D of its own.
 const NAV_RECHECK_INTERVAL := 1.0
+## See Zombie.NAV_MAX_NO_PATH_RETRIES -- same bounded-retry contract.
+const NAV_MAX_NO_PATH_RETRIES := 3
 var _nav_path: PackedVector2Array = PackedVector2Array()
 var _nav_path_index: int = 0
 var _nav_recheck_timer: float = 0.0
 var _nav_target: Vector2 = Vector2.ZERO
+var _nav_path_revision: int = -1
+var _nav_no_path_retries: int = 0
+## True once NAV_MAX_NO_PATH_RETRIES has been reached with no route found
+## to the current target -- a UtilityAction MAY check this to abandon the
+## goal early instead of waiting out move_toward_point() returning false
+## forever; move_toward_point() itself still just safely holds position.
+var nav_stuck: bool = false
+var _nav_direct_clear: bool = true
 
 ## Seeks `point`, returns true once within arrive_threshold. Shared by every
 ## movement-driven action instead of each one re-implementing steering.
@@ -107,7 +117,7 @@ func move_toward_point(point: Vector2, delta: float) -> bool:
 	var distance: float = to_point.length()
 	var speed: float = data.movement_speed if data else 190.0
 	if distance <= arrive_threshold:
-		_nav_path.clear()
+		_clear_nav_path()
 		velocity = velocity.move_toward(Vector2.ZERO, steer_acceleration * delta)
 		move_and_slide()
 		return true
@@ -120,25 +130,53 @@ func move_toward_point(point: Vector2, delta: float) -> bool:
 func _seek_direction(point: Vector2, to_point: Vector2, distance: float) -> Vector2:
 	if not point.is_equal_approx(_nav_target):
 		_nav_target = point
-		_nav_path.clear()
+		_clear_nav_path()
 		_nav_recheck_timer = 0.0
+		_nav_no_path_retries = 0
+		nav_stuck = false
+	if not _nav_path.is_empty() and _nav_path_revision != UrbanNavigationService.revision():
+		_clear_nav_path() # a door changed state (or the grid rebuilt) since this route was computed
+
 	_nav_recheck_timer -= get_physics_process_delta_time()
 	if _nav_recheck_timer <= 0.0:
 		_nav_recheck_timer = NAV_RECHECK_INTERVAL
 		if UrbanNavigationService.is_direct_path_clear(global_position, point):
-			_nav_path.clear()
-		elif _nav_path.is_empty():
-			_nav_path = UrbanNavigationService.find_path(global_position, point)
-			_nav_path_index = 0
+			_clear_nav_path()
+			_nav_direct_clear = true
+		else:
+			_nav_direct_clear = false
+			if _nav_path.is_empty():
+				var result: Dictionary = UrbanNavigationService.find_path_ex(global_position, point)
+				match result["status"]:
+					UrbanNavigationService.PathResult.SUCCESS:
+						_nav_path = result["path"]
+						_nav_path_index = 0
+						_nav_path_revision = result["revision"]
+						_nav_no_path_retries = 0
+						nav_stuck = false
+					UrbanNavigationService.PathResult.NO_PATH:
+						_nav_no_path_retries += 1
+						nav_stuck = _nav_no_path_retries >= NAV_MAX_NO_PATH_RETRIES
+					_: # BUDGET_DEFERRED / NOT_READY -- retry next recheck
+						pass
+
 	if _nav_path.is_empty():
-		return to_point / distance
+		# Blocked with no known route (yet, or permanently) -- hold position
+		# rather than steering straight at a target we just confirmed isn't
+		# directly reachable; the caller sees this as "not yet arrived."
+		return (to_point / distance) if _nav_direct_clear else Vector2.ZERO
 	while _nav_path_index < _nav_path.size() - 1 and global_position.distance_to(_nav_path[_nav_path_index]) <= arrive_threshold:
 		_nav_path_index += 1
 	var waypoint: Vector2 = _nav_path[_nav_path_index]
 	if global_position.distance_to(waypoint) <= arrive_threshold and _nav_path_index >= _nav_path.size() - 1:
-		_nav_path.clear()
+		_clear_nav_path()
 		return to_point / distance
 	return (waypoint - global_position).normalized()
+
+func _clear_nav_path() -> void:
+	_nav_path.clear()
+	_nav_path_index = 0
+	_nav_path_revision = -1
 
 func stop_moving(delta: float) -> void:
 	velocity = velocity.move_toward(Vector2.ZERO, steer_acceleration * delta)

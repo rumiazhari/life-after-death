@@ -37,6 +37,14 @@ signal noise_reported(loudness: float, category: StringName)
 ## Speed threshold (world units/sec) above which movement counts as
 ## "running" rather than "walking" for noise purposes.
 @export var running_speed_threshold: float = 90.0
+## Below this speed (world units/sec), an actor counts as stationary --
+## no movement noise, no footstep events.
+@export var minimum_speed: float = 1.0
+## Seconds between footstep noise events while walking.
+@export var walking_step_interval: float = 0.6
+## Seconds between footstep noise events while running -- shorter than
+## walking_step_interval, so running is both louder AND more frequent.
+@export var running_step_interval: float = 0.3
 ## Extra flat reduction to how loud any noise this actor makes reads to
 ## NoiseManager (e.g. a future crouch/hide mechanic) -- subtracted before
 ## loudness is converted to an effective hearing radius.
@@ -50,6 +58,7 @@ var last_noise_time_ticks: int = -1
 
 var _movement_noise: float = 0.0
 var _owner_actor: Node2D
+var _step_timer: float = 0.0
 
 func _ready() -> void:
 	_owner_actor = get_parent()
@@ -57,14 +66,32 @@ func _ready() -> void:
 ## Called once per physics tick by the owning actor with its current
 ## speed (world units/sec). Drives movement_noise() and, through
 ## effective_visibility_multiplier(), how visually noticeable standing
-## still vs. moving reads to a zombie's perception.
+## still vs. moving reads to a zombie's perception. Does NOT emit noise
+## itself -- see _physics_process(), which emits at most one bounded
+## footstep event per walking_step_interval/running_step_interval rather
+## than every physics tick this is called from.
 func report_movement_speed(speed: float) -> void:
-	if speed < 1.0:
+	if speed < minimum_speed:
 		_movement_noise = 0.0
 	elif speed < running_speed_threshold:
 		_movement_noise = walking_noise
 	else:
 		_movement_noise = running_noise
+
+## Bounded footstep emission -- gated by a countdown timer, never once per
+## frame, so a long walk doesn't flood NoiseManager's fixed-size ring
+## buffer with near-duplicate events. Resets to zero (fires immediately on
+## the next step) whenever the actor is stationary, so starting to move
+## always produces an audible first footstep rather than waiting out a
+## leftover countdown from a previous walk.
+func _physics_process(delta: float) -> void:
+	if not is_moving():
+		_step_timer = 0.0
+		return
+	_step_timer -= delta
+	if _step_timer <= 0.0:
+		_step_timer = running_step_interval if _movement_noise >= running_noise else walking_step_interval
+		_emit_noise(movement_noise(), &"footstep")
 
 func movement_noise() -> float:
 	return _movement_noise
@@ -85,6 +112,9 @@ func effective_visibility_multiplier() -> float:
 ## or a test) can read "what did this actor just do" without re-deriving
 ## it from NoiseManager's own ring buffer.
 func report_activity_noise(loudness: float, category: StringName) -> void:
+	_emit_noise(loudness, category)
+
+func _emit_noise(loudness: float, category: StringName) -> void:
 	last_noise_category = category
 	last_noise_time_ticks = SimulationClock.tick_count
 	var effective: float = maxf(loudness - concealment_modifier, 0.0)

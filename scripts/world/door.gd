@@ -47,10 +47,12 @@ const LAYER_INTERACTABLE := 64
 @onready var _interact_reach_area: Area2D = $InteractReachArea
 @onready var _interactable: InteractableComponent = $InteractReachArea/InteractableComponent
 
-## True while a body physically overlaps the door's own footprint -- closing
-## on top of an actor is refused until it clears, so nothing gets stuck
-## inside solid collision.
-var _blocked_by_body: bool = false
+## Instance IDs of every body currently physically overlapping the door's
+## own footprint -- closing is refused while this is non-empty, so nothing
+## gets stuck inside solid collision. A Dictionary-as-set (not a single
+## bool) so two actors standing in the same doorway are tracked
+## independently: one exiting must not clear the other's occupancy.
+var _blocking_bodies: Dictionary = {} # instance_id (int) -> true
 
 func _ready() -> void:
 	add_to_group("doors")
@@ -68,19 +70,21 @@ func _ready() -> void:
 		is_open = WorldState.get_door_open(door_id)
 	_apply_state(false)
 
-func _on_interacted(_actor: Node) -> void:
-	toggle()
+func _on_interacted(actor: Node) -> void:
+	toggle(actor)
 
 ## Public so DistrictBuilder/tests can also flip a door programmatically
 ## (e.g. permanently-open service entrances) without going through the
-## interaction signal path.
-func toggle() -> void:
-	if is_open and _blocked_by_body:
+## interaction signal path -- `actor` defaults to null so those callers
+## don't need to pass one; a real interaction passes the interacting actor
+## so its noise routes through that actor's own DetectableComponent.
+func toggle(actor: Node = null) -> void:
+	if is_open and _is_blocked_by_body():
 		return # refuse to close on top of an actor
 	is_open = not is_open
-	_apply_state(true)
+	_apply_state(true, actor)
 
-func _apply_state(emit_noise: bool) -> void:
+func _apply_state(emit_noise: bool, actor: Node = null) -> void:
 	_sprite.texture = OPEN_TEXTURE if is_open else CLOSED_TEXTURE
 	_collision.disabled = is_open
 	_interactable.interact_label = "Close Door" if is_open else "Open Door"
@@ -91,11 +95,23 @@ func _apply_state(emit_noise: bool) -> void:
 		else:
 			UrbanNavigationService.mark_door_closed(door_id)
 	if emit_noise:
-		NoiseManager.emit_noise(global_position, noise_loudness, &"door", self)
+		NoiseManager.emit_actor_noise(actor, global_position, noise_loudness, &"door")
 	state_changed.emit(is_open)
 
-func _on_body_entered(_body: Node) -> void:
-	_blocked_by_body = true
+func _on_body_entered(body: Node) -> void:
+	_blocking_bodies[body.get_instance_id()] = true
 
-func _on_body_exited(_body: Node) -> void:
-	_blocked_by_body = false
+func _on_body_exited(body: Node) -> void:
+	_blocking_bodies.erase(body.get_instance_id())
+
+## Also prunes any tracked body that was freed without ever firing
+## body_exited (e.g. queue_free'd mid-overlap), so a stale instance ID can
+## never permanently wedge the door open.
+func _is_blocked_by_body() -> bool:
+	for id in _blocking_bodies.keys().duplicate():
+		var body: Object = instance_from_id(id)
+		if body == null or not is_instance_valid(body):
+			_blocking_bodies.erase(id)
+			continue
+		return true
+	return false

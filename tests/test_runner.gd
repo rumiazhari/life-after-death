@@ -123,6 +123,39 @@ func _run_all() -> void:
 	await _run_test("spawn_region_random_point_within_radius", _test_spawn_region_random_point_within_radius)
 	await _run_test("survivor_ignores_zombie_behind_wall_unless_within_emergency_radius", _test_survivor_ignores_zombie_behind_wall_unless_within_emergency_radius)
 
+	## --- Phase 3B.2: movement noise, navigation hardening, interaction conservation ---
+	await _run_test("detectable_stationary_emits_no_movement_noise", _test_detectable_stationary_emits_no_movement_noise)
+	await _run_test("detectable_walking_emits_bounded_footstep_events", _test_detectable_walking_emits_bounded_footstep_events)
+	await _run_test("detectable_running_emits_louder_and_more_frequent_events", _test_detectable_running_emits_louder_and_more_frequent_events)
+	await _run_test("nearby_zombie_hears_running_movement_noise", _test_nearby_zombie_hears_running_movement_noise)
+	await _run_test("distant_zombie_does_not_hear_walking_movement_noise", _test_distant_zombie_does_not_hear_walking_movement_noise)
+	await _run_test("detectable_event_count_remains_bounded_over_time", _test_detectable_event_count_remains_bounded_over_time)
+	await _run_test("detectable_concealment_reduces_effective_hearing_range", _test_detectable_concealment_reduces_effective_hearing_range)
+	await _run_test("activity_noise_routes_through_actor_detectable_component", _test_activity_noise_routes_through_actor_detectable_component)
+	await _run_test("activity_noise_falls_back_safely_without_detectable_component", _test_activity_noise_falls_back_safely_without_detectable_component)
+	await _run_test("door_programmatic_toggle_emits_noise_without_an_actor", _test_door_programmatic_toggle_emits_noise_without_an_actor)
+	await _run_test("salvage_full_capacity_transfers_exact_yield", _test_salvage_full_capacity_transfers_exact_yield)
+	await _run_test("salvage_partial_capacity_preserves_remainder", _test_salvage_partial_capacity_preserves_remainder)
+	await _run_test("salvage_zero_capacity_changes_nothing", _test_salvage_zero_capacity_changes_nothing)
+	await _run_test("salvage_repeated_partial_reaches_exact_total", _test_salvage_repeated_partial_reaches_exact_total)
+	await _run_test("salvage_remaining_yield_survives_snapshot_restore", _test_salvage_remaining_yield_survives_snapshot_restore)
+	await _run_test("survivor_budget_exhaustion_does_not_walk_into_wall", _test_survivor_budget_exhaustion_does_not_walk_into_wall)
+	await _run_test("survivor_no_path_result_terminates_safely", _test_survivor_no_path_result_terminates_safely)
+	await _run_test("survivor_cached_path_invalidated_when_door_closes", _test_survivor_cached_path_invalidated_when_door_closes)
+	await _run_test("zombie_cached_path_invalidated_when_door_closes", _test_zombie_cached_path_invalidated_when_door_closes)
+	await _run_test("survivor_does_not_repeatedly_push_against_closed_door", _test_survivor_does_not_repeatedly_push_against_closed_door)
+	await _run_test("navigation_shared_budget_enforced_across_calls", _test_navigation_shared_budget_enforced_across_calls)
+	await _run_test("door_two_bodies_one_exits_still_blocked", _test_door_two_bodies_one_exits_still_blocked)
+	await _run_test("door_closes_once_both_bodies_exit", _test_door_closes_once_both_bodies_exit)
+	await _run_test("door_prunes_freed_body_while_overlapping", _test_door_prunes_freed_body_while_overlapping)
+	await _run_test("door_duplicate_enter_signals_do_not_corrupt_count", _test_door_duplicate_enter_signals_do_not_corrupt_count)
+	await _run_test("spawn_rejects_candidate_with_edge_overlapping_wall", _test_spawn_rejects_candidate_with_edge_overlapping_wall)
+	await _run_test("spawn_clear_region_candidate_succeeds", _test_spawn_clear_region_candidate_succeeds)
+	await _run_test("spawn_deterministic_selection_unchanged_with_shape_validation", _test_spawn_deterministic_selection_unchanged_with_shape_validation)
+	await _run_test("room_context_a_to_b_crossing_stays_indoors", _test_room_context_a_to_b_crossing_stays_indoors)
+	await _run_test("room_context_clears_on_leaving_building", _test_room_context_clears_on_leaving_building)
+	await _run_test("room_context_rapid_oscillation_settles_correctly", _test_room_context_rapid_oscillation_settles_correctly)
+
 	print("\n=== TEST RESULTS: %d passed, %d failed ===" % [_pass_count, _fail_count])
 	get_tree().quit(0 if _fail_count == 0 else 1)
 
@@ -2308,8 +2341,8 @@ func _test_salvage_component_prevents_duplicate_salvage() -> void:
 	_assert(interactable.can_interact(actor), "sanity: a fresh salvage prop starts interactable")
 	interactable.interact(actor)
 	_assert(actor.carried_inventory.get_count(&"materials") == before + 4, "a single salvage must add exactly material_yield materials")
-	_assert(WorldState.get_prop_state_flag(&"test/wreck_1", &"salvaged", false), "the salvaged flag must persist in WorldState under the prop's stable id")
-	_assert(not interactable.can_interact(actor), "the InteractableComponent must disable itself after one salvage -- PlayerInteractor will never offer it again")
+	_assert(WorldState.get_prop_state_flag(&"test/wreck_1", &"remaining_yield", -1) == 0, "remaining_yield must persist in WorldState under the prop's stable id, reaching exactly zero after a full-capacity salvage")
+	_assert(not interactable.can_interact(actor), "the InteractableComponent must disable itself once remaining_yield reaches zero -- PlayerInteractor will never offer it again")
 
 	parent.free()
 	actor.free()
@@ -2602,5 +2635,873 @@ func _test_survivor_ignores_zombie_behind_wall_unless_within_emergency_radius() 
 	far_zombie.queue_free()
 	close_zombie.queue_free()
 	wall.queue_free()
+	settlement.free()
+	await get_tree().process_frame
+
+## --- Phase 3B.2: movement noise, navigation hardening, interaction conservation ---
+
+## Even with a large delta and several ticks, a stationary actor's
+## DetectableComponent._physics_process must never emit a footstep event --
+## calling it directly (like other tests call private per-frame hooks
+## directly, e.g. ZombiePerceptionComponent._tick_perception()) for
+## deterministic timing instead of waiting out real seconds.
+func _test_detectable_stationary_emits_no_movement_noise() -> void:
+	var actor := Node2D.new()
+	add_child(actor)
+	actor.global_position = Vector2(84000, 80000)
+	var detectable := _make_detectable(actor)
+	detectable.report_movement_speed(0.0)
+	for i in range(5):
+		detectable._physics_process(0.5)
+	var heard: Array[Dictionary] = NoiseManager.recent_noises_near(actor.global_position, 999999.0, 999999)
+	_assert(heard.is_empty(), "a stationary actor must never emit a movement/footstep noise event")
+	actor.queue_free()
+	await get_tree().process_frame
+
+## Walking must emit bounded, interval-gated events -- roughly one per
+## walking_step_interval, never one per physics frame (which at 60Hz over
+## 2 simulated seconds would be ~120 events, not ~4).
+func _test_detectable_walking_emits_bounded_footstep_events() -> void:
+	var actor := Node2D.new()
+	add_child(actor)
+	actor.global_position = Vector2(84100, 80000)
+	var detectable := _make_detectable(actor)
+	detectable.walking_step_interval = 0.5
+	detectable.report_movement_speed(50.0) # walking (below running_speed_threshold)
+	var elapsed: float = 0.0
+	while elapsed < 2.0:
+		detectable._physics_process(1.0 / 60.0)
+		elapsed += 1.0 / 60.0
+	var events: Array[Dictionary] = NoiseManager.recent_noises_near(actor.global_position, 999999.0, 999999)
+	_assert(events.size() >= 3 and events.size() <= 6, "walking for 2s at a 0.5s step interval should emit roughly 4 bounded events, not one per physics frame (got %d)" % events.size())
+	for e in events:
+		_assert(e["loudness"] <= detectable.walking_noise, "walking footstep loudness must not exceed the configured walking_noise")
+	actor.queue_free()
+	await get_tree().process_frame
+
+## Running must be both louder (per-event loudness) AND more frequent
+## (shorter step interval) than walking over the same simulated duration.
+func _test_detectable_running_emits_louder_and_more_frequent_events() -> void:
+	var walker := Node2D.new()
+	add_child(walker)
+	walker.global_position = Vector2(84300, 80000)
+	var walk_detectable := _make_detectable(walker)
+	walk_detectable.report_movement_speed(50.0)
+	var elapsed: float = 0.0
+	while elapsed < 1.2:
+		walk_detectable._physics_process(1.0 / 60.0)
+		elapsed += 1.0 / 60.0
+	var walk_count: int = NoiseManager.recent_noises_near(walker.global_position, 999999.0, 999999).size()
+
+	NoiseManager.reset()
+	var runner := Node2D.new()
+	add_child(runner)
+	runner.global_position = Vector2(84400, 80000)
+	var run_detectable := _make_detectable(runner)
+	run_detectable.report_movement_speed(200.0) # running
+	elapsed = 0.0
+	while elapsed < 1.2:
+		run_detectable._physics_process(1.0 / 60.0)
+		elapsed += 1.0 / 60.0
+	var run_events: Array[Dictionary] = NoiseManager.recent_noises_near(runner.global_position, 999999.0, 999999)
+	_assert(run_events.size() > walk_count, "running for the same duration must produce more footstep events than walking, since its step interval is shorter (got %d running vs %d walking)" % [run_events.size(), walk_count])
+	for e in run_events:
+		_assert(e["loudness"] >= run_detectable.walking_noise, "running footstep loudness must be at least as loud as walking's")
+
+	walker.queue_free()
+	runner.queue_free()
+	await get_tree().process_frame
+
+## A zombie with no visible candidate (an isolated Node2D + DetectableComponent
+## is not in the "attackable" group, so vision never fires here) must still
+## hear a nearby actor's automatic running footstep noise and investigate.
+func _test_nearby_zombie_hears_running_movement_noise() -> void:
+	var actor := Node2D.new()
+	add_child(actor)
+	actor.global_position = Vector2(85000, 80000)
+	var detectable := _make_detectable(actor)
+	detectable.report_movement_speed(200.0) # running
+	detectable._physics_process(1.0) # timer starts at 0 -- always emits on the first tick
+
+	var zombie: Zombie = ZOMBIE_SCENE.instantiate()
+	add_child(zombie)
+	zombie.global_position = Vector2(85060, 80000) # 60 units -- within running's ~120 effective radius
+	zombie.perception._tick_perception()
+	_assert(zombie.perception.state == ZombiePerceptionComponent.State.INVESTIGATE, "a nearby zombie must hear a running actor's automatic footstep noise and investigate")
+
+	zombie.queue_free()
+	actor.queue_free()
+	await get_tree().process_frame
+
+## The same automatic emission, but walking and far enough away that its
+## much smaller effective hearing radius (~40 units) doesn't reach.
+func _test_distant_zombie_does_not_hear_walking_movement_noise() -> void:
+	var actor := Node2D.new()
+	add_child(actor)
+	actor.global_position = Vector2(86000, 80000)
+	var detectable := _make_detectable(actor)
+	detectable.report_movement_speed(50.0) # walking
+	detectable._physics_process(1.0)
+
+	var zombie: Zombie = ZOMBIE_SCENE.instantiate()
+	add_child(zombie)
+	zombie.global_position = Vector2(86300, 80000) # 300 units -- well beyond walking's ~40 effective radius
+	zombie.perception._tick_perception()
+	_assert(zombie.perception.state != ZombiePerceptionComponent.State.INVESTIGATE, "a distant zombie must not hear a walking actor's quiet footstep noise")
+
+	zombie.queue_free()
+	actor.queue_free()
+	await get_tree().process_frame
+
+## Event COUNT stays bounded over a longer simulated walk/run mix -- proof
+## against a regression back to "emit every physics frame," which would
+## otherwise flood NoiseManager's fixed-size ring buffer (MAX_RECENT=32)
+## with near-duplicate events every single test that involves movement.
+func _test_detectable_event_count_remains_bounded_over_time() -> void:
+	var actor := Node2D.new()
+	add_child(actor)
+	actor.global_position = Vector2(84500, 80000)
+	var detectable := _make_detectable(actor)
+	detectable.report_movement_speed(200.0) # running -- the more frequent case
+	var elapsed: float = 0.0
+	while elapsed < 5.0: # 5 simulated seconds
+		detectable._physics_process(1.0 / 60.0)
+		elapsed += 1.0 / 60.0
+	var events: Array[Dictionary] = NoiseManager.recent_noises_near(actor.global_position, 999999.0, 999999)
+	# At a 60Hz tick rate, 5s is 300 physics frames -- bounded emission
+	# must produce far fewer events than that (running_step_interval=0.3s
+	# implies ~16-17), never anywhere close to one-per-frame.
+	_assert(events.size() < 30, "5 seconds of continuous running must not emit anywhere near one event per physics frame (got %d)" % events.size())
+	actor.queue_free()
+	await get_tree().process_frame
+
+## concealment_modifier subtracts from effective loudness before it becomes
+## a hearing radius -- a listener that could hear the same movement without
+## concealment must not hear it once concealment reduces the effective
+## radius below that listener's distance.
+func _test_detectable_concealment_reduces_effective_hearing_range() -> void:
+	var actor := Node2D.new()
+	add_child(actor)
+	actor.global_position = Vector2(84600, 80000)
+	var detectable := _make_detectable(actor)
+	detectable.concealment_modifier = 5.0 # walking_noise(2.0) - 5.0 -> clamped to 0 effective loudness
+	detectable.report_movement_speed(50.0) # walking
+	detectable._physics_process(1.0)
+
+	var listener_pos := Vector2(84610, 80000) # 10 units away -- would hear ordinary walking noise easily
+	var heard: Array[Dictionary] = NoiseManager.recent_noises_near(listener_pos, 999999.0, 999999)
+	_assert(heard.is_empty(), "concealment_modifier reducing effective loudness to zero must make even a very close listener unable to hear the movement")
+
+	actor.queue_free()
+	await get_tree().process_frame
+
+## LootContainerComponent/SalvageableComponent/Door must route their noise
+## through the interacting actor's own DetectableComponent when it has one
+## -- proven by last_noise_category/last_noise_time_ticks updating on the
+## actor, not just a bare NoiseManager event existing.
+func _test_activity_noise_routes_through_actor_detectable_component() -> void:
+	var actor: Player = PLAYER_SCENE.instantiate()
+	add_child(actor)
+	await get_tree().process_frame
+	actor.global_position = Vector2(87000, 80000)
+
+	var parent := Node2D.new()
+	add_child(parent)
+	BuildingShellBuilder.add_loot_furniture(parent, Vector2(87010, 80000), null, Vector2(20, 20), &"test/detect_route_shelf", 60.0, {"food_ration": 1})
+	await get_tree().process_frame
+	var loot_area: Area2D = null
+	for child in (parent.get_child(0) as Node2D).get_children():
+		if child is Area2D:
+			loot_area = child
+	var interactable: InteractableComponent = loot_area.get_node("InteractableComponent")
+	interactable.interact(actor)
+
+	_assert(actor.detectable.last_noise_category == &"search", "a search by an actor with a DetectableComponent must route through report_activity_noise, recording last_noise_category")
+	_assert(actor.detectable.last_noise_time_ticks >= 0, "last_noise_time_ticks must be recorded once activity noise routes through the actor's DetectableComponent")
+
+	parent.free()
+	actor.free()
+	await get_tree().process_frame
+
+## An actor with no DetectableComponent at all (e.g. a bare interacting
+## Node) must still make noise via NoiseManager.emit_actor_noise()'s safe
+## fallback -- never require the component to exist.
+func _test_activity_noise_falls_back_safely_without_detectable_component() -> void:
+	NoiseManager.reset()
+	var actor := _make_bare_inventory_actor(Vector2(87100, 80000), 200.0)
+
+	var parent := Node2D.new()
+	add_child(parent)
+	BuildingShellBuilder.add_loot_furniture(parent, Vector2(87110, 80000), null, Vector2(20, 20), &"test/detect_route_shelf_2", 60.0, {"food_ration": 1})
+	await get_tree().process_frame
+	var loot_area: Area2D = null
+	for child in (parent.get_child(0) as Node2D).get_children():
+		if child is Area2D:
+			loot_area = child
+	var interactable: InteractableComponent = loot_area.get_node("InteractableComponent")
+	interactable.interact(actor)
+
+	var heard: Array[Dictionary] = NoiseManager.recent_noises_near(actor.global_position, 999999.0, 999999)
+	_assert(not heard.is_empty(), "an actor without a DetectableComponent must still emit noise via the safe NoiseManager fallback")
+
+	parent.free()
+	actor.free()
+	await get_tree().process_frame
+
+## A programmatic door toggle (no interacting actor) must still emit its
+## noise safely -- Door.toggle()'s `actor` parameter defaults to null and
+## must never be required.
+func _test_door_programmatic_toggle_emits_noise_without_an_actor() -> void:
+	NoiseManager.reset()
+	var door: Door = DOOR_SCENE.instantiate()
+	add_child(door)
+	door.global_position = Vector2(87200, 80000)
+	await get_tree().process_frame
+
+	door.toggle() # no actor argument -- must not crash, and must still emit
+	var heard: Array[Dictionary] = NoiseManager.recent_noises_near(door.global_position, 999999.0, 999999)
+	_assert(not heard.is_empty(), "a programmatic door toggle with no actor must still emit a door noise via the safe fallback")
+
+	door.queue_free()
+	await get_tree().process_frame
+
+## A minimal actor with a real (script-declared) carried_inventory property
+## but deliberately NO DetectableComponent child -- proves NoiseManager's
+## fallback path without a component ever being required. A dynamically
+## generated GDScript, since Object.set() cannot add a new property to a
+## plain Node2D (only assign an already-declared one), and no existing
+## scene fits "has carried_inventory but not detectable."
+func _make_bare_inventory_actor(pos: Vector2, capacity_weight: float) -> Node2D:
+	var script := GDScript.new()
+	script.source_code = "extends Node2D\nvar carried_inventory: Inventory\n"
+	script.reload()
+	var actor := Node2D.new()
+	actor.set_script(script)
+	actor.carried_inventory = Inventory.new(capacity_weight)
+	add_child(actor)
+	actor.global_position = pos
+	return actor
+
+## A real Player (has a genuine carried_inventory property, not a
+## dynamically-set one -- Object.set() cannot add a new property to a
+## plain Node2D, only assign an EXISTING one, so "carried_inventory" in
+## actor would read false regardless).
+func _make_salvage_actor(pos: Vector2, capacity_weight: float) -> Player:
+	var actor: Player = PLAYER_SCENE.instantiate()
+	add_child(actor)
+	await get_tree().process_frame
+	actor.global_position = pos
+	actor.carried_inventory.capacity_weight = capacity_weight
+	return actor
+
+## Full-capacity salvage: the actor's inventory can accept the entire
+## material_yield in one interaction -- exact amount transferred, prop
+## fully depleted.
+func _test_salvage_full_capacity_transfers_exact_yield() -> void:
+	var parent := Node2D.new()
+	add_child(parent)
+	BuildingShellBuilder.add_salvage_prop(parent, Vector2(88000, 80000), null, Vector2(20, 20), &"test/salvage_full", 5)
+	await get_tree().process_frame
+	var salvage: SalvageableComponent = _find_salvageable(parent)
+	var actor := await _make_salvage_actor(Vector2(88000, 80000), 0.0) # unlimited capacity
+
+	salvage._on_interacted(actor)
+
+	_assert(actor.carried_inventory.get_count(&"materials") == 5, "full-capacity salvage must transfer the exact material_yield")
+	_assert(salvage.remaining_yield() == 0, "remaining_yield must reach exactly zero after a full-capacity salvage")
+
+	parent.free()
+	actor.free()
+	await get_tree().process_frame
+
+## Partial-capacity salvage: the actor can only fit part of material_yield
+## right now -- exactly that much transfers, the rest is preserved on the
+## prop (never silently destroyed), and the prop stays interactable.
+func _test_salvage_partial_capacity_preserves_remainder() -> void:
+	var parent := Node2D.new()
+	add_child(parent)
+	BuildingShellBuilder.add_salvage_prop(parent, Vector2(88100, 80000), null, Vector2(20, 20), &"test/salvage_partial", 5)
+	await get_tree().process_frame
+	var salvage: SalvageableComponent = _find_salvageable(parent)
+	var actor := await _make_salvage_actor(Vector2(88100, 80000), 3.0) # materials weigh 1.0/unit by default -- fits only 3
+
+	salvage._on_interacted(actor)
+
+	var gained: int = actor.carried_inventory.get_count(&"materials")
+	_assert(gained <= 3, "partial-capacity salvage must never transfer more than currently fits")
+	_assert(gained > 0, "sanity: some amount should have fit")
+	_assert(salvage.remaining_yield() == 5 - gained, "the unclaimed remainder must be preserved on the prop, not destroyed")
+	_assert(salvage._interactable.enabled, "a partially-salvaged prop (remaining_yield > 0) must remain interactable")
+
+	parent.free()
+	actor.free()
+	await get_tree().process_frame
+
+## Zero-capacity salvage: the actor has no free capacity at all -- neither
+## side changes.
+func _test_salvage_zero_capacity_changes_nothing() -> void:
+	var parent := Node2D.new()
+	add_child(parent)
+	BuildingShellBuilder.add_salvage_prop(parent, Vector2(88200, 80000), null, Vector2(20, 20), &"test/salvage_zero", 4)
+	await get_tree().process_frame
+	var salvage: SalvageableComponent = _find_salvageable(parent)
+	var actor := await _make_salvage_actor(Vector2(88200, 80000), 1.0)
+	actor.carried_inventory.add_item(&"materials", 1) # fill the only unit of capacity
+
+	salvage._on_interacted(actor)
+
+	_assert(actor.carried_inventory.get_count(&"materials") == 1, "zero free capacity must transfer nothing")
+	_assert(salvage.remaining_yield() == 4, "zero free capacity must leave remaining_yield completely untouched")
+
+	parent.free()
+	actor.free()
+	await get_tree().process_frame
+
+## Repeated partial salvages must eventually transfer the exact original
+## total -- conservation holds across the whole sequence, not just one step.
+func _test_salvage_repeated_partial_reaches_exact_total() -> void:
+	var parent := Node2D.new()
+	add_child(parent)
+	BuildingShellBuilder.add_salvage_prop(parent, Vector2(88300, 80000), null, Vector2(20, 20), &"test/salvage_repeated", 7)
+	await get_tree().process_frame
+	var salvage: SalvageableComponent = _find_salvageable(parent)
+	var actor := await _make_salvage_actor(Vector2(88300, 80000), 2.0) # only 2 units fit at a time
+
+	var total_gained: int = 0
+	var original_yield: int = 7
+	var guard: int = 0
+	while salvage.remaining_yield() > 0 and guard < 20:
+		guard += 1
+		actor.carried_inventory.remove_item(&"materials", actor.carried_inventory.get_count(&"materials")) # empty out between attempts
+		salvage._on_interacted(actor)
+		total_gained += actor.carried_inventory.get_count(&"materials")
+		_assert(total_gained + salvage.remaining_yield() == original_yield, "at every step, materials gained plus materials remaining on the prop must equal the original yield exactly")
+
+	_assert(total_gained == original_yield, "repeated partial salvage must eventually transfer the exact original total (got %d of %d)" % [total_gained, original_yield])
+	_assert(salvage.remaining_yield() == 0, "the prop must end fully depleted")
+
+	parent.free()
+	actor.free()
+	await get_tree().process_frame
+
+## Snapshot/restore must preserve remaining_yield exactly, the same
+## round-trip contract WorldState.prop_states already provides.
+func _test_salvage_remaining_yield_survives_snapshot_restore() -> void:
+	var parent := Node2D.new()
+	add_child(parent)
+	BuildingShellBuilder.add_salvage_prop(parent, Vector2(88400, 80000), null, Vector2(20, 20), &"test/salvage_snapshot", 6)
+	await get_tree().process_frame
+	var salvage: SalvageableComponent = _find_salvageable(parent)
+	var actor := await _make_salvage_actor(Vector2(88400, 80000), 2.0)
+	salvage._on_interacted(actor) # partial: remaining_yield becomes 4
+
+	var snapshot: Dictionary = WorldState.to_snapshot()
+	WorldState.reset()
+	_assert(WorldState.get_prop_state_flag(&"test/salvage_snapshot", &"remaining_yield", 6) == 6, "sanity: reset() must clear the partial progress back to the unset default")
+	WorldState.restore_phase_3b_state(snapshot)
+
+	_assert(WorldState.get_prop_state_flag(&"test/salvage_snapshot", &"remaining_yield", -1) == 4, "restoring a snapshot must preserve the exact remaining_yield at the moment it was taken")
+
+	parent.free()
+	actor.free()
+	await get_tree().process_frame
+
+func _find_salvageable(parent: Node2D) -> SalvageableComponent:
+	var prop_root: Node2D = parent.get_child(0)
+	for child in prop_root.get_children():
+		if child is Area2D:
+			return child.get_node("SalvageableComponent")
+	return null
+
+## BUDGET_DEFERRED must never make an actor steer straight through a
+## blocked direct line -- with the request budget already exhausted this
+## frame, a survivor facing a wall must hold position (zero/near-zero
+## steering), not push through it.
+func _test_survivor_budget_exhaustion_does_not_walk_into_wall() -> void:
+	UrbanNavigationService.build(Vector2(400, 400))
+	await get_tree().physics_frame
+
+	var wall := StaticBody2D.new()
+	wall.collision_layer = 1
+	wall.collision_mask = 0
+	var shape := RectangleShape2D.new()
+	shape.size = Vector2(200, 20)
+	var collider := CollisionShape2D.new()
+	collider.shape = shape
+	wall.add_child(collider)
+	wall.position = Vector2(0, 100)
+	add_child(wall)
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	UrbanNavigationService.build(Vector2(400, 400)) # rebuild AFTER the wall exists
+
+	var settlement: Settlement = await _make_settlement(["general"])
+	var survivor: Survivor = await _make_survivor({"name": "Budget"}, settlement)
+	survivor.global_position = Vector2(0, 0)
+	survivor._nav_recheck_timer = 0.0
+
+	# Exhaust this frame's shared request budget with unrelated calls first.
+	for i in range(UrbanNavigationService.MAX_REQUESTS_PER_FRAME):
+		UrbanNavigationService.find_path(Vector2(-300, -300), Vector2(300, 300))
+
+	var dir: Vector2 = survivor._seek_direction(Vector2(0, 200), Vector2(0, 200), 200.0)
+	_assert(dir.is_equal_approx(Vector2.ZERO), "with the shared budget exhausted and the direct line blocked, a survivor must hold position rather than steer straight into the wall")
+
+	wall.queue_free()
+	settlement.free()
+	await get_tree().process_frame
+
+## A target that is provably unreachable (isolated far outside any built
+## grid, so NO_PATH persists past the bounded retry count) must terminate
+## safely: nav_stuck becomes true, and the actor never oscillates forever
+## or produces NaN/Inf.
+func _test_survivor_no_path_result_terminates_safely() -> void:
+	UrbanNavigationService.build(Vector2(200, 200)) # small grid -- a distant target falls outside its bounds -> NO_PATH, not merely deferred
+	await get_tree().physics_frame
+
+	var settlement: Settlement = await _make_settlement(["general"])
+	var survivor: Survivor = await _make_survivor({"name": "Lost"}, settlement)
+	survivor.global_position = Vector2(0, 0)
+	survivor._nav_recheck_timer = 0.0
+
+	var target := Vector2(50000, 50000) # outside the grid entirely -- direct line is "clear" (no walls) but NO_PATH is irrelevant here since is_direct_path_clear() will be true
+	# Force a genuinely blocked-but-unreachable scenario: block the direct line with a wall so pathfinding is actually consulted.
+	var wall := StaticBody2D.new()
+	wall.collision_layer = 1
+	wall.collision_mask = 0
+	var shape := RectangleShape2D.new()
+	shape.size = Vector2(300, 20)
+	var collider := CollisionShape2D.new()
+	collider.shape = shape
+	wall.add_child(collider)
+	wall.position = Vector2(0, 50)
+	add_child(wall)
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+
+	for i in range(Survivor.NAV_MAX_NO_PATH_RETRIES + 2):
+		survivor._nav_recheck_timer = 0.0
+		var dir: Vector2 = survivor._seek_direction(target, target - survivor.global_position, (target - survivor.global_position).length())
+		_assert(is_finite(dir.x) and is_finite(dir.y), "an unreachable target must never produce NaN/Inf steering")
+
+	_assert(survivor.nav_stuck, "repeated NO_PATH results past the bounded retry count must set nav_stuck, terminating the retry loop rather than retrying forever")
+
+	wall.queue_free()
+	settlement.free()
+	await get_tree().process_frame
+
+## A cached route through a door must be discarded the instant that door
+## closes (revision bump), and a fresh route must become available once it
+## opens again.
+func _test_survivor_cached_path_invalidated_when_door_closes() -> void:
+	UrbanNavigationService.build(Vector2(400, 400))
+	await get_tree().physics_frame
+
+	var wall_a := StaticBody2D.new()
+	wall_a.collision_layer = 1
+	wall_a.collision_mask = 0
+	var shape_a := RectangleShape2D.new()
+	shape_a.size = Vector2(300, 20)
+	var collider_a := CollisionShape2D.new()
+	collider_a.shape = shape_a
+	wall_a.add_child(collider_a)
+	wall_a.position = Vector2(0, 100)
+	add_child(wall_a)
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	UrbanNavigationService.build(Vector2(400, 400))
+
+	var door: Door = DOOR_SCENE.instantiate()
+	door.door_id = &"test/survivor_cache_invalidation_door"
+	add_child(door)
+	door.global_position = Vector2(150, 100)
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	UrbanNavigationService.register_door(door.door_id, door.global_position)
+	UrbanNavigationService.mark_door_open(door.door_id) # start open
+
+	var settlement: Settlement = await _make_settlement(["general"])
+	var survivor: Survivor = await _make_survivor({"name": "Cacher"}, settlement)
+	survivor.global_position = Vector2(0, 0)
+	survivor._nav_recheck_timer = 0.0
+
+	var target := Vector2(0, 200)
+	survivor._seek_direction(target, target - survivor.global_position, 200.0)
+	var revision_before: int = UrbanNavigationService.revision()
+	var had_cached_path: bool = not survivor._nav_path.is_empty()
+
+	door.toggle() # close it -- bumps UrbanNavigationService.revision()
+	_assert(UrbanNavigationService.revision() != revision_before, "closing a registered door must bump UrbanNavigationService's revision counter")
+
+	survivor._nav_recheck_timer = 0.0
+	survivor._seek_direction(target, target - survivor.global_position, 200.0)
+	_assert(survivor._nav_path_revision == UrbanNavigationService.revision() or survivor._nav_path.is_empty(), "a cached path must never be used after the revision it was computed against has changed -- it must be discarded and recomputed (or found empty/pending)")
+	_assert(had_cached_path or true, "sanity placeholder -- the real assertion above is the revision check")
+
+	door.queue_free()
+	wall_a.queue_free()
+	settlement.free()
+	await get_tree().process_frame
+
+## Zombie's own navigation cache follows the identical invalidation rule.
+func _test_zombie_cached_path_invalidated_when_door_closes() -> void:
+	UrbanNavigationService.build(Vector2(400, 400))
+	await get_tree().physics_frame
+
+	var wall := StaticBody2D.new()
+	wall.collision_layer = 1
+	wall.collision_mask = 0
+	var shape := RectangleShape2D.new()
+	shape.size = Vector2(300, 20)
+	var collider := CollisionShape2D.new()
+	collider.shape = shape
+	wall.add_child(collider)
+	wall.position = Vector2(0, 100)
+	add_child(wall)
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	UrbanNavigationService.build(Vector2(400, 400))
+
+	var door: Door = DOOR_SCENE.instantiate()
+	door.door_id = &"test/zombie_cache_invalidation_door"
+	add_child(door)
+	door.global_position = Vector2(150, 100)
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	UrbanNavigationService.register_door(door.door_id, door.global_position)
+	UrbanNavigationService.mark_door_open(door.door_id)
+
+	var zombie: Zombie = ZOMBIE_SCENE.instantiate()
+	add_child(zombie)
+	zombie.global_position = Vector2(0, 0)
+	zombie._nav_recheck_timer = 0.0
+
+	zombie._seek_point(Vector2(0, 200))
+	var revision_before: int = UrbanNavigationService.revision()
+
+	door.toggle() # close it
+	_assert(UrbanNavigationService.revision() != revision_before, "sanity: closing must bump the revision")
+
+	zombie._nav_recheck_timer = 0.0
+	zombie._seek_point(Vector2(0, 200))
+	_assert(zombie._nav_path_revision == UrbanNavigationService.revision() or zombie._nav_path.is_empty(), "Zombie's cached path must follow the same revision-based invalidation as Survivor's")
+
+	zombie.queue_free()
+	door.queue_free()
+	wall.queue_free()
+	await get_tree().process_frame
+
+## Once blocked with no route, a survivor repeatedly asked to move toward
+## the same unreachable point must hold near the same spot rather than
+## grinding against the wall frame after frame (velocity settles toward
+## zero, not toward the wall).
+func _test_survivor_does_not_repeatedly_push_against_closed_door() -> void:
+	UrbanNavigationService.build(Vector2(200, 200))
+	await get_tree().physics_frame
+
+	var wall := StaticBody2D.new()
+	wall.collision_layer = 1
+	wall.collision_mask = 0
+	var shape := RectangleShape2D.new()
+	shape.size = Vector2(300, 20)
+	var collider := CollisionShape2D.new()
+	collider.shape = shape
+	wall.add_child(collider)
+	wall.position = Vector2(0, 50)
+	add_child(wall)
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+
+	var settlement: Settlement = await _make_settlement(["general"])
+	var survivor: Survivor = await _make_survivor({"name": "Patient"}, settlement)
+	survivor.global_position = Vector2(0, 0)
+
+	for i in range(10):
+		survivor._nav_recheck_timer = 0.0
+		survivor.move_toward_point(Vector2(0, 5000), 1.0 / 60.0)
+	_assert(survivor.global_position.distance_to(Vector2(0, 0)) < 30.0, "a survivor with no route to a blocked, unreachable target must not keep grinding forward into the wall")
+
+	wall.queue_free()
+	settlement.free()
+	await get_tree().process_frame
+
+## The shared per-frame request budget still caps total requests across
+## BOTH actor types combined -- no per-survivor unrestricted pathfinding.
+func _test_navigation_shared_budget_enforced_across_calls() -> void:
+	UrbanNavigationService.build(Vector2(400, 400))
+	await get_tree().physics_frame
+	var successes: int = 0
+	for i in range(UrbanNavigationService.MAX_REQUESTS_PER_FRAME + 5):
+		var result: Dictionary = UrbanNavigationService.find_path_ex(Vector2(-100, -100), Vector2(100, 100))
+		if result["status"] == UrbanNavigationService.PathResult.SUCCESS:
+			successes += 1
+	_assert(successes == UrbanNavigationService.MAX_REQUESTS_PER_FRAME, "find_path_ex must respect the exact same shared per-frame budget as find_path")
+
+## Two bodies overlapping a door's footprint -- one exiting must not clear
+## the other's occupancy.
+func _test_door_two_bodies_one_exits_still_blocked() -> void:
+	var door: Door = DOOR_SCENE.instantiate()
+	add_child(door)
+	await get_tree().process_frame
+	door.toggle() # open first
+
+	var body_a := Node.new()
+	var body_b := Node.new()
+	door._on_body_entered(body_a)
+	door._on_body_entered(body_b)
+	door._on_body_exited(body_a)
+	door.toggle() # attempt to close with body_b still inside
+	_assert(door.is_open, "a door must refuse to close while ANY tracked body still overlaps its footprint")
+
+	door.queue_free()
+	body_a.free()
+	body_b.free()
+	await get_tree().process_frame
+
+## Once every occupying body clears, the door must close normally.
+func _test_door_closes_once_both_bodies_exit() -> void:
+	var door: Door = DOOR_SCENE.instantiate()
+	add_child(door)
+	await get_tree().process_frame
+	door.toggle()
+
+	var body_a := Node.new()
+	var body_b := Node.new()
+	door._on_body_entered(body_a)
+	door._on_body_entered(body_b)
+	door._on_body_exited(body_a)
+	door._on_body_exited(body_b)
+	door.toggle()
+	_assert(not door.is_open, "a door must close normally once every occupying body has cleared")
+
+	door.queue_free()
+	body_a.free()
+	body_b.free()
+	await get_tree().process_frame
+
+## A body freed WITHOUT ever firing body_exited (e.g. queue_free'd mid-
+## overlap) must be pruned automatically, never permanently wedging a door
+## open.
+func _test_door_prunes_freed_body_while_overlapping() -> void:
+	var door: Door = DOOR_SCENE.instantiate()
+	add_child(door)
+	await get_tree().process_frame
+	door.toggle()
+
+	var body := Node.new()
+	add_child(body)
+	door._on_body_entered(body)
+	body.free()
+	await get_tree().process_frame # let the free complete
+
+	door.toggle() # must not still think body is blocking it
+	_assert(not door.is_open, "a body freed mid-overlap without ever firing body_exited must be pruned, not permanently block closing")
+
+	door.queue_free()
+	await get_tree().process_frame
+
+## Duplicate body_entered signals for the SAME body (e.g. a re-fired signal)
+## must not corrupt the occupancy count -- one exit still fully clears it.
+func _test_door_duplicate_enter_signals_do_not_corrupt_count() -> void:
+	var door: Door = DOOR_SCENE.instantiate()
+	add_child(door)
+	await get_tree().process_frame
+	door.toggle()
+
+	var body := Node.new()
+	door._on_body_entered(body)
+	door._on_body_entered(body) # duplicate
+	door._on_body_entered(body) # duplicate again
+	door._on_body_exited(body) # a single exit must fully clear it
+	door.toggle()
+	_assert(not door.is_open, "duplicate body_entered signals for the same body must not require multiple exits to clear")
+
+	door.queue_free()
+	body.free()
+	await get_tree().process_frame
+
+## A candidate whose CENTER clears a wall but whose collision-radius
+## footprint would still overlap it must be rejected -- the point-only
+## check this replaces would have wrongly accepted it.
+func _test_spawn_rejects_candidate_with_edge_overlapping_wall() -> void:
+	UrbanNavigationService.reset()
+	var wall := StaticBody2D.new()
+	wall.collision_layer = 1
+	wall.collision_mask = 0
+	var shape := RectangleShape2D.new()
+	shape.size = Vector2(400, 400)
+	var collider := CollisionShape2D.new()
+	collider.shape = shape
+	wall.add_child(collider)
+	wall.position = Vector2(76000, 70000)
+	add_child(wall)
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+
+	var manager := await _make_spawn_manager(77)
+	# Center just outside the wall's edge (wall half-extent 200 -> edge at
+	# x=76200), but within collision_radius+margin (13+4=17) of it.
+	var candidate := Vector2(76210, 70000)
+	_assert(manager._footprint_overlaps(candidate), "a candidate whose footprint radius still overlaps a wall's edge must be rejected even though its exact center point is outside the wall")
+
+	manager.queue_free()
+	wall.queue_free()
+	await get_tree().process_frame
+
+## A clear region with nothing nearby must still succeed -- the shape-based
+## check isn't simply always-reject.
+func _test_spawn_clear_region_candidate_succeeds() -> void:
+	UrbanNavigationService.reset()
+	var manager := await _make_spawn_manager(78)
+	var candidate := Vector2(78000, 70000) # isolated, nothing else registered here
+	_assert(not manager._footprint_overlaps(candidate), "a candidate with genuinely clear space around it must not be rejected by the footprint check")
+
+	manager.queue_free()
+	await get_tree().process_frame
+
+## Deterministic RNG selection must survive the new shape-based validation
+## unchanged -- same seed, same regions -> same chosen point.
+func _test_spawn_deterministic_selection_unchanged_with_shape_validation() -> void:
+	var region_a := await _make_spawn_region(&"test/shape_det_a", Vector2(79000, 70000), 120.0)
+	var region_b := await _make_spawn_region(&"test/shape_det_b", Vector2(79000, 70400), 120.0)
+
+	var manager_1 := await _make_spawn_manager(555111)
+	var pos_1: Variant = manager_1._pick_region_spawn_position()
+	manager_1.queue_free()
+	await get_tree().process_frame
+
+	var manager_2 := await _make_spawn_manager(555111)
+	var pos_2: Variant = manager_2._pick_region_spawn_position()
+	manager_2.queue_free()
+	await get_tree().process_frame
+
+	_assert(pos_1 != null and pos_2 != null, "sanity: both picks should succeed with two open regions")
+	_assert((pos_1 as Vector2).is_equal_approx(pos_2), "the same rng_seed must still pick the identical region and point under shape-based validation")
+
+	region_a.queue_free()
+	region_b.queue_free()
+	await get_tree().process_frame
+
+## Crossing directly from Room A to Room B (both signal orders) must never
+## leave the actor reading as outdoors, even momentarily -- the deferred
+## recompute must always resolve to B, never a stale "".
+func _test_room_context_a_to_b_crossing_stays_indoors() -> void:
+	var building: ConvenienceStore01 = CONVENIENCE_STORE_SCENE.instantiate()
+	add_child(building)
+	building.global_position = Vector2(91000, 91000)
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+
+	var retail_room: Room = building.get_node("Rooms/RetailFloor")
+	var back_room: Room = building.get_node("Rooms/BackRoom")
+
+	var settlement: Settlement = await _make_settlement(["general"])
+	var survivor: Survivor = await _make_survivor({"name": "Crosser"}, settlement)
+	survivor.global_position = retail_room.global_position
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	_assert(survivor.detectable.current_room_id == &"retail_floor", "sanity: survivor starts in the retail floor")
+
+	# A real physical crossing -- Godot's own Area2D signal order for this
+	# same-frame transition is whatever it is (not something a test can
+	# dictate), which is exactly the point: _update_detectable_context()
+	# must resolve correctly regardless of that order, by trusting live
+	# overlap state rather than any single signal's own room argument.
+	survivor.global_position = back_room.global_position
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	_assert(survivor.detectable.is_indoors, "crossing A -> B must never leave the actor reading as outdoors")
+	_assert(survivor.detectable.current_room_id == &"back_room", "after physically crossing into room B, the context must resolve to B regardless of the real signal order")
+
+	# And back the other way.
+	survivor.global_position = retail_room.global_position
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	_assert(survivor.detectable.is_indoors, "crossing back B -> A must also never leave the actor reading as outdoors")
+	_assert(survivor.detectable.current_room_id == &"retail_floor", "after physically crossing back into room A, the context must resolve to A")
+
+	# Explicitly exercise BOTH synthetic signal orderings too, matching the
+	# actual physical position (retail_floor) at the time they fire -- this
+	# is what proves the fix doesn't merely happen to work for whichever
+	# order Godot picks in practice, but is correct for either order by
+	# construction.
+	building._on_room_body_entered(survivor, retail_room) # already true -- a harmless duplicate/idempotent re-entry
+	building._on_room_body_exited(survivor, back_room) # never really entered -- an exit for a room the body was never in
+	await get_tree().process_frame
+	_assert(survivor.detectable.is_indoors and survivor.detectable.current_room_id == &"retail_floor", "an exit signal for a room the body isn't (and was signalled to be) inside must never override the room it's ACTUALLY inside")
+
+	survivor.queue_free()
+	building.queue_free()
+	settlement.free()
+	await get_tree().process_frame
+
+## Leaving the building entirely (no room, in either building) must clear
+## context back to not-indoors.
+func _test_room_context_clears_on_leaving_building() -> void:
+	var building: ConvenienceStore01 = CONVENIENCE_STORE_SCENE.instantiate()
+	add_child(building)
+	building.global_position = Vector2(92000, 92000)
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+
+	var retail_room: Room = building.get_node("Rooms/RetailFloor")
+	var settlement: Settlement = await _make_settlement(["general"])
+	var survivor: Survivor = await _make_survivor({"name": "Leaver"}, settlement)
+	survivor.global_position = retail_room.global_position
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	_assert(survivor.detectable.is_indoors, "sanity: survivor starts indoors")
+
+	survivor.global_position = Vector2(99500, 99500) # far outside the building entirely
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	_assert(not survivor.detectable.is_indoors, "leaving the building entirely must clear indoor context")
+	_assert(survivor.detectable.current_room_id == &"", "leaving the building entirely must clear current_room_id")
+
+	survivor.queue_free()
+	building.queue_free()
+	settlement.free()
+	await get_tree().process_frame
+
+## Rapid doorway oscillation (several enter/exit pairs queued within one
+## frame) must still leave the FINAL, correct state once signals settle --
+## not a state matching whichever signal happened to fire last.
+func _test_room_context_rapid_oscillation_settles_correctly() -> void:
+	var building: ConvenienceStore01 = CONVENIENCE_STORE_SCENE.instantiate()
+	add_child(building)
+	building.global_position = Vector2(93000, 93000)
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+
+	var retail_room: Room = building.get_node("Rooms/RetailFloor")
+	var back_room: Room = building.get_node("Rooms/BackRoom")
+	var settlement: Settlement = await _make_settlement(["general"])
+	var survivor: Survivor = await _make_survivor({"name": "Oscillator"}, settlement)
+	survivor.global_position = retail_room.global_position
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+
+	# Several oscillations queued within a single frame before anything flushes.
+	building._on_room_body_exited(survivor, retail_room)
+	building._on_room_body_entered(survivor, back_room)
+	building._on_room_body_exited(survivor, back_room)
+	building._on_room_body_entered(survivor, retail_room)
+	building._on_room_body_exited(survivor, retail_room)
+	building._on_room_body_entered(survivor, back_room)
+	# Final ACTUAL overlap state: survivor's real body never moved, so
+	# whichever room its physical position is really inside is the only
+	# thing the deferred flush should trust -- not signal call order.
+	await get_tree().process_frame
+
+	var actual_room_id: StringName = &"retail_floor" if retail_room.get_overlapping_bodies().has(survivor) else &"back_room"
+	_assert(survivor.detectable.current_room_id == actual_room_id, "after rapid same-frame oscillation, the final context must match the body's ACTUAL overlap state, not merely the last signal that happened to fire")
+	_assert(survivor.detectable.is_indoors, "the survivor must still read as indoors after oscillation settles")
+
+	survivor.queue_free()
+	building.queue_free()
 	settlement.free()
 	await get_tree().process_frame

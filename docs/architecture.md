@@ -1031,6 +1031,70 @@ full automated test suite, and direct scene-file inspection were used
 instead. See each system doc's own "Known limitations" for the complete,
 per-system list.
 
+## Phase 3B.2: hardening movement noise, navigation, spawning, and interaction conservation
+
+Everything below hardens systems Phase 3B.1 introduced but left
+incomplete in specific, identified ways -- no new systems, additive to
+Phase 3B.1 above.
+
+**Real, bounded movement noise.** `DetectableComponent` now actually
+emits footstep events (previously it only tracked movement state for
+`effective_visibility_multiplier()`), gated by a countdown timer
+(`walking_step_interval`/`running_step_interval`) rather than once per
+physics frame, so a long walk can't flood `NoiseManager`'s fixed-size ring
+buffer. See `docs/perception_system.md` "Detectability."
+
+**Activity noise routes through the actor.** `LootContainerComponent`/
+`SalvageableComponent`/`Door`/`Weapon` now call the new
+`NoiseManager.emit_actor_noise(actor, position, loudness, category)`
+instead of `emit_noise()` directly -- routes through `actor`'s own
+`DetectableComponent` (applying `concealment_modifier`) when present,
+falls back safely otherwise. `Door.toggle()` gained an optional `actor`
+parameter for this; programmatic toggles still work with none.
+
+**Exact salvage conservation.** `SalvageableComponent` persists
+`remaining_yield` per prop (`WorldState.prop_states`) instead of a
+one-shot "salvaged" bool, transferring only what currently fits and
+preserving the rest rather than destroying it -- see
+`docs/interaction_system.md`.
+
+**Status-aware, revision-invalidated navigation.**
+`UrbanNavigationService.find_path_ex()` distinguishes `SUCCESS` /
+`BUDGET_DEFERRED` / `NO_PATH` / `NOT_READY` instead of collapsing every
+failure into an empty path; `Zombie`/`Survivor` no longer fall back to
+direct steering when blocked with no known route (they hold position
+instead), and both discard a cached path the instant
+`UrbanNavigationService.revision()` (bumped on grid rebuild or any door
+state change) no longer matches what it was computed against. See
+`docs/perception_system.md` "Navigation."
+
+**Door occupancy as a set.** `Door` tracks overlapping bodies by instance
+ID (`_blocking_bodies`) instead of a single bool, so two actors in the
+same doorway are counted independently and a body freed mid-overlap gets
+pruned automatically. See `docs/interaction_system.md`.
+
+**Full-footprint spawn validation.** `SpawnManager` validates a candidate
+zombie's entire collision footprint (a `PhysicsShapeQueryParameters2D`
+circle matching its real collision radius + clearance, plus edge samples
+against the nav grid) instead of just its center point, without ever
+instantiating a zombie to test it.
+
+**Order-safe room context.** `BuildingVisibilityController` no longer
+applies each `body_entered`/`body_exited` signal's effect independently --
+it re-scans which room a body is ACTUALLY overlapping right now, since
+Godot only emits these signals once the physics server has fully updated
+every monitored Area2D's overlap state for that step. A same-frame "exited
+Room A" can no longer clobber a same-frame "entered Room B."
+
+**Known limitations after Phase 3B.2:** `nav_stuck` (set once a
+Zombie/Survivor exhausts its bounded no-path retry count) isn't yet
+consumed by any `UtilityAction` to abandon a goal early -- it's readable,
+not yet wired to a behavior change; live Godot AI MCP interactive
+validation and the 5 previously-missing Phase 3B.1 screenshots still
+could not be captured this pass, for the same reason as before (no editor
+session connected) -- see each system doc's own "Known limitations" for
+the complete list.
+
 ## Where the remaining excluded systems would attach
 
 Settlements, world state, and survivors are implemented as of Phase 2A

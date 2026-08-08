@@ -13,6 +13,19 @@ const MAX_RECENT := 32
 ## capped at MAX_RECENT (oldest dropped) -- a bounded log, not a growing one.
 var _recent: Array[Dictionary] = []
 
+## Prefers `actor`'s own DetectableComponent (duck-typed via its `detectable`
+## property, the same convention Player/Survivor already expose) so
+## concealment_modifier applies and last_noise_category/last_noise_time_ticks
+## get recorded on that actor; falls back to a direct emit_noise() when
+## `actor` is null or has no such component -- e.g. a programmatic/
+## environmental toggle with no interacting actor, or an actor type that
+## never added the component. Never requires an actor to make noise.
+func emit_actor_noise(actor: Node, position: Vector2, loudness: float, category: StringName) -> void:
+	if actor != null and "detectable" in actor and actor.detectable != null:
+		actor.detectable.report_activity_noise(loudness, category)
+	else:
+		emit_noise(position, loudness, category, actor)
+
 func emit_noise(position: Vector2, loudness: float, category: StringName, source: Node = null) -> void:
 	_recent.append({
 		"position": position,

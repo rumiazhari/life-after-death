@@ -51,7 +51,7 @@ func try_fire(direction: Vector2) -> bool:
 	ammo_in_magazine -= 1
 	_cooldown_remaining = 1.0 / maxf(data.fire_rate, 0.01)
 	_spawn_projectile(direction)
-	NoiseManager.emit_noise(muzzle.global_position, 20.0, &"gunshot")
+	NoiseManager.emit_actor_noise(get_parent(), muzzle.global_position, 20.0, &"gunshot")
 	GameEvents.weapon_fired.emit(ammo_in_magazine, data.magazine_size)
 	_notify_ammo()
 	fired.emit()

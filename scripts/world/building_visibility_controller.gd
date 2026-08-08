@@ -99,7 +99,7 @@ func _on_any_door_state_changed(_is_open: bool) -> void:
 		_apply_states()
 
 func _on_room_body_entered(body: Node, room: Room) -> void:
-	_update_detectable_context(body, room)
+	_update_detectable_context(body)
 	if not body.is_in_group("player"):
 		return
 	_player = body
@@ -109,7 +109,7 @@ func _on_room_body_entered(body: Node, room: Room) -> void:
 	_apply_states()
 
 func _on_room_body_exited(body: Node, room: Room) -> void:
-	_update_detectable_context(body, null)
+	_update_detectable_context(body)
 	if not body.is_in_group("player"):
 		return
 	if _current_room != room:
@@ -122,17 +122,37 @@ func _on_room_body_exited(body: Node, room: Room) -> void:
 
 ## Keeps ANY entering/exiting body's DetectableComponent (Player or
 ## Survivor -- Room monitors both layers) current on which building/room
-## it's in, independent of the player-only visual reveal above. A body
-## without a DetectableComponent (or not overlapping any room after
-## exiting) is simply a no-op -- see detectable_component.gd's own
-## "fails safely" contract.
-func _update_detectable_context(body: Node, entered_room: Variant) -> void:
+## it's in, independent of the player-only visual reveal above.
+##
+## Re-scans which room the body is ACTUALLY overlapping right now rather
+## than trusting the individual signal's own room argument: a body crossing
+## directly from Room A to Room B can have body_entered(B) and
+## body_exited(A) fire in EITHER order within the same physics step, but
+## Godot's Area2D signals are only emitted once the physics server has
+## fully updated every monitored Area2D's overlap list for that step --
+## so by the time ANY entered/exited handler runs, get_overlapping_bodies()
+## already reflects the true final state, regardless of which particular
+## signal is being handled or the order the two arrived in. Trusting that
+## live state (instead of applying "entered room" / "cleared" from
+## whichever signal fired) is what makes a same-frame "exited A" unable to
+## clobber a same-frame "entered B".
+func _update_detectable_context(body: Node) -> void:
 	var detectable: DetectableComponent = body.get_node_or_null("DetectableComponent") if body is Node else null
 	if detectable == null:
 		return
-	if entered_room:
-		detectable.set_indoor_context(building_id, (entered_room as Room).room_id)
-	else:
+	var actual_room: Room = null
+	for room in _rooms:
+		if is_instance_valid(room) and room.get_overlapping_bodies().has(body):
+			actual_room = room
+			break
+	if actual_room != null:
+		detectable.set_indoor_context(building_id, actual_room.room_id)
+	elif detectable.current_building_id == building_id:
+		# Only clear if THIS building most recently claimed the context --
+		# if the body walked straight into a different building this same
+		# frame, that building's own handler already (or will) claim it,
+		# and this one clearing it out from under that would reintroduce
+		# the exact ordering bug this re-scan exists to avoid.
 		detectable.set_indoor_context(&"", &"")
 
 func _find_room_still_containing_player() -> Room:

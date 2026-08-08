@@ -37,4 +37,4 @@ func _search(actor: Node) -> void:
 	var moved: Dictionary = inv.move_all_to(actor.carried_inventory)
 	if not moved.is_empty():
 		looted.emit(actor, moved)
-		NoiseManager.emit_noise(actor.global_position, 4.0, &"search", actor)
+		NoiseManager.emit_actor_noise(actor, actor.global_position, 4.0, &"search")
