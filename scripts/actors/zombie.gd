@@ -9,6 +9,13 @@ extends CharacterBody2D
 ## both add themselves to it) rather than always the player, so zombies can
 ## threaten autonomous survivors too. Re-picked on a periodic timer, not
 ## every frame, to keep this as cheap as the original player-only version.
+##
+## The player stays targetable at any distance, preserving the original
+## Phase 0/1 combat pressure/tuning unchanged. Survivors are only
+## targetable within `detection_radius` -- without this, a zombie could be
+## pulled clear across the map toward a lone survivor scavenging far from
+## the action, which reads as omniscient rather than a swarm reacting to
+## what's actually nearby.
 
 @export var move_speed: float = 55.0
 @export var contact_damage: float = 8.0
@@ -16,6 +23,7 @@ extends CharacterBody2D
 @export var separation_radius: float = 24.0
 @export var separation_strength: float = 120.0
 @export var retarget_interval: float = 3.0
+@export var survivor_detection_radius: float = 500.0
 
 @onready var health_component: HealthComponent = $HealthComponent
 @onready var body_visual: Polygon2D = $BodyVisual
@@ -67,10 +75,13 @@ func _seek_target() -> Vector2:
 func _find_nearest_attackable() -> Node2D:
 	var best: Node2D = null
 	var best_dist_sq: float = INF
+	var detection_radius_sq: float = survivor_detection_radius * survivor_detection_radius
 	for node in get_tree().get_nodes_in_group("attackable"):
 		if not is_instance_valid(node):
 			continue
 		var dist_sq: float = global_position.distance_squared_to((node as Node2D).global_position)
+		if node.is_in_group("survivors") and dist_sq > detection_radius_sq:
+			continue
 		if dist_sq < best_dist_sq:
 			best_dist_sq = dist_sq
 			best = node

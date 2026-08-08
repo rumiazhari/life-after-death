@@ -542,6 +542,18 @@ check to the project's own documented duck-typing convention
 (`has_method("take_damage")`), matching how `HealthComponent` is already
 described as this project's "damage interface."
 
+The player remains targetable at any distance, preserving the original
+Phase 0/1 pressure/tuning exactly. Survivors are only targetable within
+`Zombie.survivor_detection_radius` (default 500px, picked against
+`SurvivorAI.perception_radius` of 420 -- a zombie notices somewhat
+farther than a survivor does) -- `_find_nearest_attackable()` skips any
+candidate in the `"survivors"` group beyond that range. Without this, a
+zombie could be pulled clear across the map toward a lone survivor
+scavenging far from the action, which reads as omniscient rather than a
+swarm reacting to what's actually nearby; since zombies still spawn
+camera-relative to the player (see `SpawnManager` above), this doesn't
+reduce pressure on the player, only on distant unaccompanied survivors.
+
 ### Settlement -- `scripts/world/`
 
 `Settlement` (`settlement.gd`) collects its own `StorageContainer`
