@@ -28,6 +28,8 @@ var _grid := AStarGrid2D.new()
 var _origin: Vector2 = Vector2.ZERO ## world position of cell (0,0)'s top-left corner
 var _built: bool = false
 var _requests_this_frame: int = 0
+var direct_path_checks_total: int = 0
+var path_requests_total: int = 0
 var _door_cells: Dictionary = {} ## StringName door_id -> Vector2i cell
 ## Bumped whenever the grid is rebuilt or any door's walkability changes --
 ## a path cached by a caller becomes stale the instant this changes, since
@@ -105,6 +107,7 @@ func _cell_to_world(cell: Vector2i) -> Vector2:
 ## path when it returns false, so most short-range movement (the vast
 ## majority of actor movement in this game) never touches the grid at all.
 func is_direct_path_clear(from: Vector2, to: Vector2) -> bool:
+	direct_path_checks_total += 1
 	var space_state := get_tree().root.get_world_2d().direct_space_state
 	var query := PhysicsRayQueryParameters2D.create(from, to, WORLD_MASK)
 	return space_state.intersect_ray(query).is_empty()
@@ -132,6 +135,7 @@ func find_path(from: Vector2, to: Vector2) -> PackedVector2Array:
 ## against a fresh UrbanNavigationService.revision() to know its cached path
 ## is still valid.
 func find_path_ex(from: Vector2, to: Vector2) -> Dictionary:
+	path_requests_total += 1
 	if not _built:
 		return {"status": PathResult.NOT_READY, "path": PackedVector2Array(), "revision": _revision}
 	if _requests_this_frame >= MAX_REQUESTS_PER_FRAME:
@@ -159,4 +163,6 @@ func reset() -> void:
 	_origin = Vector2.ZERO
 	_door_cells.clear()
 	_requests_this_frame = 0
+	direct_path_checks_total = 0
+	path_requests_total = 0
 	_revision += 1

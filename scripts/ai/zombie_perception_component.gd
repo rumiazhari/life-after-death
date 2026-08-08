@@ -45,7 +45,6 @@ var _owner_actor: Node2D
 ## Private gameplay-only RNG stream (perception-tick stagger jitter) --
 ## deliberately separate from CosmeticRng.
 var _gameplay_rng := RandomNumberGenerator.new()
-var _last_processed_noise_sequence: int = 0
 var _last_noise_epoch: int = 0
 var _handled_noise_sequences: Dictionary = {}
 
@@ -109,12 +108,18 @@ func _check_hearing(origin: Vector2) -> void:
 		return
 	if _last_noise_epoch != NoiseManager.epoch():
 		_last_noise_epoch = NoiseManager.epoch()
-		_last_processed_noise_sequence = 0
 		_handled_noise_sequences.clear()
+	else:
+		var retained: Dictionary = {}
+		for sequence in NoiseManager.current_sequences():
+			retained[sequence] = true
+		for handled in _handled_noise_sequences.keys():
+			if not retained.has(handled):
+				_handled_noise_sequences.erase(handled)
 	var candidates: Array[Dictionary] = []
 	for noise in noises:
 		var sequence: int = int(noise.get("sequence", 0))
-		if sequence > _last_processed_noise_sequence and not _handled_noise_sequences.has(sequence):
+		if not _handled_noise_sequences.has(sequence):
 			candidates.append(noise)
 	if candidates.is_empty():
 		return
@@ -125,13 +130,15 @@ func _check_hearing(origin: Vector2) -> void:
 		if margin > best_margin:
 			best_margin = margin
 			selected = noise
-	var sequence: int = int(selected.get("sequence", 0))
+	var selected_sequence: int = int(selected.get("sequence", 0))
 	var effective_loudness: float = float(selected["loudness"])
 	if not _hearing_line_clear(origin, selected["position"]):
 		# A single bounded raycast is applied only to the newest, nearest-filtered
 		# candidate. Strong sounds can cross one wall; quiet footsteps cannot.
 		effective_loudness *= 0.25
-	_handled_noise_sequences[sequence] = true
+	_handled_noise_sequences[selected_sequence] = true
+	while _handled_noise_sequences.size() > NoiseManager.MAX_RECENT:
+		_handled_noise_sequences.erase(_handled_noise_sequences.keys()[0])
 	if effective_loudness * 20.0 < origin.distance_to(selected["position"]):
 		return
 	last_known_position = selected["position"]

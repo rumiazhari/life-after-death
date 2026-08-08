@@ -158,6 +158,9 @@ func _run_all() -> void:
 	await _run_test("phase_3b4_noise_reset_epoch_accepts_new_events", _test_phase_3b4_noise_reset_epoch_accepts_new_events)
 	await _run_test("phase_3b4_navigation_reset_invalidates_revision", _test_phase_3b4_navigation_reset_invalidates_revision)
 	await _run_test("phase_3b4_suppressed_noise_is_not_global", _test_phase_3b4_suppressed_noise_is_not_global)
+	await _run_test("phase_3b5_navigation_counters_are_bounded_hooks", _test_phase_3b5_navigation_counters_are_bounded_hooks)
+	await _run_test("phase_3b5_handled_noise_history_is_bounded", _test_phase_3b5_handled_noise_history_is_bounded)
+	await _run_test("phase_3b5_noise_ring_sequences_are_bounded", _test_phase_3b5_noise_ring_sequences_are_bounded)
 
 	print("\n=== TEST RESULTS: %d passed, %d failed ===" % [_pass_count, _fail_count])
 	get_tree().quit(0 if _fail_count == 0 else 1)
@@ -184,6 +187,25 @@ func _test_phase_3b4_suppressed_noise_is_not_global() -> void:
 	NoiseManager.reset()
 	NoiseManager.emit_noise(Vector2.ZERO, 0.0, &"suppressed")
 	_assert(NoiseManager.recent_noises_near(Vector2.ZERO, 100.0).is_empty(), "fully suppressed noise must not occupy the global buffer")
+
+func _test_phase_3b5_navigation_counters_are_bounded_hooks() -> void:
+	UrbanNavigationService.reset()
+	UrbanNavigationService.is_direct_path_clear(Vector2.ZERO, Vector2.ONE)
+	_assert(UrbanNavigationService.direct_path_checks_total == 1, "direct-route checks must expose a production counter")
+
+func _test_phase_3b5_handled_noise_history_is_bounded() -> void:
+	NoiseManager.reset()
+	for i in range(100):
+		NoiseManager.emit_noise(Vector2.ZERO, 2.0, &"footstep")
+	_assert(NoiseManager.current_sequences().size() <= NoiseManager.MAX_RECENT, "noise history must remain bounded to the ring buffer")
+
+func _test_phase_3b5_noise_ring_sequences_are_bounded() -> void:
+	NoiseManager.reset()
+	for i in range(NoiseManager.MAX_RECENT + 8):
+		NoiseManager.emit_noise(Vector2.ZERO, 2.0, &"test")
+	var sequences := NoiseManager.current_sequences()
+	_assert(sequences.size() == NoiseManager.MAX_RECENT, "current sequence exposure must match the bounded ring")
+	_assert(sequences[0] < sequences[-1], "retained noise sequences must remain ordered")
 
 ## --- Harness ---------------------------------------------------------
 

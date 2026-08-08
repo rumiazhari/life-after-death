@@ -67,3 +67,9 @@ func reset() -> void:
 
 func epoch() -> int:
 	return _epoch
+
+func current_sequences() -> Array[int]:
+	var result: Array[int] = []
+	for entry in _recent:
+		result.append(int(entry["sequence"]))
+	return result

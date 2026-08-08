@@ -133,10 +133,11 @@ func move_toward_point(point: Vector2, delta: float) -> bool:
 func _seek_direction(point: Vector2, to_point: Vector2, distance: float) -> Vector2:
 	if not point.is_equal_approx(_nav_target):
 		_nav_target = point
-		reset_navigation_goal()
+		begin_navigation_goal(point)
 	var revision := UrbanNavigationService.revision()
 	if _nav_failure_valid and _nav_failure_revision != revision:
-		reset_navigation_goal()
+		clear_navigation_failure()
+		_nav_recheck_timer = 0.0
 	if not _nav_path.is_empty() and _nav_path_revision != UrbanNavigationService.revision():
 		_clear_nav_path() # a door changed state (or the grid rebuilt) since this route was computed
 
@@ -146,7 +147,7 @@ func _seek_direction(point: Vector2, to_point: Vector2, distance: float) -> Vect
 		if UrbanNavigationService.is_direct_path_clear(global_position, point):
 			_clear_nav_path()
 			_nav_direct_clear = true
-			reset_navigation_goal()
+			clear_navigation_failure()
 		else:
 			_nav_direct_clear = false
 			if _nav_path.is_empty() and not (_nav_failure_valid and _nav_failure_goal.is_equal_approx(point) and _nav_failure_revision == revision and nav_stuck):
@@ -192,11 +193,24 @@ func _clear_nav_path() -> void:
 func reset_navigation_goal() -> void:
 	_clear_nav_path()
 	_nav_recheck_timer = 0.0
+	_nav_target = Vector2.ZERO
+	clear_navigation_failure()
+
+func clear_cached_path() -> void:
+	_clear_nav_path()
+
+func clear_navigation_failure() -> void:
 	_nav_no_path_retries = 0
 	nav_stuck = false
 	_nav_failure_valid = false
 	_nav_failure_revision = -1
 	_nav_failure_goal = Vector2.ZERO
+
+func begin_navigation_goal(goal: Vector2) -> void:
+	_nav_target = goal
+	clear_cached_path()
+	clear_navigation_failure()
+	_nav_recheck_timer = 0.0
 
 func stop_moving(delta: float) -> void:
 	velocity = velocity.move_toward(Vector2.ZERO, steer_acceleration * delta)
