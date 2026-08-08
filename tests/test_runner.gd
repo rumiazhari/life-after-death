@@ -58,6 +58,9 @@ func _run_all() -> void:
 	await _run_test("haul_destination_destroyed_redirects_to_fallback", _test_haul_destination_destroyed_redirects_to_fallback)
 	await _run_test("haul_destination_and_fallback_destroyed_creates_world_drop", _test_haul_destination_and_fallback_destroyed_creates_world_drop)
 	await _run_test("repeated_container_create_free_does_not_grow_registry", _test_repeated_container_create_free_does_not_grow_registry)
+	await _run_test("storage_destruction_preserves_multiple_item_types", _test_storage_destruction_preserves_multiple_item_types)
+	await _run_test("restart_teardown_creates_no_destruction_drops", _test_restart_teardown_creates_no_destruction_drops)
+	await _run_test("reparenting_preserves_registration_and_ownership", _test_reparenting_preserves_registration_and_ownership)
 
 	print("\n=== TEST RESULTS: %d passed, %d failed ===" % [_pass_count, _fail_count])
 	get_tree().quit(0 if _fail_count == 0 else 1)
@@ -481,8 +484,18 @@ func _test_haul_in_transit_source_destroyed() -> void:
 	board.mark_picked_up(job, carrier_id)
 	_assert(job.haul_phase == Job.HaulPhase.IN_TRANSIT, "sanity check: job should be in transit before the source is destroyed")
 
-	source.free() # the job's AWAITING_PICKUP-era target, now gone
+	source.free() # the job's AWAITING_PICKUP-era target, now gone -- 2 unreserved materials were still in it
 	_assert(job.is_target_valid(), "an IN_TRANSIT job must stay valid after its source is destroyed -- the cargo already left it")
+
+	# The 2 leftover unreserved materials that were still physically in the
+	# source when it was destroyed must be preserved, not lost.
+	_assert(WorldState.drops.size() == 1, "the source's remaining stock at time of destruction must produce a WorldDrop")
+	var drop: WorldDrop = WorldState.drops.values()[0]
+	_assert(drop.inventory.get_count(&"materials") == 2, "the drop holds exactly the 2 materials that were still in the source")
+	_assert(drop.reason == &"storage_destroyed", "the drop's reason should identify it as a destroyed-storage drop")
+	_assert(carried.get_count(&"materials") == 3, "the 3 already-in-transit units are unaffected, still with the carrier")
+	var total: int = carried.get_count(&"materials") + drop.inventory.get_count(&"materials")
+	_assert(total == 5, "global conservation across the carrier and the drop: 3 in transit + 2 in the drop == original 5")
 
 	board._validate_some_jobs()
 	_assert(board.get_in_transit_haul_job(carrier_id) == job, "periodic job-board validation must not cancel an in-transit job over a destroyed source")
@@ -757,10 +770,19 @@ func _test_storage_container_unregisters_on_exit() -> void:
 
 	container.free()
 	_assert(WorldState.get_container(id) == null, "WorldState.get_container(old_id) must become null the moment the container node exits the tree")
+	_assert(WorldState.drops.is_empty(), "destroying an EMPTY container must not create an empty WorldDrop")
 
 ## A HAUL job's source container destroyed before pickup (still
-## AWAITING_PICKUP) must be cancelled cleanly by periodic validation --
-## not linger, not corrupt the (now-gone) reservation.
+## AWAITING_PICKUP) must be cancelled cleanly by periodic validation, AND
+## its contents (reserved and unreserved alike) must be PRESERVED in a
+## WorldDrop, not simply vanish.
+##
+## An earlier version of this test asserted the opposite (WorldState.drops
+## must stay empty when a source is destroyed before pickup) and called
+## that "conservation" -- it only proved non-duplication (nothing appeared
+## twice), not conservation (every item still exists somewhere). This is
+## the corrected version, exercising the exact scenario called out for it:
+## a source with 5 items, 3 reserved, destroyed before pickup.
 func _test_haul_source_destroyed_before_pickup() -> void:
 	var source: StorageContainer = await _make_container("general")
 	source.get_inventory().add_item(&"food_ration", 5)
@@ -771,22 +793,48 @@ func _test_haul_source_destroyed_before_pickup() -> void:
 	_assert(job != null, "haul job creation should succeed")
 	board.claim_job(job, 55)
 	_assert(job.haul_phase == Job.HaulPhase.AWAITING_PICKUP, "sanity check: not yet picked up")
+	_assert(source.get_inventory().get_available(&"food_ration") == 2, "sanity check: 3 of 5 reserved, 2 available")
+
+	var global_total_before: int = source.get_inventory().get_count(&"food_ration") + dest.get_inventory().get_count(&"food_ration")
+	_assert(global_total_before == 5, "sanity check: 5 total items exist before destruction")
 
 	var source_id: int = source.container_id
-	source.free() # destroyed before the survivor ever reaches it
+	source.free() # destroyed before the survivor ever reaches it: 2 unreserved + 3 reserved
 
 	_assert(WorldState.get_container(source_id) == null, "the source's registration must be gone once it's freed")
 	_assert(not job.is_target_valid(), "an AWAITING_PICKUP job whose source no longer exists must read as invalid")
 
+	# Reservation-backed job cancels and cannot be reclaimed.
 	board._validate_some_jobs()
 	_assert(WorldState.get_job(job.id) == null, "periodic validation must cancel (and deregister) the job once its source is gone")
 	_assert(job.status == Job.Status.CANCELLED, "the job should resolve to CANCELLED, not linger or get stuck")
+	var still_claimable := false
+	for available_job in board.get_available_jobs(&"", Vector2.ZERO, -1.0):
+		if available_job.id == job.id:
+			still_claimable = true
+	_assert(not still_claimable, "a cancelled job must never resurface as claimable")
+	_assert(not board.claim_job(job, 99), "a cancelled job must not be reclaimable by any survivor")
 
-	# The 3 reserved units existed only in the now-freed source Inventory,
-	# which nothing else ever referenced -- conservation here means no
-	# OTHER container/survivor/drop ever received so much as 1 unit of them.
+	# Exactly 5 items appear in one WorldDrop -- both the 2 that were never
+	# reserved and the 3 that were reserved for the now-cancelled job.
+	_assert(WorldState.drops.size() == 1, "destroying a non-empty source must create exactly one WorldDrop")
+	var drop: WorldDrop = WorldState.drops.values()[0]
+	_assert(drop.inventory.get_count(&"food_ration") == 5, "the drop must hold all 5 original items, reserved and unreserved alike")
+	_assert(drop.reason == &"storage_destroyed", "the drop's reason should identify it as a destroyed-storage drop")
+	_assert(drop.source_container_id == source_id, "the drop must be attributed to the destroyed container's id")
+	_assert(drop.storage_role == "general", "the drop must record the destroyed container's storage role")
+	_assert(drop.inventory.reservation_count() == 0, "items in the drop must be unreserved and recoverable")
+
+	# Destination and survivor receive zero items in this scenario.
 	_assert(dest.get_inventory().get_count(&"food_ration") == 0, "the never-reached destination must receive nothing")
-	_assert(WorldState.drops.is_empty(), "no drop should be created for a job that never got as far as pickup")
+	var carried := Inventory.new(0.0) # stands in for "the survivor" -- pickup never happened, so it holds nothing
+	_assert(carried.get_count(&"food_ration") == 0, "the survivor (which never picked anything up) carries nothing")
+
+	# Global total before destruction equals global total afterward, summed
+	# across every valid sink: containers + survivor inventories + drops.
+	var global_total_after: int = (source.get_inventory().get_count(&"food_ration") if is_instance_valid(source) else 0)
+	global_total_after += dest.get_inventory().get_count(&"food_ration") + drop.inventory.get_count(&"food_ration") + carried.get_count(&"food_ration")
+	_assert(global_total_after == global_total_before, "global total must be identical before and after destruction: %d != %d" % [global_total_after, global_total_before])
 
 	dest.free()
 	board.free()
@@ -822,7 +870,13 @@ func _test_haul_destination_destroyed_redirects_to_fallback() -> void:
 	_assert(job.status == Job.Status.FAILED, "the job resolves FAILED -- it never reached its original, now-destroyed destination")
 	_assert(general_container.get_inventory().get_count(&"food_ration") == 10, "fallback delivery returns the cargo to general: 6 never hauled + 4 redirected == 10")
 	_assert(survivor.carried_inventory.get_count(&"food_ration") == 0, "the survivor is no longer carrying it")
-	_assert(WorldState.drops.is_empty(), "the fallback succeeded, so no world drop was needed")
+	_assert(WorldState.drops.is_empty(), "the fallback succeeded, so no world drop was needed (food_container was empty when destroyed, and the cargo landed safely in general)")
+
+	var drop_total: int = 0
+	for drop in WorldState.drops.values():
+		drop_total += drop.inventory.get_count(&"food_ration")
+	var global_total: int = general_container.get_inventory().get_count(&"food_ration") + survivor.carried_inventory.get_count(&"food_ration") + drop_total
+	_assert(global_total == 10, "global conservation summed across containers + survivor + drops: all 10 original units accounted for")
 
 	settlement.free()
 
@@ -860,12 +914,21 @@ func _test_haul_destination_and_fallback_destroyed_creates_world_drop() -> void:
 	_assert(drop.reason == &"haul_stalled", "the drop's reason should identify it as a stalled haul")
 	_assert(survivor.carried_inventory.get_count(&"food_ration") == 0, "the survivor is no longer carrying it")
 
+	var drop_total: int = 0
+	for d in WorldState.drops.values():
+		drop_total += d.inventory.get_count(&"food_ration")
+	var global_total: int = survivor.carried_inventory.get_count(&"food_ration") + drop_total # both containers are gone (destroyed empty)
+	_assert(global_total == 4, "global conservation summed across the survivor + drops: all 4 original units accounted for")
+
 	settlement.free()
 
 ## Repeated create/free cycles on standalone containers must not leave
-## WorldState.containers growing without bound.
+## WorldState.containers growing without bound, and must produce exactly
+## one WorldDrop per destroyed (non-empty) container -- not zero (items
+## quietly lost) and not more than one per container (duplicated).
 func _test_repeated_container_create_free_does_not_grow_registry() -> void:
-	var initial_count: int = WorldState.containers.size()
+	var initial_container_count: int = WorldState.containers.size()
+	var initial_drop_count: int = WorldState.drops.size()
 	for i in range(15):
 		var container: StorageContainer = await _make_container("general")
 		container.get_inventory().add_item(&"materials", 2)
@@ -873,4 +936,89 @@ func _test_repeated_container_create_free_does_not_grow_registry() -> void:
 		_assert(WorldState.get_container(id) != null, "cycle %d: a freshly created container should be registered" % i)
 		container.free() # container is invalid from here on -- read id, not container, below
 		_assert(WorldState.get_container(id) == null, "cycle %d: a freed container should be unregistered immediately" % i)
-	_assert(WorldState.containers.size() == initial_count, "15 create/free cycles must not grow WorldState.containers -- got %d, expected %d" % [WorldState.containers.size(), initial_count])
+		_assert(WorldState.drops.size() == initial_drop_count + i + 1, "cycle %d: exactly one new WorldDrop per destroyed non-empty container -- got %d drops" % [i, WorldState.drops.size()])
+	_assert(WorldState.containers.size() == initial_container_count, "15 create/free cycles must not grow WorldState.containers -- got %d, expected %d" % [WorldState.containers.size(), initial_container_count])
+	_assert(WorldState.drops.size() == initial_drop_count + 15, "exactly 15 drops total, one per destroyed container")
+
+	var total_materials_in_drops: int = 0
+	for drop in WorldState.drops.values():
+		total_materials_in_drops += drop.inventory.get_count(&"materials")
+	_assert(total_materials_in_drops == 30, "exact conservation across repeated destruction: 15 containers x 2 materials each == 30 total preserved in drops")
+
+## Destroying a container holding multiple distinct item types must
+## preserve every stack in the resulting WorldDrop, not just one.
+func _test_storage_destruction_preserves_multiple_item_types() -> void:
+	var container: StorageContainer = await _make_container("general")
+	container.get_inventory().add_item(&"food_ration", 4)
+	container.get_inventory().add_item(&"water_bottle", 6)
+	container.get_inventory().add_item(&"materials", 2)
+	var global_total_before: int = 4 + 6 + 2
+
+	container.free()
+
+	_assert(WorldState.drops.size() == 1, "one drop total, holding every stack from the destroyed container")
+	var drop: WorldDrop = WorldState.drops.values()[0]
+	_assert(drop.inventory.get_count(&"food_ration") == 4, "food_ration stack fully preserved")
+	_assert(drop.inventory.get_count(&"water_bottle") == 6, "water_bottle stack fully preserved")
+	_assert(drop.inventory.get_count(&"materials") == 2, "materials stack fully preserved")
+
+	var global_total_after: int = drop.inventory.get_count(&"food_ration") + drop.inventory.get_count(&"water_bottle") + drop.inventory.get_count(&"materials")
+	_assert(global_total_after == global_total_before, "global total across every item type must be identical before and after destruction")
+
+## A restart tears the whole scene (and every StorageContainer in it) down
+## at once via WorldState.reset() running BEFORE the old scene's nodes are
+## freed -- by the time each container's NOTIFICATION_PREDELETE fires,
+## WorldState no longer has it registered (WorldState.reset() already
+## cleared it), so _handle_permanent_destruction() must recognize that and
+## skip creating a drop: this is "the whole registry was torn down at
+## once," not "this one container was individually destroyed."
+func _test_restart_teardown_creates_no_destruction_drops() -> void:
+	var main_scene: PackedScene = load("res://scenes/main/Main.tscn")
+	var main_instance: Node = main_scene.instantiate()
+	add_child(main_instance)
+	await get_tree().process_frame
+	await get_tree().process_frame
+
+	_assert(WorldState.containers.size() > 0, "sanity check: the fresh scene should have registered its storage containers")
+	_assert(WorldState.drops.is_empty(), "sanity check: no drops yet")
+
+	# Mirror Main._restart_game(): reset both simulation autoloads BEFORE
+	# tearing down the old scene, exactly as a real restart does.
+	WorldState.reset()
+	SimulationClock.reset()
+	main_instance.free()
+	await get_tree().process_frame
+
+	_assert(WorldState.drops.is_empty(), "an ordinary restart teardown must never create destruction drops for the containers (with real starting stock -- food/water/medical/materials) it's discarding wholesale")
+	_assert(WorldState.containers.is_empty(), "the reset registry must stay empty -- nothing re-registered itself during teardown")
+
+## Reparenting a StorageContainer between settlements must never be
+## treated as destruction: same id, same Inventory instance and contents,
+## and correct ownership handoff to the new settlement.
+func _test_reparenting_preserves_registration_and_ownership() -> void:
+	var old_settlement: Settlement = await _make_settlement(["general"])
+	var new_settlement: Settlement = await _make_settlement(["food"]) # distinct role: no collision on the move
+
+	var container: StorageContainer = old_settlement.storage_containers["general"]
+	container.get_inventory().add_item(&"materials", 7)
+	var original_id: int = container.container_id
+	var original_inventory: Inventory = container.get_inventory()
+
+	_assert(old_settlement.storage_containers.get("general") == container, "sanity check: the old settlement owns it before the move")
+
+	old_settlement.remove_child(container)
+	new_settlement.add_child(container)
+	await get_tree().process_frame
+
+	_assert(WorldState.drops.is_empty(), "reparenting must never produce a WorldDrop")
+	_assert(WorldState.get_container(original_id) == original_inventory, "the container must remain registered under the SAME id, resolving to the SAME Inventory instance")
+	_assert(container.container_id == original_id, "the container's own id must not change across a reparent")
+	_assert(container.get_inventory() == original_inventory, "the container must keep the SAME Inventory instance (identity), not a fresh empty one")
+	_assert(container.get_inventory().get_count(&"materials") == 7, "contents must survive the reparent untouched")
+
+	_assert(old_settlement.storage_containers.get("general") == null, "the OLD settlement must no longer reference the moved container")
+	_assert(new_settlement.storage_containers.get("general") == container, "the NEW settlement must now own it under its storage_role")
+	_assert(new_settlement.data.storage_container_ids.get("general") == original_id, "the new settlement's persistent record must reflect the same container id")
+
+	old_settlement.free()
+	new_settlement.free()

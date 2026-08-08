@@ -43,6 +43,22 @@ func _on_child_exiting_tree(node: Node) -> void:
 			if data:
 				data.storage_container_ids.erase(container.storage_role)
 
+## Registers (or re-registers) a StorageContainer as belonging to this
+## settlement -- called by StorageContainer._enter_tree() when a container
+## is reparented in after this settlement's own initial
+## _collect_children() scan already ran. Deterministic on a role
+## collision: whichever container already holds that role keeps it, and
+## the newcomer is rejected (false) rather than silently overwriting a
+## live container's slot.
+func register_storage_container(container: StorageContainer) -> bool:
+	var existing: StorageContainer = storage_containers.get(container.storage_role)
+	if existing != null and is_instance_valid(existing) and existing != container:
+		return false
+	storage_containers[container.storage_role] = container
+	if data:
+		data.storage_container_ids[container.storage_role] = container.container_id
+	return true
+
 func setup_jobs(job_board: SettlementJobBoard) -> void:
 	for post in guard_posts:
 		job_board.create_job(Job.Type.GUARD, 2.0, &"", 1, post)
