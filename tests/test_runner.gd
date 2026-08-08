@@ -8,34 +8,51 @@ extends Node
 ## in normal gameplay.
 ##
 ## Each test gets a fresh WorldState/SimulationClock (reset before it
-## runs) so tests can't leak state into each other, and exercises the real
-## production code (Inventory, ScavengePoint, Job, SettlementJobBoard,
-## WorldState, SimulationClock) directly rather than reimplementing it --
+## runs) so tests can't leak state into each other. Most tests exercise
+## the real production code (Inventory, ScavengePoint, Job,
+## SettlementJobBoard) directly rather than reimplementing it --
 ## StorageContainer/SettlementJobBoard instances are constructed with
 ## `.new()` and have `_ready()` called on them explicitly (a plain virtual
 ## method, safe to call directly) instead of waiting on scene-tree
-## add_child() timing, which keeps every test fully synchronous and
-## deterministic.
+## add_child() timing, which keeps those tests fully synchronous.
+##
+## Several tests need a real, fully-wired Survivor/SurvivorAI/Settlement
+## (to drive an actual UtilityAction's enter()/tick()/exit() the same way
+## SurvivorAI does, or to exercise Main.tscn's own spawn/restart flow) --
+## those DO need add_child() + a frame to let @onready state and _ready()
+## resolve, so the whole harness runs as a chain of awaited coroutines
+## (`_run_test` awaits each test function; `await` on a plain synchronous
+## call is a no-op passthrough, so the old synchronous tests are untouched).
 
 var _pass_count: int = 0
 var _fail_count: int = 0
 var _current_test: String = ""
 var _test_failed: bool = false
 
+const SURVIVOR_SCENE: PackedScene = preload("res://scenes/actors/Survivor.tscn")
+
 func _ready() -> void:
 	call_deferred("_run_all")
 
 func _run_all() -> void:
-	_run_test("reserved_transfer_success", _test_reserved_transfer_success)
-	_run_test("reserved_transfer_failure_full_destination", _test_reserved_transfer_failure)
-	_run_test("reservation_release_after_interruption", _test_reservation_release_after_interruption)
-	_run_test("partial_scavenge_capacity", _test_partial_scavenge_capacity)
-	_run_test("zero_capacity_scavenge", _test_zero_capacity_scavenge)
-	_run_test("haul_interrupt_before_pickup", _test_haul_interrupt_before_pickup)
-	_run_test("haul_interrupt_after_pickup", _test_haul_interrupt_after_pickup)
-	_run_test("survivor_death_retains_data", _test_survivor_death_retains_data)
-	_run_test("restart_resets_ids_and_time", _test_restart_resets_ids_and_time)
-	_run_test("reservation_create_release_cycle", _test_reservation_cycle)
+	await _run_test("reserved_transfer_success", _test_reserved_transfer_success)
+	await _run_test("reserved_transfer_failure_full_destination", _test_reserved_transfer_failure)
+	await _run_test("reservation_release_after_interruption", _test_reservation_release_after_interruption)
+	await _run_test("partial_scavenge_capacity", _test_partial_scavenge_capacity)
+	await _run_test("zero_capacity_scavenge", _test_zero_capacity_scavenge)
+	await _run_test("haul_interrupt_before_pickup", _test_haul_interrupt_before_pickup)
+	await _run_test("haul_interrupt_after_pickup", _test_haul_interrupt_after_pickup)
+	await _run_test("survivor_death_retains_data", _test_survivor_death_retains_data)
+	await _run_test("restart_resets_ids_and_time", _test_restart_resets_ids_and_time)
+	await _run_test("reservation_create_release_cycle", _test_reservation_cycle)
+	await _run_test("retrieve_supplies_failed_transfer_then_interrupted", _test_retrieve_supplies_failed_transfer_then_interrupted)
+	await _run_test("scavenge_atomic_transfer_fractional_boundary", _test_scavenge_atomic_boundary)
+	await _run_test("haul_in_transit_source_destroyed", _test_haul_in_transit_source_destroyed)
+	await _run_test("haul_permanently_full_destination_falls_back", _test_haul_permanently_full_falls_back)
+	await _run_test("haul_no_storage_available_creates_world_drop", _test_haul_no_storage_creates_world_drop)
+	await _run_test("survivor_death_preserves_carried_cargo", _test_survivor_death_preserves_cargo)
+	await _run_test("exact_conservation_across_all_sinks", _test_exact_conservation_all_sinks)
+	await _run_test("repeated_restart_lifecycle", _test_repeated_restart_lifecycle)
 
 	print("\n=== TEST RESULTS: %d passed, %d failed ===" % [_pass_count, _fail_count])
 	get_tree().quit(0 if _fail_count == 0 else 1)
@@ -47,7 +64,7 @@ func _run_test(test_name: String, fn: Callable) -> void:
 	_test_failed = false
 	WorldState.reset()
 	SimulationClock.reset()
-	fn.call()
+	await fn.call()
 	if _test_failed:
 		_fail_count += 1
 		print("FAIL: %s" % test_name)
@@ -75,6 +92,40 @@ func _make_job_board() -> SettlementJobBoard:
 	var board := SettlementJobBoard.new()
 	board._ready()
 	return board
+
+## --- Real-node fixtures (for tests that drive an actual UtilityAction) ---
+
+## Builds a minimal but real Settlement (in the scene tree, in group
+## "settlement", with a JobBoard child in group "job_board") so
+## SurvivorAI.begin()'s get_first_node_in_group() lookups succeed exactly
+## as they do in normal play. Awaiting a frame lets _ready() fire for the
+## whole subtree (Settlement/StorageContainer/SettlementJobBoard all use
+## @export + plain _ready() logic, no @onready, so bottom-up _ready()
+## ordering -- children before parent -- is the only timing this depends on).
+func _make_settlement(container_roles: Array = ["general", "food", "water", "medical"]) -> Settlement:
+	var settlement := Settlement.new()
+	settlement.settlement_name = "TestSettlement"
+	for role in container_roles:
+		var container := StorageContainer.new()
+		container.name = "Storage_%s" % role
+		container.storage_role = role
+		settlement.add_child(container)
+	var board := SettlementJobBoard.new()
+	board.name = "JobBoard"
+	settlement.add_child(board)
+	add_child(settlement)
+	await get_tree().process_frame
+	return settlement
+
+## Builds a real Survivor (in the scene tree, fully @onready-resolved) and
+## calls the same setup() Main.gd calls when spawning one for real, so its
+## SurvivorAI/HealthComponent/Weapon are wired exactly as in normal play.
+func _make_survivor(profile: Dictionary, home_settlement: Settlement) -> Survivor:
+	var survivor: Survivor = SURVIVOR_SCENE.instantiate()
+	add_child(survivor)
+	await get_tree().process_frame
+	survivor.setup(profile, home_settlement)
+	return survivor
 
 ## --- Tests --------------------------------------------------------------
 
@@ -330,3 +381,355 @@ func _test_reservation_cycle() -> void:
 		_assert(inv.get_available(&"ammunition") == 10, "full stock available again after release, cycle %d" % i)
 	_assert(inv.reservation_count() == 0, "no leftover reservations after 20 create/release cycles")
 	_assert(inv.get_count(&"ammunition") == 10, "no items lost or gained across repeated reservation cycles")
+
+## --- Phase 2A.1.1: real production-path tests ---------------------------
+
+## Drives the real ActionRetrieveSupplies through a destination-capacity
+## failure (survivor's own carried inventory too full to accept the
+## reservation) and then an interruption, exactly as SurvivorAI would.
+func _test_retrieve_supplies_failed_transfer_then_interrupted() -> void:
+	var settlement: Settlement = await _make_settlement(["general", "food", "water", "medical"])
+	var food_container: StorageContainer = settlement.storage_containers["food"]
+	food_container.get_inventory().add_item(&"food_ration", 5)
+
+	var survivor: Survivor = await _make_survivor({"name": "Retriever"}, settlement)
+	# Fill the survivor's own (20.0-capacity) carried inventory so a
+	# food_ration reservation (0.5 weight/unit) can't possibly fit.
+	survivor.carried_inventory.add_item(&"materials", 20)
+	survivor.data.hunger = 50.0 # above ActionRetrieveSupplies.HUNGER_THRESHOLD
+
+	var action := ActionRetrieveSupplies.new()
+	action.enter(survivor.ai)
+	_assert(action._reservation_id != 0, "enter() should reserve food_ration at the food storage container")
+	_assert(food_container.get_inventory().has_reservation(action._reservation_id), "the reservation should be live on the real StorageContainer's Inventory")
+
+	survivor.global_position = food_container.global_position # skip travel: already "arrived"
+	var finished: bool = action.tick(survivor.ai, 0.1)
+	_assert(not finished, "a destination-capacity failure must not report the action as finished")
+	_assert(action._reservation_id != 0, "tick() must not clear its local reservation id when confirm_reserved_transfer() failed on capacity")
+	_assert(food_container.get_inventory().has_reservation(action._reservation_id), "the reservation must survive the failed transfer, not be orphaned")
+	_assert(survivor.carried_inventory.get_count(&"food_ration") == 0, "nothing should have been added to carried inventory on a failed transfer")
+
+	action.exit(survivor.ai) # simulate an emergency interruption right after the failed attempt
+	_assert(food_container.get_inventory().reservation_count() == 0, "exit() must release the still-live reservation on interruption")
+	_assert(food_container.get_inventory().get_count(&"food_ration") == 5, "exact conservation: all 5 remain at the source after reserve-fail-interrupt")
+	_assert(survivor.carried_inventory.get_count(&"food_ration") == 0, "the survivor never received any food_ration")
+
+	settlement.free()
+
+## Drives the real ActionScavenge through ScavengePoint.harvest_into() at a
+## fractional-weight capacity boundary (medical_supplies, 0.4 weight/unit,
+## against an exactly-divisible 2.0 capacity) -- the boundary that used to
+## be vulnerable to max_fit()/add_item() disagreeing by one unit before
+## both were unified onto Inventory._fit_count().
+func _test_scavenge_atomic_boundary() -> void:
+	var settlement: Settlement = await _make_settlement(["general"])
+	var survivor: Survivor = await _make_survivor({"name": "Scavenger"}, settlement)
+	survivor.carried_inventory.capacity_weight = 2.0 # override the default 20.0 for this boundary
+
+	var point := ScavengePoint.new()
+	point.item_id = &"medical_supplies" # 0.4 weight/unit
+	point.yield_per_scavenge = 10
+	point.remaining_stock = 10
+	point.scavenge_duration = 0.0
+
+	var board: SettlementJobBoard = get_tree().get_first_node_in_group("job_board")
+	var job: Job = board.create_job(Job.Type.SCAVENGE, 2.0, &"", 1, point)
+
+	var action := ActionScavenge.new()
+	survivor.global_position = point.global_position # skip travel
+	action.enter(survivor.ai)
+	_assert(action._job == job, "enter() should claim the only available SCAVENGE job")
+
+	var finished: bool = action.tick(survivor.ai, 0.1)
+	_assert(finished, "with scavenge_duration == 0.0 a single tick should complete the harvest")
+	_assert(survivor.carried_inventory.get_count(&"medical_supplies") == 5, "exactly 5 units of a 0.4-weight item must fit a 2.0 capacity -- the atomic fractional-weight boundary")
+	_assert(point.remaining_stock == 5, "the point must retain exactly the 5 units that didn't fit")
+	_assert(survivor.carried_inventory.get_count(&"medical_supplies") + point.remaining_stock == 10, "exact conservation across the atomic harvest")
+	_assert(not point.is_depleted(), "the point still has stock left, so it must not read as depleted")
+	_assert(job.status == Job.Status.AVAILABLE, "a not-yet-depleted point's job should reopen (AVAILABLE) rather than complete")
+
+	point.free()
+	settlement.free()
+
+## Job.is_target_valid() must not cancel an IN_TRANSIT haul job merely
+## because its source container was destroyed after pickup (requirement:
+## "make haul target validity phase-aware").
+func _test_haul_in_transit_source_destroyed() -> void:
+	var carrier_data := SurvivorData.new()
+	var carrier_id: int = WorldState.register_survivor(carrier_data)
+
+	var source := _make_container("general")
+	source.get_inventory().add_item(&"materials", 5)
+	var dest := _make_container("general_dest")
+	var board := _make_job_board()
+
+	var job: Job = board.create_haul_job(source, dest, &"materials", 3, 1.0)
+	board.claim_job(job, carrier_id)
+	var carried := Inventory.new(0.0)
+	source.get_inventory().confirm_reserved_transfer(job.reservation_id, carried)
+	board.mark_picked_up(job, carrier_id)
+	_assert(job.haul_phase == Job.HaulPhase.IN_TRANSIT, "sanity check: job should be in transit before the source is destroyed")
+
+	source.free() # the job's AWAITING_PICKUP-era target, now gone
+	_assert(job.is_target_valid(), "an IN_TRANSIT job must stay valid after its source is destroyed -- the cargo already left it")
+
+	board._validate_some_jobs()
+	_assert(board.get_in_transit_haul_job(carrier_id) == job, "periodic job-board validation must not cancel an in-transit job over a destroyed source")
+
+	carrier_data.is_dead = true
+	_assert(not job.is_target_valid(), "once the carrier itself is gone, an in-transit job with nobody to deliver it must read as invalid")
+
+	dest.free()
+	board.free()
+
+## After dropoff_retry_timeout, a permanently-full destination must
+## redirect the cargo to general storage as a fallback rather than
+## retrying forever.
+func _test_haul_permanently_full_falls_back() -> void:
+	var settlement: Settlement = await _make_settlement(["general", "food"])
+	var general_container: StorageContainer = settlement.storage_containers["general"]
+	var food_container: StorageContainer = settlement.storage_containers["food"]
+	general_container.get_inventory().add_item(&"food_ration", 10)
+	food_container.get_inventory().capacity_weight = 0.01 # too small to ever fit even 1 unit
+
+	var survivor: Survivor = await _make_survivor({"name": "Hauler"}, settlement)
+	var board: SettlementJobBoard = get_tree().get_first_node_in_group("job_board")
+	var job: Job = board.create_haul_job(general_container, food_container, &"food_ration", 4, 1.0)
+
+	var action := ActionHaulSupplies.new()
+	action.dropoff_retry_timeout = 0.05 # shrink so the test doesn't wait out the real 8s default
+	survivor.global_position = general_container.global_position
+	action.enter(survivor.ai)
+	_assert(action._job == job, "enter() should claim the only available HAUL job")
+
+	var finished: bool = action.tick(survivor.ai, 0.1) # pickup leg
+	_assert(not finished and action._picked_up, "the pickup leg should complete in one tick once already at the source")
+
+	survivor.global_position = food_container.global_position # skip travel to the (permanently full) destination
+	var iterations: int = 0
+	finished = false
+	while not finished and iterations < 20:
+		finished = action.tick(survivor.ai, 0.1)
+		iterations += 1
+	_assert(finished, "the stalled dropoff must eventually resolve, not loop forever")
+	_assert(iterations < 20, "the stall timeout (0.05s at 0.1s/tick) should resolve within a couple of ticks, not the full 20-iteration budget")
+
+	_assert(job.status == Job.Status.FAILED, "a redirected haul never reached its original destination, so it resolves FAILED even though the cargo is safe")
+	_assert(general_container.get_inventory().get_count(&"food_ration") == 10, "fallback delivery returns the cargo to general storage: 6 never hauled + 4 redirected back == 10")
+	_assert(food_container.get_inventory().get_count(&"food_ration") == 0, "the permanently-full original destination must never receive anything")
+	_assert(survivor.carried_inventory.get_count(&"food_ration") == 0, "the survivor is no longer carrying it once redirected")
+	_assert(WorldState.drops.is_empty(), "the fallback succeeded, so no world drop should have been created")
+
+	settlement.free()
+
+## When neither the original destination nor general storage (the
+## fallback) can accept the cargo, it must become a recoverable WorldDrop
+## instead of being lost.
+func _test_haul_no_storage_creates_world_drop() -> void:
+	var settlement: Settlement = await _make_settlement(["general", "food"])
+	var general_container: StorageContainer = settlement.storage_containers["general"]
+	var food_container: StorageContainer = settlement.storage_containers["food"]
+	general_container.get_inventory().add_item(&"food_ration", 4)
+	food_container.get_inventory().capacity_weight = 0.01 # never fits
+
+	var survivor: Survivor = await _make_survivor({"name": "Hauler"}, settlement)
+	var board: SettlementJobBoard = get_tree().get_first_node_in_group("job_board")
+	var job: Job = board.create_haul_job(general_container, food_container, &"food_ration", 4, 1.0)
+
+	var action := ActionHaulSupplies.new()
+	action.dropoff_retry_timeout = 0.05
+	survivor.global_position = general_container.global_position
+	action.enter(survivor.ai)
+	action.tick(survivor.ai, 0.1) # pickup leg
+
+	# Now make the fallback (general) unable to accept it too. Note: a
+	# capacity_weight <= 0.0 means UNLIMITED in this Inventory (see its
+	# doc comment) -- a tiny positive value is what represents "no room."
+	general_container.get_inventory().capacity_weight = 0.01
+	survivor.global_position = food_container.global_position
+
+	var finished: bool = false
+	var iterations: int = 0
+	while not finished and iterations < 20:
+		finished = action.tick(survivor.ai, 0.1)
+		iterations += 1
+	_assert(finished, "the stalled dropoff must resolve even when no storage can accept it")
+
+	_assert(job.status == Job.Status.FAILED, "the job resolves FAILED exactly once")
+	_assert(WorldState.drops.size() == 1, "with no storage able to accept it, exactly one WorldDrop must be created")
+	var drop: WorldDrop = WorldState.drops.values()[0]
+	_assert(drop.inventory.get_count(&"food_ration") == 4, "the drop must hold exactly the redirected cargo")
+	_assert(drop.reason == &"haul_stalled", "the drop's reason should identify it as a stalled haul, not a death")
+	_assert(drop.source_survivor_id == survivor.data.id, "the drop must be attributed to the survivor carrying the cargo")
+
+	_assert(general_container.get_inventory().get_count(&"food_ration") == 0, "general never received the redirected cargo -- it couldn't fit either")
+	_assert(food_container.get_inventory().get_count(&"food_ration") == 0, "the original destination never received anything")
+	_assert(survivor.carried_inventory.get_count(&"food_ration") == 0, "the survivor is no longer carrying it")
+	var total: int = general_container.get_inventory().get_count(&"food_ration") + food_container.get_inventory().get_count(&"food_ration") + drop.inventory.get_count(&"food_ration") + survivor.carried_inventory.get_count(&"food_ration")
+	_assert(total == 4, "exact conservation: the original 4 units are fully accounted for in the drop")
+
+	settlement.free()
+
+## A real survivor dying while carrying both in-transit HAUL cargo and an
+## unrelated personal item must preserve all of it in a WorldDrop, never
+## duplicate it into the original destination, and retain the persistent
+## SurvivorData record (requirement 1 + the earlier persistent-death-record
+## guarantee, exercised together through the real death path).
+func _test_survivor_death_preserves_cargo() -> void:
+	var settlement: Settlement = await _make_settlement(["general", "food"])
+	var general_container: StorageContainer = settlement.storage_containers["general"]
+	var food_container: StorageContainer = settlement.storage_containers["food"]
+	general_container.get_inventory().add_item(&"food_ration", 3)
+
+	var survivor: Survivor = await _make_survivor({"name": "Doomed"}, settlement)
+	var expected_id: int = survivor.data.id
+	var death_position: Vector2 = Vector2(123.0, 456.0)
+	survivor.global_position = death_position
+
+	# In-transit HAUL cargo.
+	var board: SettlementJobBoard = get_tree().get_first_node_in_group("job_board")
+	var job: Job = board.create_haul_job(general_container, food_container, &"food_ration", 3, 1.0)
+	board.claim_job(job, expected_id)
+	general_container.get_inventory().confirm_reserved_transfer(job.reservation_id, survivor.carried_inventory)
+	board.mark_picked_up(job, expected_id)
+
+	# Unrelated personal item, never tied to any job.
+	survivor.carried_inventory.add_item(&"water_bottle", 2)
+
+	survivor.health_component.take_damage(9999.0) # triggers HealthComponent.died -> Survivor._on_died()
+
+	_assert(job.status == Job.Status.FAILED, "the in-transit job the dead survivor was carrying must resolve FAILED, not linger")
+	_assert(WorldState.drops.size() == 1, "death while carrying items must create exactly one WorldDrop")
+	var drop: WorldDrop = WorldState.drops.values()[0]
+	_assert(drop.reason == &"death", "the drop's reason should identify it as a death drop")
+	_assert(drop.source_survivor_id == expected_id, "the drop must be attributed to the dead survivor's id")
+	_assert(drop.position.distance_to(death_position) < 0.01, "the drop must be recorded at the survivor's death position")
+	_assert(drop.inventory.get_count(&"food_ration") == 3, "the in-transit haul cargo must be preserved in full")
+	_assert(drop.inventory.get_count(&"water_bottle") == 2, "the unrelated personal item must be preserved in full alongside it")
+
+	_assert(food_container.get_inventory().get_count(&"food_ration") == 0, "cargo that died with its carrier must never reach the original destination -- no duplication")
+	_assert(WorldState.survivors.has(expected_id), "SurvivorData must remain registered after death -- a persistent record")
+	_assert(WorldState.get_survivor(expected_id).is_dead, "the persisted record must reflect is_dead = true")
+
+	settlement.free()
+
+## A combined scenario deliberately touching all five named sinks in one
+## conservation check: SOURCE and FALLBACK STORAGE (general, playing both
+## roles), DESTINATION (food, made permanently full), the SURVIVOR's own
+## carried inventory, and a CORPSE/DROP (created twice -- once from a
+## stalled haul redirect, once from death).
+func _test_exact_conservation_all_sinks() -> void:
+	var settlement: Settlement = await _make_settlement(["general", "food"])
+	var general_container: StorageContainer = settlement.storage_containers["general"]
+	var food_container: StorageContainer = settlement.storage_containers["food"]
+	general_container.get_inventory().add_item(&"food_ration", 10)
+	food_container.get_inventory().capacity_weight = 0.01 # permanently full: never accepts food_ration
+
+	var survivor: Survivor = await _make_survivor({"name": "Combo"}, settlement)
+	var board: SettlementJobBoard = get_tree().get_first_node_in_group("job_board")
+
+	# 1) A HAUL job (general -> food) that will stall and get redirected
+	#    back to general (SOURCE doubling as FALLBACK STORAGE, a success).
+	var haul_job: Job = board.create_haul_job(general_container, food_container, &"food_ration", 4, 1.0)
+	var haul_action := ActionHaulSupplies.new()
+	haul_action.dropoff_retry_timeout = 0.05
+	survivor.global_position = general_container.global_position
+	haul_action.enter(survivor.ai)
+	haul_action.tick(survivor.ai, 0.1) # pickup
+	survivor.global_position = food_container.global_position
+	var finished: bool = false
+	var guard: int = 0
+	while not finished and guard < 20:
+		finished = haul_action.tick(survivor.ai, 0.1)
+		guard += 1
+	_assert(finished, "the stalled haul must resolve")
+	_assert(general_container.get_inventory().get_count(&"food_ration") == 10, "food_ration: 6 never hauled + 4 redirected back to general (SOURCE/FALLBACK) == 10")
+	_assert(food_container.get_inventory().get_count(&"food_ration") == 0, "food_ration: the permanently-full DESTINATION receives nothing")
+
+	# 2) A successful personal-carry-home of materials, landing in general
+	#    (FALLBACK STORAGE as an unambiguous success, distinct item type).
+	survivor.carried_inventory.add_item(&"materials", 3)
+	var carry_action := ActionHaulSupplies.new()
+	survivor.global_position = general_container.global_position
+	carry_action.enter(survivor.ai)
+	_assert(carry_action._personal_item == &"materials", "with no HAUL job left, personal-carry should pick up the carried materials")
+	var carry_finished: bool = carry_action.tick(survivor.ai, 0.1)
+	_assert(carry_finished, "personal-carry-home should complete in one tick once already at general storage")
+	_assert(general_container.get_inventory().get_count(&"materials") == 3, "materials: fully delivered via the fallback/general-storage success path")
+	_assert(survivor.carried_inventory.get_count(&"materials") == 0, "materials: none left with the SURVIVOR after delivery")
+
+	# 3) An unrelated personal item still on the survivor when it dies,
+	#    landing in a death CORPSE/DROP.
+	survivor.carried_inventory.add_item(&"water_bottle", 2)
+	survivor.health_component.take_damage(9999.0)
+
+	# Only one drop is expected here: the haul redirect (step 1) succeeded
+	# via the general-storage fallback, so it never needed a world drop --
+	# only death (step 3) does.
+	_assert(WorldState.drops.size() == 1, "exactly one drop: the haul redirect succeeded via fallback storage, only death should have needed a world drop")
+	var haul_drop: WorldDrop = null
+	var death_drop: WorldDrop = null
+	for drop in WorldState.drops.values():
+		if drop.reason == &"haul_stalled":
+			haul_drop = drop
+		elif drop.reason == &"death":
+			death_drop = drop
+	_assert(haul_drop == null, "the haul redirect succeeded via fallback storage in this scenario, so it must NOT have needed a world drop")
+	_assert(death_drop != null, "the death drop must exist")
+	_assert(death_drop.inventory.get_count(&"water_bottle") == 2, "water_bottle: fully preserved in the death CORPSE/DROP")
+
+	settlement.free()
+
+## Exercises repeated REAL Main.tscn instantiate -> populate WorldState via
+## its real _ready()/_spawn_survivors() -> reset -> free -> reinstantiate
+## cycles (not just calling WorldState.reset()/SimulationClock.reset() in
+## isolation, which _test_restart_resets_ids_and_time already covers at
+## the data level alone). Deliberately does NOT call Main._restart_game()'s
+## own get_tree().reload_current_scene() directly: that targets whatever
+## SceneTree.current_scene is, which is this TestRunner (the actual
+## process's launched scene) -- calling it here would tear down the very
+## node this test runs from. Instead this drives the same sequence
+## _restart_game() performs (reset both simulation autoloads, then let a
+## fresh scene instance re-register everything) against real Main.tscn
+## instances added as ordinary children, which exercises everything
+## observable about the restart contract -- no accumulating ids/records,
+## clean node teardown across repeated cycles -- without that hazard. The
+## literal restart-button flow was separately verified interactively
+## through the godot-ai MCP session.
+func _test_repeated_restart_lifecycle() -> void:
+	var main_scene: PackedScene = load("res://scenes/main/Main.tscn")
+	var baseline_max_id: int = -1
+
+	for run in range(3):
+		var main_instance: Node = main_scene.instantiate()
+		add_child(main_instance)
+		await get_tree().process_frame
+		await get_tree().process_frame
+
+		var survivor_count: int = WorldState.survivors.size()
+		_assert(survivor_count == 4, "run %d: Main.tscn should register exactly 4 survivors, not accumulate across restarts" % run)
+
+		var max_id: int = 0
+		for id in WorldState.survivors.keys():
+			max_id = maxi(max_id, id)
+		if run == 0:
+			baseline_max_id = max_id
+		else:
+			_assert(max_id == baseline_max_id, "run %d: survivor ids must restart from the same baseline every time (got max id %d, expected %d), not drift upward across repeated restarts" % [run, max_id, baseline_max_id])
+
+		_assert(SimulationClock.game_day == 1 and SimulationClock.game_hour == 0 and SimulationClock.game_minute == 0, "run %d: a fresh run starts at day 1, 00:00" % run)
+		_assert(SimulationClock.total_game_minutes() == 0, "run %d: total_game_minutes() must be exactly zero on a fresh run" % run)
+
+		var job_board: SettlementJobBoard = get_tree().get_first_node_in_group("job_board")
+		_assert(job_board != null and job_board.total_job_count() > 0, "run %d: the settlement's standing jobs (scavenge/guard) should exist after a fresh spawn" % run)
+
+		# Mirror exactly what Main._restart_game() does (WorldState.reset(),
+		# SimulationClock.reset()) before tearing this run's scene down and
+		# building the next one fresh, so the next iteration's registrations
+		# start from a genuinely clean registry -- just as a real restart's
+		# freshly-reloaded Main.tscn would.
+		WorldState.reset()
+		SimulationClock.reset()
+		main_instance.free()
+		await get_tree().process_frame

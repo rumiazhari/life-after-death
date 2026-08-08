@@ -63,14 +63,10 @@ func tick(ai: SurvivorAI, delta: float) -> bool:
 	_work_timer += delta
 	if _work_timer < point.scavenge_duration:
 		return false
-	var carried: Inventory = ai.survivor.carried_inventory
-	# Capacity-aware: only take what will actually fit, so nothing is
-	# removed from the point and then discarded for lack of room.
-	var potential: int = mini(point.yield_per_scavenge, point.remaining_stock)
-	var capacity: int = carried.max_fit(point.item_id)
-	var amount: int = point.harvest(mini(potential, capacity))
-	if amount > 0:
-		carried.add_item(point.item_id, amount)
+	# Atomic: either the capacity-limited amount moves from the point into
+	# the survivor's inventory completely, or nothing does -- see
+	# ScavengePoint.harvest_into().
+	point.harvest_into(ai.survivor.carried_inventory)
 	if point.is_depleted():
 		ai.job_board.complete_job(_job)
 	else:

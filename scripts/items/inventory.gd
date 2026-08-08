@@ -28,6 +28,9 @@ func _init(weight_capacity: float = 0.0) -> void:
 func get_count(item_id: StringName) -> int:
 	return _counts.get(item_id, 0)
 
+func is_empty() -> bool:
+	return _counts.is_empty()
+
 func get_reserved(item_id: StringName) -> int:
 	return _reserved.get(item_id, 0)
 
@@ -45,43 +48,46 @@ func total_weight() -> float:
 		total += _counts[item_id] * (item.weight_per_unit if item else 1.0)
 	return total
 
+## Single source of truth for "how many units of item_id currently fit,"
+## optionally capped at `amount_requested` (< 0 means uncapped). can_fit(),
+## max_fit(), and add_item() all route through this so they can never
+## disagree with each other at a capacity boundary -- they previously computed
+## the same floor-division two textually-different ways (one with a rounding
+## epsilon, one without), which could make max_fit() report one more unit
+## fitting than add_item() would actually accept for certain fractional
+## item weights, silently losing that unit in a harvest()-then-add_item()
+## two-step. Every caller now shares this one formula instead.
+const UNLIMITED_FIT := 1_000_000_000
+
+func _fit_count(item_id: StringName, amount_requested: int = -1) -> int:
+	if capacity_weight <= 0.0:
+		return amount_requested if amount_requested >= 0 else UNLIMITED_FIT
+	var item: ItemData = ItemDatabase.get_item(item_id)
+	var unit_weight: float = item.weight_per_unit if item else 1.0
+	if unit_weight <= 0.0:
+		return amount_requested if amount_requested >= 0 else UNLIMITED_FIT
+	var free_weight: float = maxf(capacity_weight - total_weight(), 0.0)
+	var fits: int = maxi(int(floor((free_weight + 0.0001) / unit_weight)), 0)
+	return mini(fits, amount_requested) if amount_requested >= 0 else fits
+
 func can_fit(item_id: StringName, amount: int) -> bool:
 	if amount <= 0:
 		return true
-	if capacity_weight <= 0.0:
-		return true
-	var item: ItemData = ItemDatabase.get_item(item_id)
-	var unit_weight: float = item.weight_per_unit if item else 1.0
-	return total_weight() + amount * unit_weight <= capacity_weight + 0.0001
+	return _fit_count(item_id, amount) >= amount
 
 ## How many whole units of item_id would currently fit given free weight
 ## capacity, without mutating anything. Lets a caller (e.g. a capacity-aware
 ## harvest) decide how much to remove from a source *before* removing it,
 ## instead of removing a fixed amount and discovering afterward that some
 ## of it didn't fit anywhere.
-const UNLIMITED_FIT := 1_000_000_000
-
 func max_fit(item_id: StringName) -> int:
-	if capacity_weight <= 0.0:
-		return UNLIMITED_FIT
-	var item: ItemData = ItemDatabase.get_item(item_id)
-	var unit_weight: float = item.weight_per_unit if item else 1.0
-	if unit_weight <= 0.0:
-		return UNLIMITED_FIT
-	var free_weight: float = maxf(capacity_weight - total_weight(), 0.0)
-	return int(floor((free_weight + 0.0001) / unit_weight))
+	return _fit_count(item_id)
 
 ## Adds as much as fits; returns the amount actually added.
 func add_item(item_id: StringName, amount: int) -> int:
 	if amount <= 0:
 		return 0
-	var added: int = amount
-	if capacity_weight > 0.0:
-		var item: ItemData = ItemDatabase.get_item(item_id)
-		var unit_weight: float = item.weight_per_unit if item else 1.0
-		if unit_weight > 0.0:
-			var free_weight: float = maxf(capacity_weight - total_weight(), 0.0)
-			added = mini(amount, int(floor(free_weight / unit_weight)))
+	var added: int = _fit_count(item_id, amount)
 	if added <= 0:
 		return 0
 	_add_raw(item_id, added)
@@ -163,6 +169,27 @@ static func transfer_item(from: Inventory, to: Inventory, item_id: StringName, a
 	from.inventory_changed.emit(item_id)
 	to.inventory_changed.emit(item_id)
 	return true
+
+## Atomically moves everything this inventory holds into `to`, one item
+## type at a time, capacity-aware per type (a type that doesn't fully fit
+## leaves its remainder here rather than being destroyed). Used when a
+## survivor dies and its carried inventory needs to become a persistent
+## corpse/drop record instead of being destroyed with the actor. Returns
+## what actually moved (item_id -> amount) so a caller can build drop
+## metadata or assert conservation without re-deriving it.
+func move_all_to(to: Inventory) -> Dictionary:
+	var moved: Dictionary = {}
+	for item_id in _counts.keys():
+		var amount: int = _counts[item_id]
+		var take: int = mini(amount, to._fit_count(item_id))
+		if take <= 0:
+			continue
+		_remove_raw(item_id, take)
+		to._add_raw(item_id, take)
+		moved[item_id] = take
+		inventory_changed.emit(item_id)
+		to.inventory_changed.emit(item_id)
+	return moved
 
 func to_dict() -> Dictionary:
 	return {

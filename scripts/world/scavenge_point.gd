@@ -33,3 +33,22 @@ func harvest(max_amount: int) -> int:
 	if remaining_stock <= 0:
 		call_deferred("queue_free")
 	return amount
+
+## Atomically harvests directly into `destination`: either the whole
+## capacity-limited amount moves, or nothing does. Replaces the old
+## harvest(max_fit)-then-add_item() two-step, where a rounding mismatch
+## between max_fit()'s and add_item()'s capacity formulas could round-trip
+## lose a unit (removed here, silently not accepted there) for certain
+## fractional item weights. `destination.max_fit()` and `destination.add_item()`
+## now share one formula (see Inventory._fit_count()) and nothing else
+## touches `destination`'s weight state between the two calls here, so
+## add_item() is guaranteed to accept exactly what was harvested.
+func harvest_into(destination: Inventory) -> int:
+	var potential: int = mini(yield_per_scavenge, remaining_stock)
+	if potential <= 0:
+		return 0
+	var take: int = mini(potential, destination.max_fit(item_id))
+	if take <= 0:
+		return 0
+	var harvested: int = harvest(take)
+	return destination.add_item(item_id, harvested)

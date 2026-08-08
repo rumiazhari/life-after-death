@@ -52,9 +52,35 @@ func set_target(node: Node) -> void:
 func get_target() -> Node:
 	return _target_ref.get_ref() if _target_ref else null
 
-## True when the job has no node target (pure-position jobs like guard) or
-## its node target still exists. False means the job should be cancelled.
+## True when the job's target is still meaningful and it should keep
+## existing; false means periodic validation should cancel it.
+##
+## Phase-aware for HAUL jobs, since Status alone can't tell "claimed and
+## traveling to pick up" from "cargo already in the carrier's own
+## inventory" (Status flips to ACTIVE on the very first tick, well before
+## pickup actually happens):
+## - AWAITING_PICKUP validates the source container (this job's
+##   _target_ref, i.e. leg 1) is still registered and its reservation
+##   still live -- both must hold for a pickup to ever succeed.
+## - IN_TRANSIT deliberately does NOT revalidate the source: the cargo
+##   already left it, physically carried by carrier_survivor_id, so the
+##   source disappearing after pickup must never cancel a job whose cargo
+##   is safe in a survivor's inventory. ActionHaulSupplies' own dropoff
+##   retry/fallback logic (not this method) is what resolves a stuck
+##   delivery. The only thing checked here is that the carrier itself
+##   still exists -- if not (freed without going through the normal death
+##   path, which would have already failed this job), the cargo can never
+##   be delivered and the job should be cleaned up.
 func is_target_valid() -> bool:
+	if job_type == Type.HAUL:
+		if haul_phase == HaulPhase.IN_TRANSIT:
+			return WorldState.is_survivor_alive(carrier_survivor_id)
+		if haul_phase == HaulPhase.AWAITING_PICKUP:
+			var source: Inventory = WorldState.get_container(source_container_id)
+			if source == null or not source.has_reservation(reservation_id):
+				return false
+			# Fall through to also confirm the source container node
+			# itself (this job's _target_ref) still exists.
 	if _target_ref == null:
 		return true
 	return is_instance_valid(_target_ref.get_ref())

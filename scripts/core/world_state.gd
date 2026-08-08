@@ -13,12 +13,14 @@ var survivors: Dictionary = {} ## int id -> SurvivorData
 var settlements: Dictionary = {} ## int id -> SettlementData
 var containers: Dictionary = {} ## int id -> Inventory
 var jobs: Dictionary = {} ## int id -> Job
+var drops: Dictionary = {} ## int id -> WorldDrop
 var world_flags: Dictionary = {}
 
 var _next_survivor_id: int = 1
 var _next_settlement_id: int = 1
 var _next_container_id: int = 1
 var _next_job_id: int = 1
+var _next_drop_id: int = 1
 
 func register_survivor(data: SurvivorData) -> int:
 	if data.id == 0:
@@ -84,6 +86,19 @@ func unregister_job(id: int) -> void:
 func get_job(id: int) -> Job:
 	return jobs.get(id)
 
+## Registers a persistent item drop (see WorldDrop) -- e.g. a dead
+## survivor's carried inventory, or cargo redirected from a haul that
+## could never reach its destination or any fallback storage.
+func register_drop(drop: WorldDrop) -> int:
+	if drop.id == 0:
+		drop.id = _next_drop_id
+		_next_drop_id += 1
+	drops[drop.id] = drop
+	return drop.id
+
+func get_drop(id: int) -> WorldDrop:
+	return drops.get(id)
+
 func to_snapshot() -> Dictionary:
 	var survivor_dicts: Dictionary = {}
 	for id in survivors:
@@ -97,6 +112,9 @@ func to_snapshot() -> Dictionary:
 	var job_dicts: Dictionary = {}
 	for id in jobs:
 		job_dicts[id] = (jobs[id] as Job).to_dict()
+	var drop_dicts: Dictionary = {}
+	for id in drops:
+		drop_dicts[id] = (drops[id] as WorldDrop).to_dict()
 	return {
 		"sim_day": SimulationClock.game_day,
 		"sim_hour": SimulationClock.game_hour,
@@ -105,6 +123,7 @@ func to_snapshot() -> Dictionary:
 		"settlements": settlement_dicts,
 		"containers": container_dicts,
 		"jobs": job_dicts,
+		"drops": drop_dicts,
 		"world_flags": world_flags.duplicate(),
 	}
 
@@ -113,8 +132,10 @@ func reset() -> void:
 	settlements.clear()
 	containers.clear()
 	jobs.clear()
+	drops.clear()
 	world_flags.clear()
 	_next_survivor_id = 1
 	_next_settlement_id = 1
 	_next_container_id = 1
 	_next_job_id = 1
+	_next_drop_id = 1

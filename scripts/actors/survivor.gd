@@ -129,6 +129,7 @@ func _on_died() -> void:
 	is_dead = true
 	velocity = Vector2.ZERO
 	ai.stop()
+	_drop_carried_inventory()
 	if data:
 		data.is_dead = true
 		if data.current_settlement != 0:
@@ -142,3 +143,21 @@ func _on_died() -> void:
 		# run as a result.
 	GameEvents.survivor_died.emit(self)
 	queue_free()
+
+## Preserves whatever the survivor was carrying -- including any in-transit
+## HAUL cargo (ai.stop(), just above, may already have failed that job via
+## SettlementJobBoard.release_survivor_permanently(), but failing a job only
+## touches its own bookkeeping, never the physical items) -- as a persistent
+## WorldDrop instead of letting it vanish along with this actor. No-op if
+## the survivor wasn't carrying anything.
+func _drop_carried_inventory() -> void:
+	if carried_inventory == null or carried_inventory.is_empty():
+		return
+	var drop := WorldDrop.new()
+	drop.position = global_position
+	drop.source_survivor_id = data.id if data else 0
+	drop.created_tick = SimulationClock.tick_count
+	drop.reason = &"death"
+	drop.inventory = Inventory.new(0.0)
+	carried_inventory.move_all_to(drop.inventory)
+	WorldState.register_drop(drop)

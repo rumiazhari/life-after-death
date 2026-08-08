@@ -22,6 +22,13 @@ extends UtilityAction
 ## resumes that same job via SettlementJobBoard.get_in_transit_haul_job()
 ## instead of re-scanning for new work, so the cargo is never abandoned or
 ## claimable by anyone else mid-delivery.
+##
+## If the dropoff destination stays full for longer than
+## dropoff_retry_timeout (or is permanently missing), _redirect_stalled_cargo()
+## gives up on it: the cargo goes to the settlement's general storage as a
+## fallback, or -- if even that can't accept it -- becomes a recoverable
+## WorldDrop at the survivor's current position. Either way the job
+## resolves to FAILED exactly once; the cargo itself is never lost.
 
 const SEARCH_RADIUS := 2000.0
 
@@ -29,6 +36,13 @@ var _job: Job = null
 var _picked_up: bool = false
 var _personal_item: StringName = &""
 var _personal_container: StorageContainer = null
+
+## How long (seconds) to keep retrying a full dropoff destination before
+## redirecting the cargo to fallback (general) storage or a world drop. A
+## var, not a const, so tests can shrink it instead of waiting out the
+## default -- see _redirect_stalled_cargo().
+var dropoff_retry_timeout: float = 8.0
+var _dropoff_stall_timer: float = 0.0
 
 func _init() -> void:
 	action_name = &"haul_supplies"
@@ -50,6 +64,7 @@ func enter(ai: SurvivorAI) -> void:
 	_personal_item = &""
 	_personal_container = null
 	_picked_up = false
+	_dropoff_stall_timer = 0.0
 
 	var resume_job: Job = ai.job_board.get_in_transit_haul_job(ai.data.id) if ai.job_board else null
 	if resume_job:
@@ -197,23 +212,61 @@ func _tick_job(ai: SurvivorAI, delta: float) -> bool:
 	if not arrived_dest:
 		return false
 	var dest: Inventory = WorldState.get_container(_job.dest_container_id)
+	if dest != null and Inventory.transfer_item(ai.survivor.carried_inventory, dest, _job.reserved_item_id, _job.reserved_amount):
+		ai.job_board.complete_job(_job)
+		_job = null
+		_dropoff_stall_timer = 0.0
+		return true
 	if dest == null:
 		# Permanently invalid destination (container no longer registered) --
-		# no amount of waiting will fix this, so fail now instead of
-		# retrying at a stop that can never accept the cargo. The cargo
-		# stays safely in the survivor's own carried inventory; nothing is
-		# lost, just no longer tracked by this job.
+		# no amount of waiting will fix this, so redirect immediately
+		# instead of accumulating toward the retry timeout for nothing.
+		return _redirect_stalled_cargo(ai)
+	# Destination exists but is (still) full -- a transient, potentially-
+	# recoverable condition, so retry up to dropoff_retry_timeout before
+	# giving up on it and redirecting the cargo elsewhere. The cargo stays
+	# safely in the survivor's own carried inventory the whole time either
+	# way; nothing is ever lost, duplicated, or looped on forever.
+	_dropoff_stall_timer += delta
+	if _dropoff_stall_timer < dropoff_retry_timeout:
+		return false
+	return _redirect_stalled_cargo(ai)
+
+## Called once the dropoff destination has proven unusable (permanently
+## missing, or full for longer than dropoff_retry_timeout). Tries the
+## settlement's general storage as a fallback; if that can't take it
+## either, the cargo becomes a recoverable WorldDrop at the survivor's
+## current position. Either way the job resolves to FAILED here -- exactly
+## once -- since it was never delivered to its originally intended
+## destination even though the cargo itself is safe.
+func _redirect_stalled_cargo(ai: SurvivorAI) -> bool:
+	_dropoff_stall_timer = 0.0
+	var item_id: StringName = _job.reserved_item_id
+	var carried: Inventory = ai.survivor.carried_inventory
+	# Only ever redirect what's actually still physically carried -- never
+	# fabricates cargo, and if something else already consumed/moved part
+	# of it in the meantime, redirects exactly the remainder.
+	var to_redirect: int = mini(_job.reserved_amount, carried.get_count(item_id))
+	if to_redirect <= 0:
 		ai.job_board.fail_job(_job)
 		_job = null
 		return true
-	if not Inventory.transfer_item(ai.survivor.carried_inventory, dest, _job.reserved_item_id, _job.reserved_amount):
-		# Destination temporarily full -- a transient, potentially-recoverable
-		# condition. The cargo stays safely in the survivor's own carried
-		# inventory and this retries next tick rather than completing
-		# without delivering or giving up on a destination that might free
-		# up capacity later.
-		return false
-	ai.job_board.complete_job(_job)
+
+	var fallback: StorageContainer = ai.settlement.storage_containers.get("general") if ai.settlement else null
+	if fallback and fallback.container_id != _job.dest_container_id and Inventory.transfer_item(carried, fallback.get_inventory(), item_id, to_redirect):
+		ai.job_board.fail_job(_job)
+		_job = null
+		return true
+
+	var drop := WorldDrop.new()
+	drop.position = ai.survivor.global_position
+	drop.source_survivor_id = ai.data.id
+	drop.created_tick = SimulationClock.tick_count
+	drop.reason = &"haul_stalled"
+	drop.inventory = Inventory.new(0.0)
+	Inventory.transfer_item(carried, drop.inventory, item_id, to_redirect)
+	WorldState.register_drop(drop)
+	ai.job_board.fail_job(_job)
 	_job = null
 	return true
 
