@@ -102,6 +102,7 @@ var _nav_path: PackedVector2Array = PackedVector2Array()
 var _nav_path_index: int = 0
 var _nav_recheck_timer: float = 0.0
 var _nav_target: Vector2 = Vector2.ZERO
+var _nav_goal_initialized: bool = false
 var _nav_observed_revision: int = -1
 var _nav_path_revision: int = -1
 var _nav_no_path_retries: int = 0
@@ -133,7 +134,7 @@ func move_toward_point(point: Vector2, delta: float) -> bool:
 	return false
 
 func _seek_direction(point: Vector2, to_point: Vector2, distance: float) -> Vector2:
-	if _nav_target == Vector2.ZERO or point.distance_to(_nav_target) >= NAV_TARGET_RESAMPLE_DISTANCE:
+	if not _nav_goal_initialized or point.distance_to(_nav_target) >= NAV_TARGET_RESAMPLE_DISTANCE:
 		_nav_target = point
 		begin_navigation_goal(point)
 	var revision := UrbanNavigationService.revision()
@@ -201,6 +202,7 @@ func reset_navigation_goal() -> void:
 	_clear_nav_path()
 	_nav_recheck_timer = 0.0
 	_nav_target = Vector2.ZERO
+	_nav_goal_initialized = false
 	clear_navigation_failure()
 	_nav_observed_revision = UrbanNavigationService.revision()
 
@@ -216,6 +218,7 @@ func clear_navigation_failure() -> void:
 
 func begin_navigation_goal(goal: Vector2) -> void:
 	_nav_target = goal
+	_nav_goal_initialized = true
 	clear_cached_path()
 	clear_navigation_failure()
 	_nav_recheck_timer = 0.0

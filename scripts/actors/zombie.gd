@@ -53,6 +53,7 @@ var _nav_path_revision: int = -1
 var _nav_target: Vector2 = Vector2.ZERO
 var _nav_goal_identity: int = 0
 var _nav_observed_revision: int = -1
+var _nav_previous_state: ZombiePerceptionComponent.State = ZombiePerceptionComponent.State.IDLE
 var _nav_no_path_retries: int = 0
 var _nav_failure_revision: int = -1
 var _nav_failure_goal: Vector2 = Vector2.ZERO
@@ -106,6 +107,10 @@ func _draw() -> void:
 ## Falls back to UrbanNavigationService only when a straight line to the
 ## goal is actually obstructed (see _seek_point below).
 func _seek_current_goal() -> Vector2:
+	var active_navigation := perception.state == ZombiePerceptionComponent.State.CHASE or perception.state == ZombiePerceptionComponent.State.ATTACK or perception.state == ZombiePerceptionComponent.State.INVESTIGATE or perception.state == ZombiePerceptionComponent.State.SEARCH
+	if perception.state != _nav_previous_state and not active_navigation:
+		reset_navigation_goal()
+	_nav_previous_state = perception.state
 	match perception.state:
 		ZombiePerceptionComponent.State.CHASE, ZombiePerceptionComponent.State.ATTACK:
 			if perception.target == null or not is_instance_valid(perception.target):
@@ -218,11 +223,10 @@ func clear_navigation_failure() -> void:
 	_nav_failure_target_id = 0
 
 func begin_navigation_goal(goal: Vector2, target_id: int = 0) -> void:
-	_nav_target = goal
-	_nav_goal_identity = target_id
-	_nav_failure_target_id = target_id
 	clear_cached_path()
 	clear_navigation_failure()
+	_nav_target = goal
+	_nav_goal_identity = target_id
 	_nav_recheck_timer = 0.0
 
 func _separation() -> Vector2:

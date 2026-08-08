@@ -163,6 +163,9 @@ func _run_all() -> void:
 	await _run_test("phase_3b5_noise_ring_sequences_are_bounded", _test_phase_3b5_noise_ring_sequences_are_bounded)
 	await _run_test("phase_3b6_survivor_direct_checks_are_interval_bounded", _test_phase_3b6_survivor_direct_checks_are_interval_bounded)
 	await _run_test("phase_3b6_zombie_direct_checks_are_interval_bounded", _test_phase_3b6_zombie_direct_checks_are_interval_bounded)
+	await _run_test("phase_3b7_survivor_zero_goal_is_initialized_once", _test_phase_3b7_survivor_zero_goal_is_initialized_once)
+	await _run_test("phase_3b7_zombie_idle_clears_navigation_lifecycle", _test_phase_3b7_zombie_idle_clears_navigation_lifecycle)
+	await _run_test("phase_3b7_zombie_same_target_remains_interval_bounded", _test_phase_3b7_zombie_same_target_remains_interval_bounded)
 
 	print("\n=== TEST RESULTS: %d passed, %d failed ===" % [_pass_count, _fail_count])
 	get_tree().quit(0 if _fail_count == 0 else 1)
@@ -235,6 +238,52 @@ func _test_phase_3b6_zombie_direct_checks_are_interval_bounded() -> void:
 	var checks: int = UrbanNavigationService.direct_path_checks_total - before
 	_assert(checks <= 2, "a continuously clear zombie goal must not raycast every physics tick")
 	zombie.queue_free()
+	await get_tree().process_frame
+
+func _test_phase_3b7_survivor_zero_goal_is_initialized_once() -> void:
+	var settlement: Settlement = await _make_settlement(["general"])
+	var survivor: Survivor = await _make_survivor({"name": "Origin"}, settlement)
+	survivor.global_position = Vector2(64, 0)
+	UrbanNavigationService.reset()
+	for i in range(4):
+		survivor._seek_direction(Vector2.ZERO, -survivor.global_position, survivor.global_position.length())
+	_assert(survivor._nav_goal_initialized, "Vector2.ZERO must be a valid initialized Survivor goal")
+	_assert(UrbanNavigationService.direct_path_checks_total <= 1, "the origin goal must not restart its cadence each update")
+	survivor.queue_free()
+	settlement.free()
+	await get_tree().process_frame
+
+func _test_phase_3b7_zombie_idle_clears_navigation_lifecycle() -> void:
+	var zombie: Zombie = ZOMBIE_SCENE.instantiate()
+	add_child(zombie)
+	await get_tree().process_frame
+	zombie.nav_stuck = true
+	zombie._nav_goal_identity = 99
+	zombie._nav_target = Vector2(100, 100)
+	zombie._nav_previous_state = ZombiePerceptionComponent.State.CHASE
+	zombie.perception.state = ZombiePerceptionComponent.State.IDLE
+	zombie._seek_current_goal()
+	_assert(not zombie.nav_stuck and zombie._nav_goal_identity == 0, "leaving active navigation states must clear the complete Zombie lifecycle")
+	zombie.queue_free()
+	await get_tree().process_frame
+
+func _test_phase_3b7_zombie_same_target_remains_interval_bounded() -> void:
+	var zombie: Zombie = ZOMBIE_SCENE.instantiate()
+	var target := Node2D.new()
+	add_child(zombie)
+	add_child(target)
+	await get_tree().process_frame
+	zombie.global_position = Vector2.ZERO
+	target.global_position = Vector2(200, 0)
+	zombie.perception.target = target
+	zombie.perception.state = ZombiePerceptionComponent.State.CHASE
+	UrbanNavigationService.reset()
+	for i in range(20):
+		target.global_position.x += 1.0
+		zombie._seek_current_goal()
+	_assert(UrbanNavigationService.direct_path_checks_total <= 2, "same-target sub-threshold motion must remain interval-bounded")
+	zombie.queue_free()
+	target.queue_free()
 	await get_tree().process_frame
 
 ## --- Harness ---------------------------------------------------------
