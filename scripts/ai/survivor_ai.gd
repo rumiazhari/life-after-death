@@ -138,12 +138,27 @@ func _refresh_perception() -> void:
 	for zombie in get_tree().get_nodes_in_group("zombies"):
 		if not is_instance_valid(zombie):
 			continue
-		var dist: float = origin.distance_to((zombie as Node2D).global_position)
-		if dist <= perception_radius:
-			nearby_zombies.append(zombie)
-			if dist < nearest_zombie_distance:
-				nearest_zombie_distance = dist
-				nearest_zombie = zombie
+		var zombie_pos: Vector2 = (zombie as Node2D).global_position
+		var dist: float = origin.distance_to(zombie_pos)
+		if dist > perception_radius:
+			continue
+		# A wall/closed door between the survivor and a distant-ish zombie
+		# means it isn't actually a locally perceived threat -- lets a
+		# survivor behind cover stop reacting to a zombie it can't
+		# possibly see, same Vision-layer raycast Zombie's own perception
+		# uses (see docs/perception_system.md).
+		if dist > emergency_zombie_radius and _blocked_by_wall(origin, zombie_pos):
+			continue
+		nearby_zombies.append(zombie)
+		if dist < nearest_zombie_distance:
+			nearest_zombie_distance = dist
+			nearest_zombie = zombie
+
+func _blocked_by_wall(from: Vector2, to: Vector2) -> bool:
+	var space_state := survivor.get_world_2d().direct_space_state
+	var query := PhysicsRayQueryParameters2D.create(from, to, 1 | 32) # World | Vision
+	query.exclude = [survivor.get_rid()]
+	return not space_state.intersect_ray(query).is_empty()
 
 func _check_emergency() -> void:
 	var threatened: bool = nearest_zombie_distance <= emergency_zombie_radius

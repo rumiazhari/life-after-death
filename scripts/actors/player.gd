@@ -16,12 +16,17 @@ extends CharacterBody2D
 
 var aim_direction: Vector2 = Vector2.RIGHT
 var is_dead: bool = false
+## Phase 3B: what loot containers/salvage transfer into. 60kg is generous
+## relative to a Survivor's 20kg since the player is the one doing most of
+## the district looting in this slice.
+var carried_inventory: Inventory
 
 var _fire_was_held: bool = false
 
 func _ready() -> void:
 	add_to_group("player")
 	add_to_group("attackable")
+	carried_inventory = Inventory.new(60.0)
 	health_component.died.connect(_on_died)
 	health_component.damaged.connect(_on_damaged)
 	health_component.health_changed.connect(_on_health_changed)

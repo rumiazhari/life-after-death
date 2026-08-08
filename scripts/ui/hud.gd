@@ -11,6 +11,8 @@ extends CanvasLayer
 @onready var zombie_count_label: Label = $Root/SafeArea/TopRightPanel/TopRight/ZombieRow/ZombieCountLabel
 @onready var kills_label: Label = $Root/SafeArea/TopRightPanel/TopRight/KillsRow/KillsLabel
 @onready var fps_label: Label = $Root/SafeArea/TopRightPanel/TopRight/FPSLabel
+@onready var interact_prompt_panel: PanelContainer = $Root/SafeArea/InteractPromptPanel
+@onready var interact_prompt_label: Label = $Root/SafeArea/InteractPromptPanel/InteractPromptLabel
 
 var _known_magazine_size: int = 1
 
@@ -22,9 +24,11 @@ func _ready() -> void:
 	GameEvents.weapon_reload_finished.connect(_on_reload_finished)
 	GameEvents.zombie_count_changed.connect(_on_zombie_count_changed)
 	GameEvents.kill_count_changed.connect(_on_kill_count_changed)
+	GameEvents.interact_prompt_changed.connect(_on_interact_prompt_changed)
 	reload_label.visible = false
 	kills_label.text = "Kills: 0"
 	zombie_count_label.text = "Zombies: 0"
+	interact_prompt_panel.visible = false
 
 func _process(_delta: float) -> void:
 	fps_label.text = "FPS: %d" % Engine.get_frames_per_second()
@@ -57,3 +61,7 @@ func _on_zombie_count_changed(active_count: int) -> void:
 
 func _on_kill_count_changed(total_kills: int) -> void:
 	kills_label.text = "Kills: %d" % total_kills
+
+func _on_interact_prompt_changed(label: String) -> void:
+	interact_prompt_panel.visible = not label.is_empty()
+	interact_prompt_label.text = label

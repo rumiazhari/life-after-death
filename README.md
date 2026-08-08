@@ -6,9 +6,17 @@ zombies, and a minimal HUD/pause/death loop). Phase 2A, on top of that,
 is an autonomous survivor and settlement simulation vertical slice: a
 small safehouse with four independent survivors who recognize their own
 needs, claim settlement work, respond to zombies, and keep themselves
-alive without the player directly commanding them. Quests, economy,
-crafting, procedural world generation, factions, crime, children, and
-advanced construction are not implemented yet.
+alive without the player directly commanding them. Phase 3B replaces the
+procedural test arena with one fixed, hand-authored urban district
+containing three enterable buildings, a systemic interaction framework
+(doors, loot, salvage), and a bounded zombie-perception rebuild (vision
+cone + hearing + line-of-sight, no more unlimited-range targeting) — see
+[What's here](#whats-here) and `docs/urban_map_design.md`/
+`docs/building_system.md`/`docs/perception_system.md`/
+`docs/interaction_system.md` for the full writeups. Quests, economy,
+crafting, procedural world generation, factions, crime, children, upper
+floors/basements, drivable vehicles, and advanced construction are not
+implemented yet.
 
 Runs on desktop (keyboard/mouse) and is configured for Android (landscape,
 dual on-screen joysticks, touch buttons) — see [Mobile / Android](#mobile--android) below for current export status.
@@ -33,7 +41,12 @@ A lightweight headless regression suite (no external test framework)
 covers the survivor inventory/job data-integrity lifecycle -- reservation
 success/failure, capacity-aware scavenging, haul-job interruption before
 and after pickup, survivor death retaining a persistent record, and
-restart resetting simulation state. Run from the project root:
+restart resetting simulation state -- plus (Phase 3B) the fixed
+district's layout checksum, door/window state and collision, loot/salvage
+duplication prevention, persistent prop-container identity, building
+roof/room reveal, zombie perception gating (distance/cone/wall/hearing),
+navigation-grid door awareness and request budget, and a survivor's local
+threat sensor. Run from the project root:
 
 ```
 godot --headless --path . res://tests/TestRunner.tscn
@@ -70,7 +83,7 @@ touching gameplay code.
 | Aim             | Mouse position             |
 | Fire            | Left mouse button (hold — automatic weapon) |
 | Reload          | `R`                       |
-| Interact        | `E` (mapped, unused in this slice) |
+| Interact        | `E` (doors, loot/salvage props) |
 | Pause / Resume  | `Escape`                  |
 | Restart (on death) | `Enter` or the on-screen Restart button |
 
@@ -142,6 +155,29 @@ Both input schemes drive the same `InputRouter` autoload
   panel showing its needs, utility scores, current goal/action, reserved
   target, inventory, health, fear, and morale. Selecting never controls
   the survivor — the player still doesn't issue orders in this phase.
+- **Urban district (Phase 3B)**: one fixed, authored map
+  (`UrbanDistrict01`) — a main road, two side streets, a service alley, a
+  parking lot, a plaza, fixed street dressing (cars, trees, a dumpster,
+  benches, planters, signage), and 7 authored spawn regions. Replaces the
+  procedurally generated `ArenaBuilder` test arena as the main game
+  world (`ArenaBuilder` is kept, unused, as an optional test/perf scene).
+  See `docs/urban_map_design.md`.
+- **Enterable buildings**: a Restaurant, Convenience Store, and Clinic,
+  each with real interior walls, multiple named rooms, doors, and
+  windows — not one big roof tile over an empty box. Roofs hide and the
+  current room reveals on entry (Project-Zomboid-style, simplified — see
+  `docs/building_system.md`); leaving restores the exterior view.
+- **Interaction**: press/tap Interact near a door, shelf, fridge,
+  cabinet, car, or dumpster. Doors open/close (and block movement +
+  vision while closed); containers hold real, depletable inventory
+  (searching twice never duplicates loot); salvage props yield materials
+  once. See `docs/interaction_system.md`.
+- **Zombie perception (Phase 3B rebuild)**: zombies no longer target the
+  player at unlimited range. Detection now needs line of sight, distance,
+  and facing (a view cone), with a short suspicion buildup before
+  committing to a chase; walls and closed doors block it; a loud nearby
+  noise (gunshot, door, search, salvage) can draw investigation without
+  ever seeing anything. See `docs/perception_system.md`.
 
 See [`docs/architecture.md`](docs/architecture.md) for how the systems
 are wired together (including the full Phase 2A writeup: simulation tick
@@ -176,24 +212,37 @@ scenes/
   main/     Main.tscn — top-level scene composition
   actors/   Player.tscn, Zombie.tscn, Survivor.tscn
   combat/   Projectile.tscn
-  world/    Safehouse.tscn (settlement), ScavengePoint.tscn
+  world/    Safehouse.tscn (settlement), ScavengePoint.tscn, Door.tscn,
+            Window.tscn, maps/UrbanDistrict01.tscn (Phase 3B),
+            buildings/Restaurant01.tscn, ConvenienceStore01.tscn,
+            Clinic01.tscn (Phase 3B)
   ui/       HUD.tscn, PauseMenu.tscn, DeathOverlay.tscn,
             MobileControls.tscn, VirtualJoystick.tscn, DebugOverlay.tscn,
             SurvivorInspector.tscn
 scripts/
   core/     signal bus, health component, object pool, Main controller,
-            InputRouter, platform utils, SimulationClock, WorldState
+            InputRouter, platform utils, SimulationClock, WorldState,
+            NoiseManager (Phase 3B)
   actors/   player, zombie, spawn manager, swarm manager, survivor
   ai/       UtilityAction base, UtilityMath, SurvivorAI, actions/ (14
-            behavior scripts)
+            behavior scripts), ZombiePerceptionComponent (Phase 3B)
   combat/   weapon, weapon data, projectile, projectile manager
   items/    ItemData, Inventory, ItemDatabase
+  interaction/  InteractableComponent, PlayerInteractor,
+            LootContainerComponent, SalvageableComponent,
+            RestPointComponent (Phase 3B)
   jobs/     Job, SettlementJobBoard
   survivors/  SurvivorData
-  world/    procedural arena builder (TileMapLayer-based, Phase 3A),
-            shared PixelTilesetBuilder, camera rig, Settlement,
-            SettlementData, StorageContainer, ScavengePoint, SleepSpot,
-            GuardPost, SafehouseInteriorBuilder, WorldDropVisualManager
+  world/    procedural arena builder (TileMapLayer-based, Phase 3A, kept
+            as an unused test/perf scene), shared PixelTilesetBuilder,
+            camera rig, Settlement, SettlementData, StorageContainer,
+            ScavengePoint, SleepSpot, GuardPost,
+            SafehouseInteriorBuilder, WorldDropVisualManager,
+            DistrictBuilder, DistrictLayoutChecksum,
+            BuildingShellBuilder, BuildingVisibilityController, Room,
+            Door, Window, SpawnRegion, UrbanNavigationService (Phase 3B),
+            buildings/ (Restaurant01, ConvenienceStore01, Clinic01
+            scripts)
   visuals/  ActorVisual, ActorSpriteLibrary (Phase 3A shared sprite/
             animation layer for Player/Survivor/Zombie)
   combat/   weapon, weapon data, projectile, projectile manager,
@@ -208,21 +257,30 @@ resources/
   theme/    pixel_theme.tres (Phase 3A UI theme)
 assets/
   pixel/    generated placeholder pixel art (environment, actors, props,
-            effects, ui) -- see "Visual asset pipeline" above and
-            docs/art_direction.md
+            effects, ui, building/interior assets) -- see "Visual asset
+            pipeline" above and docs/art_direction.md
 tests/      test_runner.gd + TestRunner.tscn — headless regression suite
-docs/       architecture.md, art_direction.md, screenshots/phase-3a/
+docs/       architecture.md, art_direction.md, urban_map_design.md,
+            building_system.md, perception_system.md,
+            interaction_system.md (Phase 3B), screenshots/phase-3a/,
+            screenshots/phase-3b/
 tools/      generate_pixel_assets.gd — deterministic pixel-art generator
 export_presets.cfg   Android export preset (see Mobile / Android above)
 ```
 
 ## Known limitations (expected at this stage)
 
-- Zombies steer directly at their nearest target (player or survivor) and
-  do not path around obstacles — they can get stuck on building corners.
-  Acceptable for a prototype; real pathfinding is a later concern.
-- `interact` is bound but has no target yet (no interactable objects
-  exist in this slice).
+- Zombies steer directly at their target and only consult the shared
+  navigation grid as a fallback when directly blocked (see
+  `docs/perception_system.md` "Navigation") — not full unconditional
+  pathfinding, and not wired into Survivor movement at all yet.
+- Only 3 of a possible 5 enterable-building archetypes exist (Restaurant,
+  Convenience Store, Clinic — not Apartment or Workshop/Office/
+  Warehouse); see `docs/building_system.md`.
+- Building interior/roof reveal is a simplified current-room +
+  open-door-neighbor model, not a full aim-cone/portal-graph reveal, and
+  doesn't retroactively re-reveal when a door opens while the player is
+  standing still — see `docs/building_system.md` "Known limitations."
 - No save/load, no persistence between runs. `WorldState.to_snapshot()`
   produces a serializable shape but nothing reads/writes it to disk yet.
 - The `ammunition` item is defined but not wired to `Weapon`'s reload,

@@ -883,6 +883,81 @@ reservations across every registered container.
   nodes (`Survivor`, `StorageContainer`, ...) from restored `WorldState`
   data instead of the other way around.
 
+## Phase 3B: fixed urban district, enterable buildings, interaction, perception
+
+Everything below is additive to Phase 0/1/2A above. The single biggest
+change: **the world is no longer runtime-generated.**
+`scripts/world/arena_builder.gd` (`ArenaBuilder`) is kept, untouched, as
+an optional/unused test-and-performance scene, but `Main.tscn`'s `World`
+node now instances `scenes/world/maps/UrbanDistrict01.tscn`
+(`DistrictBuilder`) — one fixed, hand-authored urban district with a
+committed layout checksum test guarding against accidental drift. See
+`docs/urban_map_design.md` for the full layout writeup.
+
+**Enterable buildings.** Three archetypes (Restaurant, Convenience Store,
+Clinic — ground floor only) share one authoring pattern
+(`BuildingVisibilityController` base + `BuildingShellBuilder` static
+helpers for walls/floor/roof/furniture). Roof visibility and interior
+room reveal are Project-Zomboid-style but deliberately simplified: current
+room fully revealed, a room sharing a currently-open door also revealed,
+everything else fully hidden — never a raycast/view-cone-based partial
+reveal. See `docs/building_system.md`.
+
+**Doors and windows** (`scripts/world/door.gd`, `scripts/world/window.gd`)
+are reusable, stateful, and collision-driven: one `CollisionShape2D`
+gates both movement and vision for a door, so fading/animation can never
+desync the two. Both carry a stable authored id used for persistence.
+
+**Systemic interaction** (`scripts/interaction/`) is built on
+`InputRouter.interact_requested` (a signal that existed since Phase 0/1
+but had no listener until now): `PlayerInteractor` picks the nearest,
+facing-preferred candidate from a small overlap-tracked registry (never a
+per-frame full-map scan); `InteractableComponent` /
+`LootContainerComponent` / `SalvageableComponent` / `RestPointComponent`
+are composable one-verb-each building blocks rather than one large
+per-prop script. See `docs/interaction_system.md`.
+
+**Persistent world-prop state** lives in three new `WorldState`
+dictionaries (`door_states`, `prop_states`, `prop_containers`), keyed by
+stable authored `StringName` ids — never a scene-node reference or an
+auto-incrementing int, so re-querying a shelf's inventory (or, later, a
+reloaded scene) resolves to the *same* record rather than a fresh one.
+
+**Zombie perception was rebuilt from scratch.** The old
+`Zombie._find_nearest_attackable()` (nearest member of `"attackable"`,
+unlimited range) is gone. `ZombiePerceptionComponent`
+(`scripts/ai/zombie_perception_component.gd`) is a bounded state machine
+(`IDLE/SUSPICIOUS/INVESTIGATE/CHASE/ATTACK/SEARCH/RETURN_TO_IDLE`) driven
+by a cheap distance/cone pre-filter before an expensive raycast, staggered
+per-instance updates, and a suspicion-buildup delay before committing to
+a chase. A centralized `NoiseManager` autoload (bounded ring buffer, no
+per-sound `Area2D`) feeds hearing into the same state machine. A shared
+`UrbanNavigationService` (`AStarGrid2D`, built once from static
+collision, budget-capped path requests) is Zombie's pathfinding fallback
+for when direct steering is blocked — not wired into `Survivor` movement
+this pass. `SurvivorAI`'s existing local-perception radius gained one
+filter: a zombie beyond the emergency safety margin and behind a wall no
+longer counts as a locally-perceived threat. See
+`docs/perception_system.md` for the full state machine, hearing model,
+navigation grid, and the extended collision-layer table (adds Vision=32
+and Interactable=64 to the Phase 0/1 table above).
+
+**Spawn regions** (`scripts/world/spawn_region.gd`, `SpawnRegion`) are
+authored `Node2D`s (map-edge streets, the service alley, concealed
+exterior corners) that `SpawnManager` is expected to draw from using its
+own private gameplay RNG — never inside the safehouse, never using any
+RNG stream but the caller's own (same cosmetic/gameplay RNG isolation
+rule as Phase 3A.1's `CosmeticRng`).
+
+**Known limitations** (see each doc's own "Known limitations" section for
+the full list): only 3 of 5 requested building archetypes; simplified
+(non-portal-graph) room reveal; navigation is Zombie-only; several
+Section-13-style street/interior art items (van/truck, bicycles, vending
+machines, shopping carts, apartment/workshop-specific fixtures) were not
+generated this pass; no perception/nav telemetry counters were added to
+`DebugOverlay` (performance was measured via a temporary profiling probe
+instead).
+
 ## Where the remaining excluded systems would attach
 
 Settlements, world state, and survivors are implemented as of Phase 2A

@@ -61,6 +61,27 @@ const PALETTE := {
 	"ui_border": Color8(140, 136, 160),
 	"ui_health": Color8(184, 60, 56),
 	"ui_ammo": Color8(206, 182, 78),
+	# Phase 3B building interiors/exteriors
+	"floor_restaurant_a": Color8(150, 120, 90), "floor_restaurant_b": Color8(130, 102, 76),
+	"floor_kitchen_a": Color8(170, 172, 176), "floor_kitchen_b": Color8(148, 150, 154),
+	"floor_store_a": Color8(140, 138, 132), "floor_store_b": Color8(120, 118, 114),
+	"floor_clinic_a": Color8(224, 228, 226), "floor_clinic_b": Color8(202, 208, 208),
+	"floor_plain_a": Color8(120, 108, 96), "floor_plain_b": Color8(104, 94, 82),
+	"wall_brick": Color8(140, 74, 62), "wall_brick_dark": Color8(104, 52, 44),
+	"wall_concrete": Color8(150, 148, 142), "wall_concrete_dark": Color8(118, 116, 110),
+	"wall_plaster": Color8(210, 202, 184), "wall_plaster_dark": Color8(180, 170, 150),
+	"wall_shopfront": Color8(90, 110, 128), "wall_shopfront_dark": Color8(64, 82, 98),
+	"wall_interior": Color8(196, 188, 172), "wall_interior_dark": Color8(168, 158, 140),
+	"door_wood": Color8(128, 86, 50), "door_wood_dark": Color8(92, 60, 34),
+	"door_metal": Color8(140, 144, 152), "door_metal_dark": Color8(100, 104, 112),
+	"glass": Color8(150, 190, 210, 200), "glass_dark": Color8(100, 140, 165, 220),
+	"furniture_wood": Color8(150, 108, 64), "furniture_wood_dark": Color8(110, 76, 42),
+	"furniture_metal": Color8(160, 162, 168), "furniture_metal_dark": Color8(112, 114, 120),
+	"fridge_white": Color8(220, 224, 224), "fridge_dark": Color8(180, 186, 188),
+	"car_red": Color8(160, 54, 48), "car_red_dark": Color8(110, 34, 30),
+	"car_rust": Color8(126, 96, 66), "car_rust_dark": Color8(88, 64, 42),
+	"tree_trunk": Color8(96, 68, 44), "tree_leaves": Color8(78, 122, 60), "tree_leaves_dark": Color8(58, 96, 44),
+	"bench_wood": Color8(140, 100, 60),
 }
 
 const ROOF_COLORS := {
@@ -248,6 +269,8 @@ func _draw_env_tile(img: Image, rect: Rect2i, tile_name: StringName) -> void:
 		_draw_roof_tile(img, rect, s, rng)
 	elif s.begins_with("safehouse_"):
 		_draw_safehouse_tile(img, rect, s, rng)
+	elif s.begins_with("floor_"):
+		_draw_building_floor(img, rect, s, rng)
 
 func _draw_asphalt(img: Image, rect: Rect2i, rng: RandomNumberGenerator, tile_name: String) -> void:
 	img.fill_rect(rect, PALETTE.asphalt_mid)
@@ -478,6 +501,38 @@ func _draw_safehouse_tile(img: Image, rect: Rect2i, name: String, rng: RandomNum
 			img.fill_rect(_local(rect, 6, 6, 6, 6), PALETTE.metal)
 			img.fill_rect(_local(rect, 20, 20, 6, 6), PALETTE.metal)
 
+func _draw_building_floor(img: Image, rect: Rect2i, name: String, rng: RandomNumberGenerator) -> void:
+	match name:
+		"floor_restaurant":
+			# Checkered dining-room tile.
+			for gx in range(0, 32, 8):
+				for gy in range(0, 32, 8):
+					var checker: bool = ((gx / 8) + (gy / 8)) % 2 == 0
+					img.fill_rect(_local(rect, gx, gy, 8, 8), PALETTE.floor_restaurant_a if checker else PALETTE.floor_restaurant_b)
+		"floor_kitchen":
+			img.fill_rect(rect, PALETTE.floor_kitchen_a)
+			for gx in range(0, 32, 8):
+				img.fill_rect(_local(rect, gx, 0, 1, 32), PALETTE.floor_kitchen_b)
+			for gy in range(0, 32, 8):
+				img.fill_rect(_local(rect, 0, gy, 32, 1), PALETTE.floor_kitchen_b)
+			_speckle(img, rect, PALETTE.floor_kitchen_b, 0.03, rng)
+		"floor_store":
+			img.fill_rect(rect, PALETTE.floor_store_a)
+			for gx in range(0, 32, 16):
+				img.fill_rect(_local(rect, gx, 0, 1, 32), PALETTE.floor_store_b)
+			_speckle(img, rect, PALETTE.floor_store_b, 0.05, rng)
+		"floor_clinic":
+			img.fill_rect(rect, PALETTE.floor_clinic_a)
+			for gx in range(0, 32, 16):
+				img.fill_rect(_local(rect, gx, 0, 1, 32), PALETTE.floor_clinic_b)
+			for gy in range(0, 32, 16):
+				img.fill_rect(_local(rect, 0, gy, 32, 1), PALETTE.floor_clinic_b)
+		"floor_interior_plain":
+			img.fill_rect(rect, PALETTE.floor_plain_a)
+			for gx in range(0, 32, 16):
+				img.fill_rect(_local(rect, gx, 0, 1, 32), PALETTE.floor_plain_b)
+			_speckle(img, rect, PALETTE.floor_plain_b, 0.04, rng)
+
 # ---------------------------------------------------------------------------
 # Section 1: props
 # ---------------------------------------------------------------------------
@@ -502,6 +557,29 @@ func _generate_props() -> void:
 	_save(_draw_loot_water(), "res://assets/pixel/props/loot_water.png")
 	_save(_draw_loot_materials(), "res://assets/pixel/props/loot_materials.png")
 	_save(_draw_loot_medical(), "res://assets/pixel/props/loot_medical.png")
+	# Phase 3B: building walls, doors, windows, furniture, street dressing
+	_save(_draw_wall_segment(PALETTE.wall_brick, PALETTE.wall_brick_dark, "brick"), "res://assets/pixel/props/wall_brick.png")
+	_save(_draw_wall_segment(PALETTE.wall_concrete, PALETTE.wall_concrete_dark, "concrete"), "res://assets/pixel/props/wall_concrete.png")
+	_save(_draw_wall_segment(PALETTE.wall_plaster, PALETTE.wall_plaster_dark, "plaster"), "res://assets/pixel/props/wall_plaster.png")
+	_save(_draw_wall_segment(PALETTE.wall_shopfront, PALETTE.wall_shopfront_dark, "shopfront"), "res://assets/pixel/props/wall_shopfront.png")
+	_save(_draw_interior_wall(), "res://assets/pixel/props/wall_interior.png")
+	_save(_draw_door(false), "res://assets/pixel/props/door_closed.png")
+	_save(_draw_door(true), "res://assets/pixel/props/door_open.png")
+	_save(_draw_window(false), "res://assets/pixel/props/window_intact.png")
+	_save(_draw_window(true), "res://assets/pixel/props/window_boarded.png")
+	_save(_draw_table(), "res://assets/pixel/props/table.png")
+	_save(_draw_chair(), "res://assets/pixel/props/chair.png")
+	_save(_draw_counter(), "res://assets/pixel/props/counter.png")
+	_save(_draw_shelf(), "res://assets/pixel/props/shelf.png")
+	_save(_draw_fridge(), "res://assets/pixel/props/fridge.png")
+	_save(_draw_medical_cabinet(), "res://assets/pixel/props/medical_cabinet.png")
+	_save(_draw_bench(), "res://assets/pixel/props/bench.png")
+	_save(_draw_utility_box(), "res://assets/pixel/props/utility_box.png")
+	_save(_draw_street_sign(), "res://assets/pixel/props/street_sign.png")
+	_save(_draw_car(false), "res://assets/pixel/props/car_sedan.png")
+	_save(_draw_car(true), "res://assets/pixel/props/car_wreck.png")
+	_save(_draw_tree(), "res://assets/pixel/props/tree.png")
+	_save(_draw_planter(), "res://assets/pixel/props/planter.png")
 
 func _draw_crate() -> Image:
 	var img := _new_image(24, 24)
@@ -733,6 +811,202 @@ func _draw_loot_medical() -> Image:
 	_outline_rect(img, Rect2i(8, 1, 4, 3), PALETTE.outline)
 	img.fill_rect(Rect2i(8, 7, 4, 6), PALETTE.medical)
 	img.fill_rect(Rect2i(6, 9, 8, 2), PALETTE.medical)
+	return img
+
+# ---------------------------------------------------------------------------
+# Section 1 (Phase 3B): building walls, doors, windows, furniture, streets
+# ---------------------------------------------------------------------------
+
+## One 32x32 wall segment, tiled edge-to-edge by BuildingBase along a
+## building's authored perimeter. Doors/windows are the same footprint so
+## they can drop into any wall-run cell.
+func _draw_wall_segment(base: Color, dark: Color, style: String) -> Image:
+	var img := _new_image(32, 32)
+	img.fill_rect(Rect2i(0, 0, 32, 32), base)
+	match style:
+		"brick":
+			for row in range(8):
+				var offset: int = 8 if row % 2 == 0 else 0
+				img.fill_rect(Rect2i(0, row * 4, 32, 1), dark)
+				for gx in range(offset, 32, 16):
+					img.fill_rect(Rect2i(gx, row * 4, 1, 4), dark)
+		"concrete":
+			for gx in range(0, 32, 10):
+				img.fill_rect(Rect2i(gx, 0, 1, 32), dark)
+			img.fill_rect(Rect2i(0, 15, 32, 2), dark)
+		"plaster":
+			img.fill_rect(Rect2i(0, 24, 32, 4), dark) # baseboard
+			img.fill_rect(Rect2i(0, 22, 32, 1), dark.lightened(0.1))
+		"shopfront":
+			img.fill_rect(Rect2i(0, 20, 32, 12), dark)
+			img.fill_rect(Rect2i(2, 2, 28, 16), PALETTE.glass)
+			_outline_rect(img, Rect2i(2, 2, 28, 16), PALETTE.outline)
+		_:
+			pass
+	_outline_rect(img, Rect2i(0, 0, 32, 32), PALETTE.outline)
+	return img
+
+func _draw_interior_wall() -> Image:
+	var img := _new_image(32, 32)
+	img.fill_rect(Rect2i(0, 0, 32, 32), PALETTE.wall_interior)
+	img.fill_rect(Rect2i(0, 26, 32, 6), PALETTE.wall_interior_dark)
+	_outline_rect(img, Rect2i(0, 0, 32, 32), PALETTE.outline)
+	return img
+
+func _draw_door(open: bool) -> Image:
+	var img := _new_image(32, 32)
+	if open:
+		# Swung open against the wall to one side -- the doorway itself
+		# reads as open floor space.
+		img.fill_rect(Rect2i(0, 0, 8, 32), PALETTE.door_wood)
+		_outline_rect(img, Rect2i(0, 0, 8, 32), PALETTE.outline)
+		img.fill_rect(Rect2i(2, 4, 4, 24), PALETTE.door_wood_dark)
+	else:
+		img.fill_rect(Rect2i(2, 0, 28, 32), PALETTE.door_wood)
+		_outline_rect(img, Rect2i(2, 0, 28, 32), PALETTE.outline)
+		img.fill_rect(Rect2i(2, 14, 28, 2), PALETTE.door_wood_dark)
+		img.fill_rect(Rect2i(24, 15, 3, 3), PALETTE.metal) # handle
+	return img
+
+func _draw_window(boarded: bool) -> Image:
+	var img := _new_image(32, 32)
+	img.fill_rect(Rect2i(2, 8, 28, 16), PALETTE.wall_interior_dark)
+	_outline_rect(img, Rect2i(2, 8, 28, 16), PALETTE.outline)
+	if boarded:
+		for gy in [10, 17, 24]:
+			img.fill_rect(Rect2i(3, gy, 26, 4), PALETTE.wood)
+			_outline_rect(img, Rect2i(3, gy, 26, 4), PALETTE.wood_dark)
+	else:
+		img.fill_rect(Rect2i(4, 10, 24, 12), PALETTE.glass)
+		img.fill_rect(Rect2i(15, 10, 2, 12), PALETTE.glass_dark)
+		_outline_rect(img, Rect2i(4, 10, 24, 12), PALETTE.outline)
+	return img
+
+func _draw_table() -> Image:
+	var img := _new_image(32, 20)
+	img.fill_rect(Rect2i(1, 2, 30, 16), PALETTE.furniture_wood)
+	_outline_rect(img, Rect2i(1, 2, 30, 16), PALETTE.outline)
+	img.fill_rect(Rect2i(1, 2, 30, 3), PALETTE.furniture_wood_dark)
+	for lx in [3, 27]:
+		img.fill_rect(Rect2i(lx, 16, 2, 4), PALETTE.furniture_wood_dark)
+	return img
+
+func _draw_chair() -> Image:
+	var img := _new_image(14, 16)
+	img.fill_rect(Rect2i(1, 4, 12, 10), PALETTE.furniture_wood)
+	_outline_rect(img, Rect2i(1, 4, 12, 10), PALETTE.outline)
+	img.fill_rect(Rect2i(1, 0, 12, 4), PALETTE.furniture_wood_dark) # backrest
+	_outline_rect(img, Rect2i(1, 0, 12, 4), PALETTE.outline)
+	return img
+
+func _draw_counter() -> Image:
+	var img := _new_image(48, 20)
+	img.fill_rect(Rect2i(0, 2, 48, 18), PALETTE.furniture_wood_dark)
+	_outline_rect(img, Rect2i(0, 2, 48, 18), PALETTE.outline)
+	img.fill_rect(Rect2i(0, 0, 48, 4), PALETTE.furniture_metal)
+	_outline_rect(img, Rect2i(0, 0, 48, 4), PALETTE.outline)
+	for gx in range(4, 48, 12):
+		img.fill_rect(Rect2i(gx, 8, 8, 10), PALETTE.furniture_wood)
+		_outline_rect(img, Rect2i(gx, 8, 8, 10), PALETTE.furniture_metal_dark)
+	return img
+
+func _draw_shelf() -> Image:
+	var img := _new_image(28, 12)
+	img.fill_rect(Rect2i(0, 0, 28, 12), PALETTE.furniture_metal)
+	_outline_rect(img, Rect2i(0, 0, 28, 12), PALETTE.outline)
+	img.fill_rect(Rect2i(0, 4, 28, 1), PALETTE.furniture_metal_dark)
+	img.fill_rect(Rect2i(0, 8, 28, 1), PALETTE.furniture_metal_dark)
+	var rng := _rng_for("shelf_goods")
+	var goods := [PALETTE.food, PALETTE.water, PALETTE.materials, PALETTE.medical]
+	for gx in range(2, 26, 4):
+		img.fill_rect(Rect2i(gx, 1, 3, 3), goods[rng.randi_range(0, goods.size() - 1)])
+		img.fill_rect(Rect2i(gx, 5, 3, 3), goods[rng.randi_range(0, goods.size() - 1)])
+	return img
+
+func _draw_fridge() -> Image:
+	var img := _new_image(20, 24)
+	img.fill_rect(Rect2i(1, 1, 18, 22), PALETTE.fridge_white)
+	_outline_rect(img, Rect2i(1, 1, 18, 22), PALETTE.outline)
+	img.fill_rect(Rect2i(1, 11, 18, 2), PALETTE.fridge_dark)
+	img.fill_rect(Rect2i(16, 3, 2, 6), PALETTE.fridge_dark) # handle
+	img.fill_rect(Rect2i(16, 14, 2, 6), PALETTE.fridge_dark)
+	return img
+
+func _draw_medical_cabinet() -> Image:
+	var img := _new_image(20, 24)
+	img.fill_rect(Rect2i(1, 1, 18, 22), PALETTE.sidewalk_light)
+	_outline_rect(img, Rect2i(1, 1, 18, 22), PALETTE.outline)
+	img.fill_rect(Rect2i(8, 5, 4, 4), PALETTE.medical)
+	img.fill_rect(Rect2i(6, 7, 8, 2), PALETTE.medical)
+	img.fill_rect(Rect2i(3, 15, 14, 1), PALETTE.curb_dark)
+	img.fill_rect(Rect2i(3, 19, 14, 1), PALETTE.curb_dark)
+	return img
+
+func _draw_bench() -> Image:
+	var img := _new_image(32, 12)
+	img.fill_rect(Rect2i(0, 2, 32, 6), PALETTE.bench_wood)
+	_outline_rect(img, Rect2i(0, 2, 32, 6), PALETTE.outline)
+	for lx in [2, 28]:
+		img.fill_rect(Rect2i(lx, 8, 2, 4), PALETTE.outline)
+	for gx in range(2, 30, 6):
+		img.fill_rect(Rect2i(gx, 2, 1, 6), PALETTE.wood_dark)
+	return img
+
+func _draw_utility_box() -> Image:
+	var img := _new_image(16, 20)
+	img.fill_rect(Rect2i(1, 1, 14, 18), PALETTE.metal_dark)
+	_outline_rect(img, Rect2i(1, 1, 14, 18), PALETTE.outline)
+	img.fill_rect(Rect2i(3, 4, 10, 3), PALETTE.line_yellow)
+	img.fill_rect(Rect2i(3, 9, 10, 1), PALETTE.metal)
+	img.fill_rect(Rect2i(3, 13, 10, 1), PALETTE.metal)
+	return img
+
+func _draw_street_sign() -> Image:
+	var img := _new_image(20, 36)
+	img.fill_rect(Rect2i(9, 8, 2, 28), PALETTE.metal_dark)
+	img.fill_rect(Rect2i(1, 0, 18, 8), PALETTE.line_white)
+	_outline_rect(img, Rect2i(1, 0, 18, 8), PALETTE.outline)
+	img.fill_rect(Rect2i(3, 3, 14, 2), PALETTE.outline)
+	return img
+
+func _draw_car(wrecked: bool) -> Image:
+	var img := _new_image(28, 48)
+	var body_color: Color = PALETTE.car_rust if wrecked else PALETTE.car_red
+	var dark: Color = PALETTE.car_rust_dark if wrecked else PALETTE.car_red_dark
+	img.fill_rect(Rect2i(2, 2, 24, 44), body_color)
+	_outline_rect(img, Rect2i(2, 2, 24, 44), PALETTE.outline)
+	img.fill_rect(Rect2i(4, 8, 20, 12), dark) # windshield/cabin band
+	img.fill_rect(Rect2i(4, 28, 20, 10), dark)
+	if not wrecked:
+		img.fill_rect(Rect2i(4, 8, 20, 12), PALETTE.glass)
+	img.fill_rect(Rect2i(2, 4, 24, 2), dark)
+	img.fill_rect(Rect2i(2, 42, 24, 2), dark)
+	if wrecked:
+		img.fill_rect(Rect2i(10, 18, 8, 6), PALETTE.crack)
+		img.fill_rect(Rect2i(6, 24, 4, 3), PALETTE.outline)
+	return img
+
+func _draw_tree() -> Image:
+	var img := _new_image(32, 32)
+	img.fill_rect(Rect2i(14, 20, 4, 10), PALETTE.tree_trunk)
+	_outline_rect(img, Rect2i(14, 20, 4, 10), PALETTE.outline)
+	var rng := _rng_for("tree_canopy")
+	for i in range(3):
+		var r := 10 - i * 2
+		var cx := 16 + rng.randi_range(-2, 2)
+		var cy := 14 - i * 4
+		for y in range(-r, r):
+			for x in range(-r, r):
+				if x * x + y * y <= r * r and cx + x >= 0 and cx + x < 32 and cy + y >= 0 and cy + y < 32:
+					img.set_pixel(cx + x, cy + y, PALETTE.tree_leaves if (x + y) % 3 != 0 else PALETTE.tree_leaves_dark)
+	return img
+
+func _draw_planter() -> Image:
+	var img := _new_image(24, 16)
+	img.fill_rect(Rect2i(1, 6, 22, 9), PALETTE.wood_dark)
+	_outline_rect(img, Rect2i(1, 6, 22, 9), PALETTE.outline)
+	img.fill_rect(Rect2i(2, 1, 20, 7), PALETTE.grass)
+	_speckle(img, Rect2i(2, 1, 20, 7), PALETTE.grass_dark, 0.2, _rng_for("planter_leaves"))
 	return img
 
 # ---------------------------------------------------------------------------

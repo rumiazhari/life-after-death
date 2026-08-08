@@ -25,6 +25,8 @@ ItemDatabase="*res://scripts/items/item_database.gd"
 WorldState="*res://scripts/core/world_state.gd"
 ActorSpriteLibrary="*res://scripts/visuals/actor_sprite_library.gd"
 CosmeticRng="*res://scripts/visuals/cosmetic_rng.gd"
+NoiseManager="*res://scripts/core/noise_manager.gd"
+UrbanNavigationService="*res://scripts/world/urban_navigation_service.gd"
 
 [debug]
 

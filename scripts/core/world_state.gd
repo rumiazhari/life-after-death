@@ -21,6 +21,16 @@ var jobs: Dictionary = {} ## int id -> Job
 var drops: Dictionary = {} ## int id -> WorldDrop
 var world_flags: Dictionary = {}
 
+## Phase 3B persistent authored-object state -- keyed by STABLE authored
+## StringName ids (e.g. "restaurant01/kitchen/door_service"), never a scene
+## node reference and never an auto-incrementing int, so re-entering a
+## building or reloading the scene resolves back to the exact same record
+## instead of registering a fresh (and therefore duplicate-loot-capable)
+## one. See docs/interaction_system.md "Persistent world-prop state".
+var door_states: Dictionary = {} ## StringName door_id -> bool is_open
+var prop_states: Dictionary = {} ## StringName prop_id -> Dictionary (searched/salvaged/etc. flags)
+var prop_containers: Dictionary = {} ## StringName prop_id -> Inventory
+
 var _next_survivor_id: int = 1
 var _next_settlement_id: int = 1
 var _next_container_id: int = 1
@@ -105,6 +115,38 @@ func register_drop(drop: WorldDrop) -> int:
 func get_drop(id: int) -> WorldDrop:
 	return drops.get(id)
 
+## --- Phase 3B: doors, and generic persistent world-prop state -----------
+
+func get_door_open(door_id: StringName) -> bool:
+	return door_states.get(door_id, false)
+
+func set_door_open(door_id: StringName, is_open: bool) -> void:
+	door_states[door_id] = is_open
+
+## Returns the SAME Inventory instance across repeated calls for a given
+## prop_id (registering it once on first access), so contents/depletion
+## survive being re-queried and can never duplicate. `initial_items` only
+## seeds a brand-new registration; a later call for the same id ignores it.
+func get_or_create_prop_container(prop_id: StringName, capacity_weight: float, initial_items: Dictionary = {}) -> Inventory:
+	if prop_containers.has(prop_id):
+		return prop_containers[prop_id]
+	var inv := Inventory.new(capacity_weight)
+	for item_id in initial_items:
+		inv.add_item(StringName(item_id), int(initial_items[item_id]))
+	prop_containers[prop_id] = inv
+	return inv
+
+func get_prop_state(prop_id: StringName) -> Dictionary:
+	return prop_states.get(prop_id, {})
+
+func set_prop_state_flag(prop_id: StringName, flag: StringName, value) -> void:
+	if not prop_states.has(prop_id):
+		prop_states[prop_id] = {}
+	prop_states[prop_id][flag] = value
+
+func get_prop_state_flag(prop_id: StringName, flag: StringName, default_value = false):
+	return prop_states.get(prop_id, {}).get(flag, default_value)
+
 func to_snapshot() -> Dictionary:
 	var survivor_dicts: Dictionary = {}
 	for id in survivors:
@@ -140,6 +182,9 @@ func reset() -> void:
 	jobs.clear()
 	drops.clear()
 	world_flags.clear()
+	door_states.clear()
+	prop_states.clear()
+	prop_containers.clear()
 	_next_survivor_id = 1
 	_next_settlement_id = 1
 	_next_container_id = 1

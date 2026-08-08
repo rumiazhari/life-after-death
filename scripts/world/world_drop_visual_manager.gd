@@ -31,6 +31,8 @@ func _on_drop_registered(drop: WorldDrop) -> void:
 ## manager's own node) so a loot bag on the ground sorts correctly against
 ## actors walking past it, instead of always drawing at a fixed z-index.
 func _add_visual(drop: WorldDrop) -> void:
+	if not is_inside_tree():
+		return # e.g. a StorageContainer freed during scene teardown/shutdown
 	var dynamic_world: Node = get_tree().get_first_node_in_group("entity_container")
 	if dynamic_world == null:
 		return

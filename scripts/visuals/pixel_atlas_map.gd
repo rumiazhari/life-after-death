@@ -44,6 +44,8 @@ const ENV_TILE_NAMES: Array[StringName] = [
 	&"roof_vent", &"roof_pipe", &"roof_sign", &"roof_duct", &"roof_tank",
 	# Safehouse
 	&"safehouse_floor", &"safehouse_floor_alt", &"safehouse_wall", &"safehouse_wall_reinforced",
+	# Phase 3B building interior floors
+	&"floor_restaurant", &"floor_kitchen", &"floor_store", &"floor_clinic", &"floor_interior_plain",
 ]
 
 ## Actor sprite sheet layout (Phase 3A.1): one row per palette variant, one

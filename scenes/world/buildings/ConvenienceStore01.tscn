@@ -1,0 +1,45 @@
+[gd_scene load_steps=5 format=3]
+
+[ext_resource type="Script" path="res://scripts/world/buildings/convenience_store_01.gd" id="1"]
+[ext_resource type="Script" path="res://scripts/world/room.gd" id="2"]
+[ext_resource type="PackedScene" path="res://scenes/world/Door.tscn" id="3"]
+
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_retail"]
+size = Vector2(220, 95)
+
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_back"]
+size = Vector2(220, 55)
+
+[node name="ConvenienceStore01" type="Node2D"]
+script = ExtResource("1")
+
+[node name="Rooms" type="Node2D" parent="."]
+
+[node name="RetailFloor" type="Area2D" parent="Rooms"]
+position = Vector2(0, -27.5)
+script = ExtResource("2")
+room_id = &"retail_floor"
+building_id = &"convenience_store_01"
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="Rooms/RetailFloor"]
+shape = SubResource("RectangleShape2D_retail")
+
+[node name="BackRoom" type="Area2D" parent="Rooms"]
+position = Vector2(0, 47.5)
+script = ExtResource("2")
+room_id = &"back_room"
+building_id = &"convenience_store_01"
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="Rooms/BackRoom"]
+shape = SubResource("RectangleShape2D_back")
+
+[node name="Doors" type="Node2D" parent="."]
+
+[node name="EntranceDoor" parent="Doors" instance=ExtResource("3")]
+position = Vector2(0, 75)
+door_id = &"convenience_store_01/door_entrance"
+
+[node name="BackRoomDoor" parent="Doors" instance=ExtResource("3")]
+position = Vector2(0, 20)
+rotation = 1.5707963268
+door_id = &"convenience_store_01/door_backroom"

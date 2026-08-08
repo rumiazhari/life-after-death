@@ -31,3 +31,7 @@ signal game_restarted()
 signal survivor_spawned(survivor: Node2D)
 signal survivor_died(survivor: Node2D)
 signal survivor_selected(survivor: Node2D)
+
+## Phase 3B: fires whenever PlayerInteractor's best candidate changes.
+## Empty string means "no valid interaction target right now."
+signal interact_prompt_changed(label: String)

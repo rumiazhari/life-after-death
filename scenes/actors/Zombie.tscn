@@ -1,9 +1,10 @@
-[gd_scene load_steps=7 format=3]
+[gd_scene load_steps=8 format=3]
 
 [ext_resource type="Script" path="res://scripts/actors/zombie.gd" id="1"]
 [ext_resource type="Script" path="res://scripts/core/health_component.gd" id="2"]
 [ext_resource type="Script" path="res://scripts/visuals/actor_visual.gd" id="3"]
 [ext_resource type="Texture2D" path="res://assets/pixel/actors/shadow.png" id="4"]
+[ext_resource type="Script" path="res://scripts/ai/zombie_perception_component.gd" id="5"]
 
 [sub_resource type="CircleShape2D" id="CircleShape2D_zombie"]
 radius = 13.0
@@ -38,3 +39,6 @@ collision_mask = 18
 
 [node name="CollisionShape2D" type="CollisionShape2D" parent="AttackArea"]
 shape = SubResource("CircleShape2D_attack")
+
+[node name="Perception" type="Node" parent="."]
+script = ExtResource("5")

@@ -99,15 +99,31 @@ func _try_spawn_batch() -> void:
 	for i in range(to_spawn):
 		_spawn_one()
 
+const MAX_SPAWN_ATTEMPTS := 4
+
 func _spawn_one() -> Node2D:
 	if zombie_scene == null or _entity_container == null:
 		return null
 	var zombie: Node2D = zombie_scene.instantiate()
-	zombie.global_position = _pick_spawn_position()
+	var position: Vector2 = _pick_spawn_position()
+	var attempts: int = 0
+	while _is_inside_any_settlement(position) and attempts < MAX_SPAWN_ATTEMPTS:
+		position = _pick_spawn_position()
+		attempts += 1
+	zombie.global_position = position
 	_entity_container.add_child(zombie)
 	_active_zombies.append(zombie)
 	GameEvents.zombie_spawned.emit(zombie)
 	return zombie
+
+## Never spawn directly inside the safehouse -- checked against every
+## registered settlement's own safe_radius rather than a hard-coded
+## position, so this stays correct if the safehouse ever moves.
+func _is_inside_any_settlement(position: Vector2) -> bool:
+	for settlement in get_tree().get_nodes_in_group("settlement"):
+		if settlement.has_method("is_position_safe") and settlement.call("is_position_safe", position):
+			return true
+	return false
 
 func _pick_spawn_position() -> Vector2:
 	var center: Vector2 = _camera.global_position if _camera else Vector2.ZERO

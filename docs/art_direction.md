@@ -148,7 +148,42 @@ licensed or hand-drawn art:
 
 - Two animation frames (`idle`/`walk`) per actor variant, not a
   multi-frame walk cycle -- kept intentionally cheap for up to 250
-  concurrent zombies.
+  concurrent zombies. (Superseded for actor animation specifically by
+  Phase 3A.1's directional multi-frame system below; the two-frame note
+  is preserved here as the original Phase 3A baseline.)
 - Actor facing is a horizontal flip, not full 8-directional sprites.
+  (Also superseded by Phase 3A.1's directional animation, which adds
+  down/up/side frame sets.)
 - Persistent blood decals are capped and recycled (see
   `scripts/combat/blood_decal_manager.gd`), not per-hit particles.
+
+## Phase 3B additions -- building and street art
+
+Extends the same deterministic generator (`tools/generate_pixel_assets.gd`)
+and the same rules above (nearest-neighbor import, shared `PALETTE`,
+isolated cosmetic RNG via `CosmeticRng`, one shared `TileSet`/atlas) --
+nothing about the art pipeline itself changed, only its coverage.
+
+New environment-atlas floor tiles (`PixelAtlasMap.ENV_TILE_NAMES`):
+`floor_restaurant`, `floor_kitchen`, `floor_store`, `floor_clinic`,
+`floor_interior_plain`. New standalone prop/building sprites under
+`assets/pixel/props/`: exterior wall variants (`wall_brick`,
+`wall_concrete`, `wall_plaster`, `wall_shopfront`, each with a `_dark`
+trim shade) and one shared `wall_interior`; door states
+(`door_closed`/`door_open`); window states (`window_intact`/
+`window_boarded`); furniture (`table`, `chair`, `counter`, `shelf`,
+`fridge`, `medical_cabinet`, `bench`); street objects (`utility_box`,
+`street_sign`, `street_lamp`, `hydrant`, `car_sedan`, `car_wreck`,
+`tree`, `planter`, `dumpster`, `trash_bag`, `road_barrier`, `cone`). All
+drawn by dedicated `_draw_*` functions in the generator, reusing the
+existing `PALETTE` (extended with matching entries, e.g.
+`wall_brick`/`wall_brick_dark`) rather than introducing a parallel color
+set.
+
+**Known gaps against the full Phase 3B art request:** van/truck, bicycles,
+vending machines, shopping carts, restaurant-specific signage,
+apartment/workshop fixtures (couches, office desks, toilets/sinks, kitchen
+equipment beyond the restaurant's own), and building-specific roof
+elements beyond the shared 4-letter roof-material system were not
+generated this pass -- see the Phase 3B completion report for the full
+deferred-art list.
