@@ -19,11 +19,16 @@ func _ready() -> void:
 func is_depleted() -> bool:
 	return remaining_stock <= 0
 
-## Removes one yield's worth of stock and returns how much was actually
-## produced (may be less than yield_per_scavenge on the last pass). Frees
-## the node once emptied.
-func harvest() -> int:
-	var amount: int = mini(yield_per_scavenge, remaining_stock)
+## Removes up to one yield's worth of stock, capped at `max_amount` (the
+## caller's carrying capacity, computed *before* calling this), and returns
+## how much was actually removed. Capacity-aware by construction: excess
+## stock the caller can't accept is left at the point rather than being
+## removed and silently discarded, and max_amount == 0 removes nothing.
+## Frees the node once emptied.
+func harvest(max_amount: int) -> int:
+	var amount: int = mini(mini(yield_per_scavenge, remaining_stock), max_amount)
+	if amount <= 0:
+		return 0
 	remaining_stock -= amount
 	if remaining_stock <= 0:
 		call_deferred("queue_free")

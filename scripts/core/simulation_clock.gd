@@ -55,8 +55,24 @@ func pause() -> void:
 func resume_normal() -> void:
 	speed = SimSpeed.NORMAL
 
+## Total simulated minutes elapsed since day 1, 00:00 (which evaluates to
+## exactly zero -- game_day is 1-based, so it's (game_day - 1) here, not
+## game_day).
 func total_game_minutes() -> int:
-	return game_day * 24 * 60 + game_hour * 60 + game_minute
+	return (game_day - 1) * 24 * 60 + game_hour * 60 + game_minute
+
+## Resets every mutable field to its initial state -- called on restart so
+## a reloaded scene doesn't inherit the previous run's time-of-day, speed,
+## or tick accumulators (SimulationClock is an autoload and survives
+## SceneTree.reload_current_scene() otherwise).
+func reset() -> void:
+	speed = SimSpeed.NORMAL
+	game_minute = 0
+	game_hour = 0
+	game_day = 1
+	tick_count = 0
+	_tick_accumulator = 0.0
+	_minute_accumulator = 0.0
 
 func _advance_tick() -> void:
 	tick_count += 1

@@ -73,6 +73,15 @@ func begin(survivor_data: SurvivorData) -> void:
 	SimulationClock.minute_changed.connect(_on_minute_changed)
 	set_physics_process(true)
 
+## Called once, on death -- permanent, unlike an emergency interruption
+## (see UtilityAction.exit()). current_action.exit() first releases
+## whatever a still-in-progress action would release on any interruption
+## (a claimed-but-not-yet-picked-up job, a sleep spot, a helper claim, a
+## personal retrieve-supplies reservation); release_survivor_permanently()
+## then additionally fails any HAUL job this survivor was already
+## physically carrying (its cargo dies with it) instead of leaving that
+## job dangling or letting release_survivor() send someone else to an
+## already-emptied pickup point.
 func stop() -> void:
 	_stopped = true
 	set_physics_process(false)
@@ -80,7 +89,7 @@ func stop() -> void:
 		current_action.exit(self)
 		current_action = null
 	if job_board and data:
-		job_board.release_survivor(data.id)
+		job_board.release_survivor_permanently(data.id)
 	if SimulationClock.minute_changed.is_connected(_on_minute_changed):
 		SimulationClock.minute_changed.disconnect(_on_minute_changed)
 

@@ -54,6 +54,23 @@ func can_fit(item_id: StringName, amount: int) -> bool:
 	var unit_weight: float = item.weight_per_unit if item else 1.0
 	return total_weight() + amount * unit_weight <= capacity_weight + 0.0001
 
+## How many whole units of item_id would currently fit given free weight
+## capacity, without mutating anything. Lets a caller (e.g. a capacity-aware
+## harvest) decide how much to remove from a source *before* removing it,
+## instead of removing a fixed amount and discovering afterward that some
+## of it didn't fit anywhere.
+const UNLIMITED_FIT := 1_000_000_000
+
+func max_fit(item_id: StringName) -> int:
+	if capacity_weight <= 0.0:
+		return UNLIMITED_FIT
+	var item: ItemData = ItemDatabase.get_item(item_id)
+	var unit_weight: float = item.weight_per_unit if item else 1.0
+	if unit_weight <= 0.0:
+		return UNLIMITED_FIT
+	var free_weight: float = maxf(capacity_weight - total_weight(), 0.0)
+	return int(floor((free_weight + 0.0001) / unit_weight))
+
 ## Adds as much as fits; returns the amount actually added.
 func add_item(item_id: StringName, amount: int) -> int:
 	if amount <= 0:

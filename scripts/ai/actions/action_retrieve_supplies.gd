@@ -53,8 +53,22 @@ func tick(ai: SurvivorAI, delta: float) -> bool:
 	var arrived: bool = ai.survivor.move_toward_point(_target_container.global_position, delta)
 	if not arrived:
 		return false
-	_target_container.get_inventory().confirm_reserved_transfer(_reservation_id, ai.survivor.carried_inventory)
+	var inv: Inventory = _target_container.get_inventory()
+	if not inv.confirm_reserved_transfer(_reservation_id, ai.survivor.carried_inventory):
+		# Either the source depleted out from under the reservation (which
+		# confirm_reserved_transfer already released on our behalf) or the
+		# survivor's own carried inventory is temporarily too full to accept
+		# it (reservation deliberately left intact by confirm_reserved_transfer
+		# in that case). Only stop -- and only then clear our local id -- once
+		# the reservation is actually gone; otherwise keep it and retry next
+		# tick so a full destination can never orphan it.
+		if not inv.has_reservation(_reservation_id):
+			_reservation_id = 0
+			_target_container = null
+			return true
+		return false
 	_reservation_id = 0
+	_target_container = null
 	return true
 
 func exit(_ai: SurvivorAI) -> void:

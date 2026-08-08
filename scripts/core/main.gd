@@ -99,6 +99,14 @@ func _on_player_died() -> void:
 
 func _restart_game() -> void:
 	get_tree().paused = false
+	# WorldState/SimulationClock are autoloads and survive
+	# reload_current_scene() (only the scene tree gets torn down and
+	# rebuilt) -- reset them explicitly here, before the reload, so the new
+	# scene's Settlement/StorageContainer/Survivor nodes register into a
+	# clean registry (fresh ids starting at 1 again) instead of piling onto
+	# whatever the previous run left behind.
+	WorldState.reset()
+	SimulationClock.reset()
 	get_tree().reload_current_scene()
 
 func _on_quit_requested() -> void:

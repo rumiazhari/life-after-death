@@ -15,6 +15,13 @@ extends UtilityAction
 ## Together these are "Survivors collect nearby supplies and return them to
 ## storage" (ActionScavenge deposits into a survivor's own inventory;
 ## this action is what actually gets it into the settlement).
+##
+## Once a HAUL job's pickup leg succeeds, the cargo is physically in this
+## survivor's own carried inventory and the job is marked IN_TRANSIT
+## (Job.haul_phase) -- if interrupted before dropoff, enter() finds and
+## resumes that same job via SettlementJobBoard.get_in_transit_haul_job()
+## instead of re-scanning for new work, so the cargo is never abandoned or
+## claimable by anyone else mid-delivery.
 
 const SEARCH_RADIUS := 2000.0
 
@@ -31,12 +38,26 @@ func can_start(ai: SurvivorAI) -> bool:
 	return ai.job_board != null or ai.settlement != null
 
 func score(ai: SurvivorAI) -> float:
+	if ai.job_board and ai.job_board.get_in_transit_haul_job(ai.data.id) != null:
+		# Already physically carrying a job's cargo -- always finish
+		# delivering it rather than picking a fresh haul/personal-carry
+		# target and leaving that cargo stranded indefinitely.
+		return 1.15
 	return maxf(_best_job_score(ai), _personal_carry_score(ai))
 
 func enter(ai: SurvivorAI) -> void:
 	_job = null
 	_personal_item = &""
 	_personal_container = null
+	_picked_up = false
+
+	var resume_job: Job = ai.job_board.get_in_transit_haul_job(ai.data.id) if ai.job_board else null
+	if resume_job:
+		_job = resume_job
+		ai.current_job = _job
+		_picked_up = true
+		return
+
 	var prefer_job: bool = _best_job_score(ai) >= _personal_carry_score(ai)
 	var committed: bool = false
 	if prefer_job:
@@ -55,7 +76,14 @@ func tick(ai: SurvivorAI, delta: float) -> bool:
 	return _tick_job(ai, delta)
 
 func exit(ai: SurvivorAI) -> void:
-	if _job:
+	# Only release the claim if pickup hasn't happened yet -- the source
+	# reservation is still intact then, so another survivor can safely pick
+	# this job up. Once cargo is physically in this survivor's own carried
+	# inventory (_picked_up), releasing the claim would let someone else
+	# walk to an already-emptied pickup point while the real cargo sits
+	# untracked with this survivor; leaving the job assigned lets
+	# get_in_transit_haul_job() find it again on resume instead.
+	if _job and not _picked_up:
 		ai.job_board.release_survivor(ai.data.id)
 	_job = null
 	_picked_up = false
@@ -161,6 +189,7 @@ func _tick_job(ai: SurvivorAI, delta: float) -> bool:
 			ai.job_board.fail_job(_job)
 			_job = null
 			return true
+		ai.job_board.mark_picked_up(_job, ai.data.id)
 		_picked_up = true
 		return false
 	ai.reserved_target_description = "hauling: dropoff %s" % _job.reserved_item_id
@@ -168,10 +197,21 @@ func _tick_job(ai: SurvivorAI, delta: float) -> bool:
 	if not arrived_dest:
 		return false
 	var dest: Inventory = WorldState.get_container(_job.dest_container_id)
-	if dest == null or not Inventory.transfer_item(ai.survivor.carried_inventory, dest, _job.reserved_item_id, _job.reserved_amount):
-		# Destination temporarily can't take it (full/missing) -- the items
-		# stay safely in the survivor's own carried inventory and this
-		# retries next tick rather than completing without delivering.
+	if dest == null:
+		# Permanently invalid destination (container no longer registered) --
+		# no amount of waiting will fix this, so fail now instead of
+		# retrying at a stop that can never accept the cargo. The cargo
+		# stays safely in the survivor's own carried inventory; nothing is
+		# lost, just no longer tracked by this job.
+		ai.job_board.fail_job(_job)
+		_job = null
+		return true
+	if not Inventory.transfer_item(ai.survivor.carried_inventory, dest, _job.reserved_item_id, _job.reserved_amount):
+		# Destination temporarily full -- a transient, potentially-recoverable
+		# condition. The cargo stays safely in the survivor's own carried
+		# inventory and this retries next tick rather than completing
+		# without delivering or giving up on a destination that might free
+		# up capacity later.
 		return false
 	ai.job_board.complete_job(_job)
 	_job = null

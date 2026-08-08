@@ -27,11 +27,26 @@ func register_survivor(data: SurvivorData) -> int:
 	survivors[data.id] = data
 	return data.id
 
+## Deliberate purge -- NOT called on natural death. A dead survivor's
+## SurvivorData stays registered (with is_dead = true) as a persistent
+## historical record; see get_living_survivors()/is_survivor_alive().
 func unregister_survivor(id: int) -> void:
 	survivors.erase(id)
 
 func get_survivor(id: int) -> SurvivorData:
 	return survivors.get(id)
+
+func is_survivor_alive(id: int) -> bool:
+	var data: SurvivorData = survivors.get(id)
+	return data != null and not data.is_dead
+
+func get_living_survivors() -> Array[SurvivorData]:
+	var result: Array[SurvivorData] = []
+	for id in survivors:
+		var data: SurvivorData = survivors[id]
+		if not data.is_dead:
+			result.append(data)
+	return result
 
 func register_settlement(data: SettlementData) -> int:
 	if data.id == 0:

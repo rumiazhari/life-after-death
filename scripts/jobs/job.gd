@@ -8,6 +8,12 @@ extends RefCounted
 
 enum Type { SCAVENGE, HAUL, GUARD, HELP_INJURED }
 enum Status { AVAILABLE, RESERVED, ACTIVE, COMPLETED, FAILED, CANCELLED }
+## HAUL-specific sub-state, tracked independently of Status because Status
+## alone can't distinguish "claimed and traveling to pick up" from "cargo
+## physically in the carrier's own inventory" -- Status flips to ACTIVE on
+## the very first tick (see SettlementJobBoard.start_job callers), well
+## before pickup actually happens. NONE for non-HAUL job types.
+enum HaulPhase { NONE, AWAITING_PICKUP, IN_TRANSIT, DELIVERED }
 
 var id: int = 0
 var job_type: Type = Type.SCAVENGE
@@ -33,6 +39,10 @@ var dest_position: Vector2 = Vector2.ZERO
 var reserved_item_id: StringName = &""
 var reserved_amount: int = 0
 var reservation_id: int = 0
+var haul_phase: HaulPhase = HaulPhase.NONE
+## Survivor id physically carrying the cargo once haul_phase is IN_TRANSIT.
+## 0 = nobody (not a HAUL job, or not picked up yet).
+var carrier_survivor_id: int = 0
 
 func set_target(node: Node) -> void:
 	_target_ref = weakref(node) if node else null
@@ -63,4 +73,6 @@ func to_dict() -> Dictionary:
 		"assigned_survivor_ids": assigned_survivor_ids.duplicate(),
 		"reserved_item_id": String(reserved_item_id),
 		"reserved_amount": reserved_amount,
+		"haul_phase": haul_phase,
+		"carrier_survivor_id": carrier_survivor_id,
 	}

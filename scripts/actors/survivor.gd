@@ -135,6 +135,10 @@ func _on_died() -> void:
 			var settlement: Settlement = get_tree().get_first_node_in_group("settlement")
 			if settlement and settlement.data.id == data.current_settlement:
 				settlement.remove_member(data.id)
-		WorldState.unregister_survivor(data.id)
+		# SurvivorData deliberately stays registered in WorldState (now with
+		# is_dead = true) as a persistent record instead of being erased --
+		# see WorldState.get_living_survivors()/is_survivor_alive() and
+		# to_snapshot(), and note the survivor id is never reused within a
+		# run as a result.
 	GameEvents.survivor_died.emit(self)
 	queue_free()

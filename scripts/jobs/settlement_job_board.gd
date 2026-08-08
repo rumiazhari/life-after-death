@@ -8,10 +8,14 @@ extends Node
 ## exclusive at the data level (reserved inventory stack, or a worker-slot
 ## count on the job itself), so two survivors evaluating the same tick never
 ## end up committing to the same single unit of work. Jobs also self-heal:
-## release_survivor() (called by SurvivorAI on death/interruption) frees a
-## survivor's claim without losing the job, and periodic validation
+## release_survivor() (called from an action's exit() on interruption)
+## frees a survivor's claim without losing the job, and periodic validation
 ## (staggered across sim ticks, not scanned every frame) cancels jobs whose
-## node target disappeared out from under them.
+## node target disappeared out from under them. A HAUL job whose cargo is
+## already physically in a survivor's carried inventory (haul_phase
+## IN_TRANSIT) is the one exception: release_survivor() leaves it alone
+## (only the same survivor resuming, or release_survivor_permanently() on
+## death, can resolve it) so the cargo is never stranded or claimable twice.
 
 signal job_created(job: Job)
 signal job_status_changed(job: Job)
@@ -73,6 +77,7 @@ func create_haul_job(source_container: StorageContainer, dest_container: Storage
 	job.reserved_item_id = item_id
 	job.reserved_amount = amount
 	job.reservation_id = reservation_id
+	job.haul_phase = Job.HaulPhase.AWAITING_PICKUP
 	return job
 
 ## --- Query ---------------------------------------------------------------
@@ -121,9 +126,35 @@ func start_job(job: Job) -> void:
 		job_status_changed.emit(job)
 
 func complete_job(job: Job) -> void:
+	if job.job_type == Job.Type.HAUL:
+		job.haul_phase = Job.HaulPhase.DELIVERED
 	job.status = Job.Status.COMPLETED
 	job_status_changed.emit(job)
 	_remove_job(job)
+
+## Marks a HAUL job's cargo as now physically inside `survivor_id`'s own
+## carried inventory. From this point the job is no longer "available
+## work" for anyone else -- only this survivor can complete it (by
+## resuming via get_in_transit_haul_job()) or, on death, forfeit it (see
+## release_survivor_permanently()). Called by ActionHaulSupplies right
+## after a successful pickup transfer.
+func mark_picked_up(job: Job, survivor_id: int) -> void:
+	job.haul_phase = Job.HaulPhase.IN_TRANSIT
+	job.carrier_survivor_id = survivor_id
+	## The source-side reservation was already consumed by the pickup
+	## transfer; clearing this makes that permanent and unambiguous rather
+	## than leaving a stale id an interruption path might try to re-release.
+	job.reservation_id = 0
+
+## The HAUL job (if any) whose cargo `survivor_id` is already physically
+## carrying. ActionHaulSupplies checks this first on every reconsideration
+## so an interrupted-after-pickup survivor resumes delivering what it's
+## already holding instead of the job being lost track of.
+func get_in_transit_haul_job(survivor_id: int) -> Job:
+	for job in _jobs:
+		if job.job_type == Job.Type.HAUL and job.haul_phase == Job.HaulPhase.IN_TRANSIT and job.carrier_survivor_id == survivor_id:
+			return job
+	return null
 
 func fail_job(job: Job) -> void:
 	_release_job_reservation(job)
@@ -138,16 +169,45 @@ func cancel_job(job: Job) -> void:
 	_remove_job(job)
 
 ## Drops one survivor's claim on every job it holds without cancelling the
-## job itself -- called when a survivor dies or an emergency interrupts it,
-## so the work (and any inventory reservation backing it) is still there
-## for another survivor to pick up.
+## job itself -- called when an emergency interrupts a survivor (not when
+## it dies; see release_survivor_permanently() for that), so the work (and
+## any inventory reservation backing it) is still there for another
+## survivor to pick up.
+##
+## Deliberately a no-op for a HAUL job the survivor has already physically
+## picked up (haul_phase == IN_TRANSIT): the cargo is sitting in that
+## survivor's own carried inventory, not claimable by anyone else, so
+## reopening the job here would send a different survivor to walk to an
+## already-emptied pickup point. Only the same survivor resuming (see
+## get_in_transit_haul_job()) or dying (see release_survivor_permanently())
+## can resolve it. This is enforced here, not just by callers remembering
+## not to call this for that case, so the invariant holds regardless of caller.
 func release_survivor(survivor_id: int) -> void:
 	for job in _jobs:
-		if job.assigned_survivor_ids.has(survivor_id):
-			job.assigned_survivor_ids.erase(survivor_id)
-			if job.assigned_survivor_ids.is_empty() and job.status != Job.Status.AVAILABLE:
-				job.status = Job.Status.AVAILABLE
-				job_status_changed.emit(job)
+		if not job.assigned_survivor_ids.has(survivor_id):
+			continue
+		if job.job_type == Job.Type.HAUL and job.haul_phase == Job.HaulPhase.IN_TRANSIT and job.carrier_survivor_id == survivor_id:
+			continue
+		job.assigned_survivor_ids.erase(survivor_id)
+		if job.assigned_survivor_ids.is_empty() and job.status != Job.Status.AVAILABLE:
+			job.status = Job.Status.AVAILABLE
+			job_status_changed.emit(job)
+
+## Permanent counterpart to release_survivor(), for when the survivor has
+## died rather than merely being interrupted. Any HAUL job whose cargo it
+## was physically carrying can never be completed -- the cargo was in its
+## carried inventory, which is gone -- so that job fails outright instead
+## of being reopened for a different survivor to walk to a dead end. Every
+## other job the dead survivor held (including an AWAITING_PICKUP haul,
+## whose source reservation is still intact) is released normally.
+func release_survivor_permanently(survivor_id: int) -> void:
+	var stranded_with_survivor: Array[Job] = []
+	for job in _jobs:
+		if job.job_type == Job.Type.HAUL and job.haul_phase == Job.HaulPhase.IN_TRANSIT and job.carrier_survivor_id == survivor_id:
+			stranded_with_survivor.append(job)
+	for job in stranded_with_survivor:
+		fail_job(job)
+	release_survivor(survivor_id)
 
 ## --- Internal --------------------------------------------------------------
 

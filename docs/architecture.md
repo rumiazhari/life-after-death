@@ -247,7 +247,11 @@ Everything below is additive to the Phase 0/1 slice above: existing
 combat, `InputRouter`, mobile controls, the zombie swarm, and scene
 structure are unchanged except where noted (`Zombie` targeting and the
 `AttackArea` mask, both explained under "Zombies can now threaten
-survivors" below).
+survivors" below). Phase 2A.1 (below, in the Job/Reservation lifecycle
+sections and "Death and restart") hardened this slice's data-integrity
+guarantees -- reservation/haul-interruption edge cases and the
+persistent-record/restart-reset behavior -- without changing the
+observable AI/gameplay behavior described above.
 
 ### Simulation tick architecture -- `scripts/core/simulation_clock.gd` (autoload `SimulationClock`)
 
@@ -389,6 +393,29 @@ it, e.g. arrived and working) `-> COMPLETED` / `FAILED` / `CANCELLED`.
   depleted `ScavengePoint` frees itself, and the next validation pass
   cancels any job still pointing at it.
 
+**HAUL sub-state (`Job.haul_phase`).** `Status` alone can't tell "claimed
+and traveling to pick up" from "cargo physically in the carrier's own
+inventory" -- `start_job()` flips `Status` to `ACTIVE` on the very first
+tick, well before pickup actually completes. `haul_phase` tracks this
+separately: `AWAITING_PICKUP` (set at job creation) `-> IN_TRANSIT` (set
+by `SettlementJobBoard.mark_picked_up()`, called by `ActionHaulSupplies`
+right after a successful pickup transfer, which also clears the now-spent
+`reservation_id`) `-> DELIVERED` (set in `complete_job()` just before the
+job is removed). This is what makes interruption after pickup safe (see
+"Reservation lifecycle" below): `SettlementJobBoard.release_survivor()`
+refuses to reopen an `IN_TRANSIT` job even if called on it, so a survivor
+that already has the cargo in hand is the only one who can ever finish
+that delivery -- `get_in_transit_haul_job(survivor_id)` is how
+`ActionHaulSupplies.enter()` finds and resumes it after being interrupted
+mid-delivery, ahead of any fresh job/personal-carry scan.
+
+A HAUL job's dropoff leg distinguishes a *missing* destination (container
+no longer registered -- permanent, so `_tick_job()` fails the job
+immediately rather than waiting forever at a stop that can never accept
+the cargo) from a *full* one (transient -- the cargo stays safely with
+the survivor and the dropoff retries next tick, since capacity might free
+up).
+
 ### Reservation lifecycle -- `scripts/items/inventory.gd`
 
 `Inventory.reserve(item_id, amount) -> reservation_id` claims stock
@@ -399,18 +426,94 @@ commit to the same last unit. A reservation resolves one of two ways:
 - `confirm_reserved_transfer(reservation_id, to)` -- atomically moves the
   reserved stack into another `Inventory` and clears the reservation in
   one call (used when a survivor actually arrives and picks something up
-  in HAUL/SCAVENGE/RETRIEVE_SUPPLIES actions).
+  in HAUL/SCAVENGE/RETRIEVE_SUPPLIES actions). If the destination can't
+  fit it, the reservation is deliberately left intact rather than cleared
+  -- the caller (e.g. `ActionRetrieveSupplies.tick()`) checks
+  `has_reservation()` afterward and either retries next tick (still
+  present -- a transient capacity issue) or stops (already gone -- the
+  source depleted, which this method releases on the caller's behalf).
+  Every caller of `confirm_reserved_transfer` is required to handle both
+  outcomes this way; clearing a local reservation id after an
+  unchecked/failed call is exactly how a reservation used to get orphaned
+  (fixed in Phase 2A.1 for `ActionRetrieveSupplies`, which previously
+  cleared its id unconditionally on return).
 - `release_reservation(reservation_id)` -- drops the claim without moving
   anything; safe to call on an id that's already been resolved. Called
-  from every action's `exit()` when interrupted, from `SurvivorAI.stop()`
-  when a survivor dies, and from `SettlementJobBoard.cancel_job()`/
-  `fail_job()` -- this is what guarantees a dead or interrupted survivor
-  never leaves a reservation permanently stuck.
+  from every action's `exit()` when interrupted (via
+  `current_action.exit(self)` in both the normal per-frame interruption
+  path and `SurvivorAI.stop()` on death) and from
+  `SettlementJobBoard.cancel_job()`/`fail_job()` -- this is what
+  guarantees a dead or interrupted survivor never leaves a reservation
+  permanently stuck. A HAUL job's own `reservation_id` is a special case:
+  it's cleared (set to 0) the moment pickup succeeds
+  (`SettlementJobBoard.mark_picked_up()`), since from that point the
+  cargo is tracked by `haul_phase`/`carrier_survivor_id` instead (see
+  "Job lifecycle" above) -- there is nothing left on the *source*
+  container to reserve or release once the items have physically left it.
 
 `Inventory.transfer_item(from, to, item_id, amount)` is the unconditional
 (non-reservation) atomic move, used for a survivor depositing its own
 carried stock (which nothing else could be racing for) and for the
 player using the same storage.
+
+**Capacity-aware scavenging.** `ScavengePoint.harvest(max_amount)` takes
+the amount to remove as a parameter rather than always removing a full
+yield -- `ActionScavenge.tick()` computes `Inventory.max_fit(item_id)`
+(how many units the survivor's carried inventory has room for, without
+mutating anything) *before* calling `harvest()`, so a survivor with a
+nearly-full inventory only takes what actually fits and leaves the rest
+at the point instead of it being removed from the world and then
+discarded for lack of room. `harvest(0)` removes nothing.
+
+### Death and restart
+
+**Death is permanent but the record isn't deleted.** `Survivor._on_died()`
+sets `SurvivorData.is_dead = true`, removes the survivor from its
+settlement's *living* roster (`SettlementData.member_ids`), and leaves
+the `SurvivorData` itself registered in `WorldState.survivors` -- it is
+**not** erased, so it still appears in `WorldState.to_snapshot()` and its
+id is never reused within the same run.
+`WorldState.is_survivor_alive(id)` / `get_living_survivors()` are the
+explicit "excludes the dead" queries other systems should use instead of
+assuming every registered id is alive. `WorldState.unregister_survivor()`
+still exists for a deliberate purge, but nothing calls it on natural
+death anymore.
+
+`SurvivorAI.stop()` (called once, from `_on_died()`) resolves every claim
+the dying survivor held, in order: `current_action.exit(self)` first --
+the same release path a live interruption would take, which correctly
+leaves an `IN_TRANSIT` HAUL job alone (see "Job lifecycle") -- then
+`SettlementJobBoard.release_survivor_permanently(id)`, which is the one
+difference from a normal interruption: any HAUL job still `IN_TRANSIT`
+for this survivor is `fail_job()`-ed outright (its cargo was in the now-
+gone carried inventory and can never be delivered) rather than being
+reopened for a different survivor to walk to an already-emptied pickup
+point, and every other job the dead survivor held (an `AWAITING_PICKUP`
+haul, a scavenge/guard claim) is released normally since those
+reservations/claims are still genuinely available to someone else.
+
+**Restart resets both simulation autoloads.** `SimulationClock` and
+`WorldState` are autoloads and survive
+`SceneTree.reload_current_scene()` (only the scene tree is torn down and
+rebuilt) -- without an explicit reset, a restarted run would inherit the
+previous run's time-of-day, speed, and every dead survivor/completed
+job/id counter ever produced. `Main._restart_game()` calls
+`WorldState.reset()` and `SimulationClock.reset()` synchronously *before*
+`reload_current_scene()`, so by the time the new scene's
+`Settlement`/`StorageContainer`/`Survivor` nodes register themselves the
+registries are already empty and id generators already back at 1.
+`SimulationClock.reset()` also restores `speed` to `NORMAL`.
+`total_game_minutes()` is `(game_day - 1) * 1440 + ...` -- day 1, 00:00
+evaluates to exactly zero, since `game_day` is 1-based.
+
+Selection UI state (`SurvivorInspector._selected`) needs no explicit
+reset: it's an ordinary scene node, destroyed and recreated fresh by the
+same `reload_current_scene()` call. Signal connections between an
+autoload and a scene-local node (e.g. `SettlementJobBoard` to
+`SimulationClock.sim_tick`, `SurvivorAI` to
+`SimulationClock.minute_changed`) also need no manual bookkeeping on
+restart: Godot disconnects a signal automatically when either endpoint is
+freed, and every such receiver here is scene-local.
 
 ### Active vs. off-screen simulation
 

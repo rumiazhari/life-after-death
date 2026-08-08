@@ -27,6 +27,20 @@ godot --path .
 
 `scenes/main/Main.tscn` is the configured main scene.
 
+### Testing
+
+A lightweight headless regression suite (no external test framework)
+covers the survivor inventory/job data-integrity lifecycle -- reservation
+success/failure, capacity-aware scavenging, haul-job interruption before
+and after pickup, survivor death retaining a persistent record, and
+restart resetting simulation state. Run from the project root:
+
+```
+godot --headless --path . res://tests/TestRunner.tscn
+```
+
+Exits 0 if every test passes. See `tests/README.md`.
+
 ## Controls
 
 ### Desktop
@@ -162,7 +176,7 @@ resources/
   items/    ItemData .tres instances (food_ration, water_bottle,
             medical_supplies, ammunition, materials)
   actors/   reserved for future actor-tuning resources
-tests/      reserved for automated tests
+tests/      test_runner.gd + TestRunner.tscn — headless regression suite
 docs/       architecture.md
 export_presets.cfg   Android export preset (see Mobile / Android above)
 ```
