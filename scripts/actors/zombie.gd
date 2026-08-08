@@ -24,6 +24,11 @@ extends CharacterBody2D
 @export var separation_strength: float = 120.0
 @export var retarget_interval: float = 3.0
 @export var survivor_detection_radius: float = 500.0
+## -1 (default) auto-randomizes _gameplay_rng from OS entropy, matching the
+## previous bare randf()/randf_range() behavior. A non-negative value seeds
+## it explicitly -- used by tests to prove gameplay RNG output (retarget
+## timing) is unaffected by however much CosmeticRng is drawn from elsewhere.
+@export var rng_seed: int = -1
 
 @onready var health_component: HealthComponent = $HealthComponent
 @onready var body_visual: ActorVisual = $BodyVisual
@@ -34,10 +39,18 @@ var _contact_targets: Array[Node] = []
 var _damage_tick_remaining: float = 0.0
 var _swarm_manager: Node = null
 var _retarget_remaining: float = 0.0
+## Private gameplay-only RNG stream (retarget-timing jitter) -- deliberately
+## separate from CosmeticRng (visual variant pick) so visual effects can
+## never alter AI timing. See docs/architecture.md "RNG isolation".
+var _gameplay_rng := RandomNumberGenerator.new()
 
 func _ready() -> void:
 	add_to_group("zombies")
-	body_visual.variant = randi() % ActorSpriteLibrary.get_variant_count(&"zombie")
+	if rng_seed >= 0:
+		_gameplay_rng.seed = rng_seed
+	else:
+		_gameplay_rng.randomize()
+	body_visual.variant = CosmeticRng.randi_range(0, ActorSpriteLibrary.get_variant_count(&"zombie") - 1)
 	health_component.died.connect(_on_died)
 	health_component.damaged.connect(_on_damaged)
 	attack_area.body_entered.connect(_on_attack_area_body_entered)
@@ -45,7 +58,7 @@ func _ready() -> void:
 	_swarm_manager = get_tree().get_first_node_in_group("swarm_manager")
 	if _swarm_manager:
 		_swarm_manager.call("register_zombie", self)
-	_retarget_remaining = randf() * retarget_interval
+	_retarget_remaining = _gameplay_rng.randf() * retarget_interval
 	_target = _find_nearest_attackable()
 
 func _physics_process(delta: float) -> void:
@@ -54,7 +67,7 @@ func _physics_process(delta: float) -> void:
 	_tick_contact_damage(delta)
 	_retarget_remaining -= delta
 	if _retarget_remaining <= 0.0 or _target == null or not is_instance_valid(_target):
-		_retarget_remaining = retarget_interval + randf_range(-0.5, 0.5)
+		_retarget_remaining = retarget_interval + _gameplay_rng.randf_range(-0.5, 0.5)
 		var found: Node2D = _find_nearest_attackable()
 		if found:
 			_target = found
@@ -121,10 +134,11 @@ func _on_attack_area_body_entered(body: Node) -> void:
 func _on_attack_area_body_exited(body: Node) -> void:
 	_contact_targets.erase(body)
 
-func _on_damaged(_amount: float) -> void:
+func _on_damaged(amount: float) -> void:
 	body_visual.modulate = Color(2.2, 2.2, 2.2)
 	var tween := create_tween()
 	tween.tween_property(body_visual, "modulate", Color(1, 1, 1), 0.15)
+	GameEvents.zombie_damaged.emit(self, amount)
 
 func _on_died() -> void:
 	GameEvents.zombie_died.emit(self, global_position)

@@ -20,7 +20,6 @@ const REASON_TINTS := {
 }
 
 func _ready() -> void:
-	z_index = -3
 	WorldState.drop_registered.connect(_on_drop_registered)
 	for id in WorldState.drops:
 		_add_visual(WorldState.drops[id])
@@ -28,9 +27,15 @@ func _ready() -> void:
 func _on_drop_registered(drop: WorldDrop) -> void:
 	_add_visual(drop)
 
+## Parented into the shared y-sort dynamic-world container (not this
+## manager's own node) so a loot bag on the ground sorts correctly against
+## actors walking past it, instead of always drawing at a fixed z-index.
 func _add_visual(drop: WorldDrop) -> void:
+	var dynamic_world: Node = get_tree().get_first_node_in_group("entity_container")
+	if dynamic_world == null:
+		return
 	var sprite := Sprite2D.new()
 	sprite.texture = LOOT_BAG_TEXTURE
-	sprite.position = drop.position
+	dynamic_world.add_child(sprite)
+	sprite.global_position = drop.position
 	sprite.modulate = REASON_TINTS.get(drop.reason, Color.WHITE)
-	add_child(sprite)

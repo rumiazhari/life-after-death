@@ -28,6 +28,11 @@ const POPULATION_PROFILES := {
 @export var spawn_margin: float = 80.0
 @export var initial_population: int = 20
 @export var entity_container_path: NodePath
+## -1 (default) auto-randomizes _gameplay_rng from OS entropy, matching the
+## previous bare randf()/randf_range() behavior. A non-negative value seeds
+## it explicitly -- used by tests to prove spawn-position output is
+## unaffected by however much CosmeticRng is drawn from elsewhere.
+@export var rng_seed: int = -1
 
 var _entity_container: Node = null
 var _camera: Camera2D = null
@@ -35,9 +40,17 @@ var _active_zombies: Array[Node2D] = []
 var _spawn_timer: float = 0.0
 var _last_reported_count: int = -1
 var _kill_count: int = 0
+## Private gameplay-only RNG stream (spawn position angle/radius) --
+## deliberately separate from CosmeticRng. See docs/architecture.md
+## "RNG isolation".
+var _gameplay_rng := RandomNumberGenerator.new()
 
 func _ready() -> void:
 	add_to_group("spawn_manager")
+	if rng_seed >= 0:
+		_gameplay_rng.seed = rng_seed
+	else:
+		_gameplay_rng.randomize()
 	_entity_container = get_node_or_null(entity_container_path)
 	if _entity_container == null:
 		_entity_container = get_tree().get_first_node_in_group("entity_container")
@@ -99,8 +112,8 @@ func _spawn_one() -> Node2D:
 func _pick_spawn_position() -> Vector2:
 	var center: Vector2 = _camera.global_position if _camera else Vector2.ZERO
 	var half_view: Vector2 = _get_half_view()
-	var angle: float = randf() * TAU
-	var extra: float = randf_range(spawn_margin, spawn_margin + 220.0)
+	var angle: float = _gameplay_rng.randf() * TAU
+	var extra: float = _gameplay_rng.randf_range(spawn_margin, spawn_margin + 220.0)
 	var radius: float = half_view.length() + extra
 	return center + Vector2.RIGHT.rotated(angle) * radius
 

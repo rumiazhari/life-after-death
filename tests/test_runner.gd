@@ -30,6 +30,8 @@ var _current_test: String = ""
 var _test_failed: bool = false
 
 const SURVIVOR_SCENE: PackedScene = preload("res://scenes/actors/Survivor.tscn")
+const ZOMBIE_SCENE: PackedScene = preload("res://scenes/actors/Zombie.tscn")
+const SPAWN_MANAGER_SCRIPT: GDScript = preload("res://scripts/actors/spawn_manager.gd")
 
 func _ready() -> void:
 	call_deferred("_run_all")
@@ -61,6 +63,8 @@ func _run_all() -> void:
 	await _run_test("storage_destruction_preserves_multiple_item_types", _test_storage_destruction_preserves_multiple_item_types)
 	await _run_test("restart_teardown_creates_no_destruction_drops", _test_restart_teardown_creates_no_destruction_drops)
 	await _run_test("reparenting_preserves_registration_and_ownership", _test_reparenting_preserves_registration_and_ownership)
+	await _run_test("cosmetic_rng_does_not_affect_zombie_retarget_timing", _test_cosmetic_rng_does_not_affect_zombie_retarget_timing)
+	await _run_test("cosmetic_rng_does_not_affect_spawn_positions", _test_cosmetic_rng_does_not_affect_spawn_positions)
 
 	print("\n=== TEST RESULTS: %d passed, %d failed ===" % [_pass_count, _fail_count])
 	get_tree().quit(0 if _fail_count == 0 else 1)
@@ -1022,3 +1026,64 @@ func _test_reparenting_preserves_registration_and_ownership() -> void:
 
 	old_settlement.free()
 	new_settlement.free()
+
+## Phase 3A.1 RNG isolation: a Zombie's gameplay-relevant RNG output
+## (retarget-timing jitter, seeded via its rng_seed export) must be
+## identical across two runs with the same seed, regardless of how much
+## the shared CosmeticRng stream (visual variant selection, blood decals,
+## ...) is drawn from in between -- proving cosmetic randomness can never
+## contaminate a gameplay RNG sequence.
+func _test_cosmetic_rng_does_not_affect_zombie_retarget_timing() -> void:
+	# Read _retarget_remaining immediately after add_child() -- _ready() (and
+	# its @onready resolution) runs synchronously during add_child() in
+	# Godot 4, so this captures the seeded initial value before any
+	# _physics_process tick has had a chance to decrement it (an
+	# `await get_tree().process_frame` here would let a stray physics frame
+	# through non-deterministically and make the comparison flaky for
+	# reasons unrelated to RNG isolation).
+	var zombie_a: Zombie = ZOMBIE_SCENE.instantiate()
+	zombie_a.rng_seed = 42424
+	add_child(zombie_a)
+	var retarget_a: float = zombie_a._retarget_remaining
+	zombie_a.queue_free()
+	await get_tree().process_frame
+
+	# Simulate "visual effects heavily active" between the two seeded runs.
+	for i in range(1000):
+		CosmeticRng.randf()
+		CosmeticRng.randi_range(0, 7)
+
+	var zombie_b: Zombie = ZOMBIE_SCENE.instantiate()
+	zombie_b.rng_seed = 42424
+	add_child(zombie_b)
+	var retarget_b: float = zombie_b._retarget_remaining
+	zombie_b.queue_free()
+	await get_tree().process_frame
+
+	_assert(is_equal_approx(retarget_a, retarget_b), "same rng_seed must produce identical zombie retarget timing regardless of interleaved CosmeticRng usage (got %f vs %f)" % [retarget_a, retarget_b])
+
+## Same isolation guarantee, for SpawnManager's spawn-position RNG.
+func _test_cosmetic_rng_does_not_affect_spawn_positions() -> void:
+	var manager_a: SpawnManager = SPAWN_MANAGER_SCRIPT.new()
+	manager_a.zombie_scene = ZOMBIE_SCENE
+	manager_a.rng_seed = 99001
+	add_child(manager_a)
+	await get_tree().process_frame
+	var pos_a: Vector2 = manager_a._pick_spawn_position()
+	manager_a.free()
+	await get_tree().process_frame
+
+	for i in range(1000):
+		CosmeticRng.randf()
+		CosmeticRng.randi_range(0, 7)
+
+	var manager_b: SpawnManager = SPAWN_MANAGER_SCRIPT.new()
+	manager_b.zombie_scene = ZOMBIE_SCENE
+	manager_b.rng_seed = 99001
+	add_child(manager_b)
+	await get_tree().process_frame
+	var pos_b: Vector2 = manager_b._pick_spawn_position()
+	manager_b.free()
+	await get_tree().process_frame
+
+	_assert(pos_a.is_equal_approx(pos_b), "same rng_seed must produce identical spawn positions regardless of interleaved CosmeticRng usage (got %s vs %s)" % [pos_a, pos_b])

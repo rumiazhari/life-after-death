@@ -333,6 +333,130 @@ gameplay begins. See the Phase 3A validation report for measured FPS/
 node-count/draw-call numbers across the 50/100/150/250 zombie population
 profiles.
 
+## Phase 3A.1: pixel-art quality, animation, depth, and rendering correctness pass
+
+Additive to Phase 3A above -- same generator, same `TileMapLayer` city, same
+`ActorSpriteLibrary`/shared-`SpriteFrames` design, same gameplay dimensions
+and collision. This pass replaced the block-figure actor art with layered
+character designs, added real 3-directional multi-frame animation, fixed
+two rendering-correctness bugs (cosmetic/gameplay RNG bleed, double pixel
+snapping), and added native Y-sort depth ordering.
+
+**RNG isolation -- `scripts/visuals/cosmetic_rng.gd` (autoload `CosmeticRng`).**
+Before this pass, `Zombie` picked its visual variant and `BloodDecalManager`
+picked its decal texture/rotation via Godot's bare global `randf()`/`randi()`
+-- the SAME implicit stream `SpawnManager` used for spawn-position angles and
+`Zombie` used for retarget-timing jitter. Since nothing partitioned cosmetic
+draws from gameplay draws, toggling a visual feature on/off (or just
+reordering unrelated cosmetic code) could silently shift spawn positions and
+AI timing on a given run. Fix: `CosmeticRng` is now the one shared stream
+every purely-visual choice draws from, and `Zombie`/`SpawnManager` each got
+their own private `_gameplay_rng` (`RandomNumberGenerator`, OS-randomized by
+default, or seeded via a `rng_seed` export for tests) for their
+gameplay-relevant draws. `tests/test_runner.gd`'s
+`cosmetic_rng_does_not_affect_zombie_retarget_timing` /
+`_does_not_affect_spawn_positions` prove this by seeding two runs identically
+with heavy `CosmeticRng` consumption interleaved and asserting identical
+gameplay output. Survivor variant selection was never affected -- it was
+already deterministic (`ActorSpriteLibrary.variant_for(&"survivor", data.id)`),
+per this same "prefer a derived id over RNG" principle.
+
+**Pixel-stable camera -- `scripts/world/camera_rig.gd`.** The project no
+longer enables `rendering/2d/snap/snap_2d_vertices_to_pixel` alongside
+`snap_2d_transforms_to_pixel` (Godot's own guidance is against combining
+both). Transform snapping alone rounds every sprite's own transform to the
+pixel grid, but a smoothly-lerping `CameraRig` still drifts through
+fractional positions every frame, which reads as the whole world "swimming"
+relative to camera even though no individual sprite is wrong. `CameraRig` now
+keeps its smooth follow as a private `_logical_position` (unrounded, updated
+every frame via the same lerp as before) and only ever writes a
+pixel-grid-rounded value (`_snap_to_pixel()`, which accounts for `zoom` so it
+still works at non-1x zoom) to its actual `global_position` --
+the rendered value always lands on a whole pixel, the logical target never
+loses precision to rounding error accumulating frame over frame.
+
+**Actor art -- `tools/generate_pixel_assets.gd` `SURVIVOR_SPECS` / `ZOMBIE_SPECS` / `PLAYER_SPEC`.**
+Replaced the single parametrized `_draw_humanoid()` (skin/shirt/pants
+palette-swap over one fixed rectangle skeleton) with a spec-driven system:
+each of 8 survivor combinations and 8 zombie combinations is a hand-authored
+`Dictionary` (skin tone, hair style + color, garment style + color/accent,
+posture) drawn by a shared skeleton (`_draw_front_back_actor()` /
+`_draw_side_actor()`) that composes separately-outlined head/hair/torso/
+arm/leg parts instead of one flat rectangle block. Hair styles
+(`short`/`long`/`bald`/`cap`/`hood`/`bandana`/`buzzed`/`afro` for survivors;
+`patchy`/`matted`/`bald` for zombies) are silhouette-breaking, not palette
+swaps -- each occupies a different region around the head. Garment
+`top_style` (`jacket`/`coat`/`work`/`medical`/`plain`) adds a
+style-specific silhouette/accent detail (shoulder patches, a longer hem, a
+tool pouch, a cross badge) on top of the shared torso block. Zombies add a
+torn-clothing notch (an irregular skin-colored patch breaking the torso
+outline) and pick one of two posture families (`upright` / `hunched`, the
+latter offsetting the whole skeleton down and shortening the torso) so they
+read as zombies by silhouette and posture, never by skin tone alone. The
+player gets its own near-black `outline_color` (vs. the shared
+`PALETTE.outline` every survivor/zombie uses) and a gold accent trim,
+deliberately higher-contrast so it reads as "the player" without relying on
+the jacket being blue.
+
+**Directional animation -- `scripts/visuals/pixel_atlas_map.gd` (`ACTOR_FRAME_SLOTS`), `actor_sprite_library.gd`, `actor_visual.gd`.**
+Each actor atlas row (one per variant) is now a fixed 15-column sequence:
+`(down, up, side) x (idle x2 frames, walk x3 frames)`, generated from
+`PixelAtlasMap.ACTOR_FRAME_SLOTS` so the generator and
+`ActorSpriteLibrary._build_frames()` read the same layout instead of either
+hard-coding column numbers. `ActorSpriteLibrary` builds one animation per
+`(direction, idle|walk)` per variant (e.g. `"side_walk_3"`), still one shared
+`SpriteFrames` resource per actor *type*, not per instance. `ActorVisual`
+picks direction from velocity every `update_from_velocity()` call --
+horizontal-dominant -> `"side"` (mirrored via `flip_h` for facing left, so
+there is no separate left-facing frame set), vertical-positive (moving down
+the screen) -> `"down"`, vertical-negative -> `"up"` -- and only updates
+`_direction` while actually moving above a small speed threshold, so a
+stopped actor keeps facing whichever way it was last walking instead of
+snapping to a default. Zombie "walk" is the same 3-frame slot as human walk,
+reusing the shared skeleton's own hunched-posture/torn-clothing rendering to
+read as a shuffle rather than needing a separate animation track.
+
+**Y-sort depth ordering -- `EntityContainer` (`Main.tscn`, `y_sort_enabled = true`).**
+Player, every spawned Zombie, every spawned Survivor, `ScavengePoint`
+instances, and "volumetric" scattered props (crates/trash bags/sandbags/
+pallets from `ArenaBuilder._scatter_props()`) are now all direct children of
+the same `EntityContainer` node (survivors moved here from a separate
+non-sorted `SurvivorContainer`, which was removed; `WorldDropVisualManager`
+parents its loot-bag sprites here too instead of under itself) with no
+per-node `z_index` override, so Godot's native y-sort orders them by feet
+position -- an actor south of a crate draws in front of it, one to the north
+draws behind, and a zombie swarm sorts consistently without any manual
+per-frame sort script. Two deliberate exceptions stay on fixed z-index bands
+outside y-sort, both because they should never occlusion-sort against
+actors: "flush" ground-level decoration (loose debris, drain covers, in
+`ArenaBuilder`'s own `GroundProps` container) stays permanently beneath
+actors, and `BuildingRoofs` (z=5) stays permanently above them, matching the
+original Phase 3A layer-order design. An actor's `Shadow` sprite needs no
+y-sort participation of its own -- it's a child *of* that actor node, so it
+always draws immediately beneath its own owner regardless of how the owner
+sorts against everything else.
+
+**Hit-effect manager -- `scripts/combat/hit_effect_manager.gd` (`HitEffectManager`).**
+A brief blood-impact flash on every zombie hit (not just on death), separate
+from `BloodDecalManager`'s persistent capped decals. `GameEvents.zombie_damaged`
+(previously declared but never emitted) is now emitted from
+`Zombie._on_damaged()`; `HitEffectManager` pre-allocates a fixed pool of 16
+`Sprite2D`s in `_ready()` (never grows) and reuses them round-robin, tweening
+each flash's alpha out over ~0.12s -- a hit during a 250-zombie swarm never
+allocates a node.
+
+**UI -- `resources/theme/pixel_theme.tres`, `scenes/ui/HUD.tscn`.** `HUD`
+gained an actual `HealthBar`/`AmmoBar` (`ProgressBar`, per-instance
+`StyleBoxFlat` fill colors so health reads red and ammo reads amber without
+touching the shared theme) alongside the existing exact-number labels, and
+`ReloadLabel` got a distinct amber font color. The ammo bar tracks magazine
+fill specifically (not magazine+reserve combined) since "how close to
+needing a reload" is the more useful at-a-glance signal; since
+`weapon_ammo_changed` doesn't carry `magazine_size`, `HUD` infers it as the
+highest `ammo_in_magazine` value it has observed rather than reaching into
+`Player`/`Weapon` directly, preserving the existing "HUD is purely reactive
+to `GameEvents`" rule.
+
 ## UI — `scripts/ui/`
 
 `HUD`, `PauseMenu`, `DeathOverlay`, `MobileControls`, and `DebugOverlay`

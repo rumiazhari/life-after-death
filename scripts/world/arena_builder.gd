@@ -36,6 +36,12 @@ var _sidewalks_layer: TileMapLayer
 var _markings_layer: TileMapLayer
 var _roofs_layer: TileMapLayer
 
+## Vector2i block coord -> true, populated by _build_buildings() as it
+## places each building. _scatter_props() consults this so decorative
+## clutter only ever lands in a genuinely empty lot, never underneath a
+## building's roof.
+var _building_blocks: Dictionary = {}
+
 func _ready() -> void:
 	_rng.seed = random_seed
 	_visual_rng.seed = random_seed ^ 0x5A5AF00D
@@ -115,38 +121,95 @@ func _paint_road_strip(center: Vector2, size: Vector2) -> void:
 			PixelTilesetBuilder.paint(_roads_layer, Vector2i(gx, gy), pick)
 
 func _paint_sidewalks() -> void:
+	var h_ranges := _horizontal_road_row_ranges()
+	var v_ranges := _vertical_road_col_ranges()
 	var x: float = -arena_half_size.x
 	while x <= arena_half_size.x:
-		_paint_vertical_sidewalk(x)
+		_paint_vertical_sidewalk(x, h_ranges)
 		x += block_size
 	var y: float = -arena_half_size.y
 	while y <= arena_half_size.y:
-		_paint_horizontal_sidewalk(y)
+		_paint_horizontal_sidewalk(y, v_ranges)
 		y += block_size
+	_paint_intersection_corners()
 
-func _paint_vertical_sidewalk(center_x: float) -> void:
+## [row_lo, row_hi] (as a Vector2i) for every horizontal road strip --
+## used so a vertical sidewalk never paints a curb/sidewalk tile across a
+## crossing road's own drivable lane.
+func _horizontal_road_row_ranges() -> Array:
+	var ranges: Array = []
+	var half: float = road_width * 0.5
+	var y: float = -arena_half_size.y
+	while y <= arena_half_size.y:
+		ranges.append(Vector2i(floori((y - half) / TS), floori((y + half - 1.0) / TS)))
+		y += block_size
+	return ranges
+
+## Column equivalent of _horizontal_road_row_ranges(), for horizontal
+## sidewalks crossing vertical roads.
+func _vertical_road_col_ranges() -> Array:
+	var ranges: Array = []
+	var half: float = road_width * 0.5
+	var x: float = -arena_half_size.x
+	while x <= arena_half_size.x:
+		ranges.append(Vector2i(floori((x - half) / TS), floori((x + half - 1.0) / TS)))
+		x += block_size
+	return ranges
+
+func _in_any_range(value: int, ranges: Array) -> bool:
+	for r in ranges:
+		if value >= r.x and value <= r.y:
+			return true
+	return false
+
+func _paint_vertical_sidewalk(center_x: float, h_ranges: Array) -> void:
 	var half: float = road_width * 0.5
 	var left_road_col := floori((center_x - half) / TS)
 	var right_road_col := floori((center_x + half - 1.0) / TS)
 	var lo := _tile_min()
 	var hi := _tile_max()
 	for row in range(lo.y, hi.y + 1):
+		if _in_any_range(row, h_ranges):
+			continue # inside a crossing road's own lane -- leave it asphalt
 		PixelTilesetBuilder.paint(_sidewalks_layer, Vector2i(left_road_col - 1, row), &"curb_right")
 		PixelTilesetBuilder.paint(_sidewalks_layer, Vector2i(left_road_col - 2, row), _sidewalk_variant())
 		PixelTilesetBuilder.paint(_sidewalks_layer, Vector2i(right_road_col + 1, row), &"curb_left")
 		PixelTilesetBuilder.paint(_sidewalks_layer, Vector2i(right_road_col + 2, row), _sidewalk_variant())
 
-func _paint_horizontal_sidewalk(center_y: float) -> void:
+func _paint_horizontal_sidewalk(center_y: float, v_ranges: Array) -> void:
 	var half: float = road_width * 0.5
 	var top_road_row := floori((center_y - half) / TS)
 	var bottom_road_row := floori((center_y + half - 1.0) / TS)
 	var lo := _tile_min()
 	var hi := _tile_max()
 	for col in range(lo.x, hi.x + 1):
+		if _in_any_range(col, v_ranges):
+			continue # inside a crossing road's own lane -- leave it asphalt
 		PixelTilesetBuilder.paint(_sidewalks_layer, Vector2i(col, top_road_row - 1), &"curb_bottom")
 		PixelTilesetBuilder.paint(_sidewalks_layer, Vector2i(col, top_road_row - 2), _sidewalk_variant())
 		PixelTilesetBuilder.paint(_sidewalks_layer, Vector2i(col, bottom_road_row + 1), &"curb_top")
 		PixelTilesetBuilder.paint(_sidewalks_layer, Vector2i(col, bottom_road_row + 2), _sidewalk_variant())
+
+## Closes off each intersection's four sidewalk corners with a proper
+## curb-corner tile (curve facing into the intersection) instead of
+## leaving a blunt gap where the vertical/horizontal skip logic above
+## stopped painting straight curb strips.
+func _paint_intersection_corners() -> void:
+	var half: float = road_width * 0.5
+	var x: float = -arena_half_size.x
+	while x <= arena_half_size.x:
+		var left_col := floori((x - half) / TS)
+		var right_col := floori((x + half - 1.0) / TS)
+		var y: float = -arena_half_size.y
+		while y <= arena_half_size.y:
+			var top_row := floori((y - half) / TS)
+			var bottom_row := floori((y + half - 1.0) / TS)
+			PixelTilesetBuilder.paint(_sidewalks_layer, Vector2i(left_col - 1, top_row - 1), &"curb_corner_br")
+			PixelTilesetBuilder.paint(_sidewalks_layer, Vector2i(right_col + 1, top_row - 1), &"curb_corner_bl")
+			PixelTilesetBuilder.paint(_sidewalks_layer, Vector2i(left_col - 1, bottom_row + 1), &"curb_corner_tr")
+			PixelTilesetBuilder.paint(_sidewalks_layer, Vector2i(right_col + 1, bottom_row + 1), &"curb_corner_tl")
+			y += block_size
+		x += block_size
 
 func _sidewalk_variant() -> StringName:
 	return &"sidewalk_0" if _visual_rng.randf() < 0.5 else &"sidewalk_1"
@@ -205,6 +268,7 @@ func _build_buildings() -> void:
 				continue # keep the player's spawn block clear
 			if _rng.randf() < 0.18:
 				continue # occasional empty lot
+			_building_blocks[Vector2i(bx, by)] = true
 			buildings.add_child(_make_building(block_center))
 
 func _make_building(block_center: Vector2) -> StaticBody2D:
@@ -271,7 +335,7 @@ func _paint_building_roof(center: Vector2, half: Vector2) -> void:
 func _add_roof_details(body: StaticBody2D, half: Vector2) -> void:
 	if half.x < TS * 2.0 or half.y < TS * 2.0:
 		return
-	var detail_names: Array[StringName] = [&"roof_vent", &"roof_pipe", &"roof_sign"]
+	var detail_names: Array[StringName] = [&"roof_vent", &"roof_pipe", &"roof_sign", &"roof_duct", &"roof_tank"]
 	var texture: Texture2D = load(PixelAtlasMap.ENV_ATLAS_PATH)
 	var count: int = _visual_rng.randi_range(0, 2)
 	for i in range(count):
@@ -333,12 +397,22 @@ func _make_wall(center: Vector2, size: Vector2) -> StaticBody2D:
 # Decorative (non-colliding) prop scatter -- empty lots only
 # ---------------------------------------------------------------------------
 
+## "Volumetric" props (a crate/bag/pile an actor can walk in front of or
+## behind) are added directly to the shared y-sort dynamic-world container
+## (the "entity_container" group node -- same one Player/Survivor/Zombie/
+## ScavengePoints live in) with no z_index override, so Godot's native
+## y-sort orders them against actors by feet position. "Flush" ground-level
+## decorations (loose debris, drain covers) stay in this builder's own
+## GroundProps container at a fixed low z-index, always beneath actors --
+## they read as part of the ground, not an obstacle to sort against.
 func _scatter_props() -> void:
-	var props := Node2D.new()
-	props.name = "Props"
-	props.z_index = 4
-	add_child(props)
-	var prop_names := ["crate", "trash_bag", "debris_small", "sandbags", "pallet"]
+	var dynamic_world: Node = get_tree().get_first_node_in_group("entity_container")
+	var ground_props := Node2D.new()
+	ground_props.name = "GroundProps"
+	ground_props.z_index = -1
+	add_child(ground_props)
+
+	var prop_names := ["crate", "trash_bag", "sandbags", "pallet"]
 	var half_blocks_x: int = int(arena_half_size.x / block_size)
 	var half_blocks_y: int = int(arena_half_size.y / block_size)
 	for bx in range(-half_blocks_x, half_blocks_x + 1):
@@ -346,20 +420,56 @@ func _scatter_props() -> void:
 			var block_center := Vector2(bx * block_size, by * block_size)
 			if block_center.length() < block_size * 0.9:
 				continue # keep the player's spawn block clear
-			if _visual_rng.randf() < 0.55:
+			if _building_blocks.has(Vector2i(bx, by)):
+				continue # a genuine empty lot only -- never scatter under a building's roof
+			if _visual_rng.randf() < 0.45:
+				_add_debris(ground_props, block_center)
 				continue
-			_add_prop_cluster(props, block_center, prop_names)
+			_add_prop_cluster(dynamic_world, block_center, prop_names)
+	_scatter_drain_covers(ground_props)
 
-func _add_prop_cluster(props: Node2D, block_center: Vector2, prop_names: Array) -> void:
+func _add_debris(ground_props: Node2D, block_center: Vector2) -> void:
+	if _visual_rng.randf() < 0.5:
+		return
+	var sprite := Sprite2D.new()
+	sprite.texture = load("res://assets/pixel/props/debris_small.png")
+	sprite.position = block_center + Vector2(
+		_visual_rng.randf_range(-40.0, 40.0),
+		_visual_rng.randf_range(-40.0, 40.0)
+	)
+	ground_props.add_child(sprite)
+
+## Occasional drain/manhole covers set into the road surface near a curb,
+## clearly authored placement rather than random scatter across the whole
+## arena.
+func _scatter_drain_covers(ground_props: Node2D) -> void:
+	var half: float = road_width * 0.5
+	var x: float = -arena_half_size.x
+	while x <= arena_half_size.x:
+		var y: float = -arena_half_size.y + block_size * 0.5
+		while y <= arena_half_size.y:
+			if _visual_rng.randf() < 0.5:
+				var sprite := Sprite2D.new()
+				sprite.texture = load("res://assets/pixel/props/drain_cover.png")
+				sprite.position = Vector2(x + half - 16.0, y)
+				ground_props.add_child(sprite)
+			y += block_size
+		x += block_size
+
+func _add_prop_cluster(dynamic_world: Node, block_center: Vector2, prop_names: Array) -> void:
+	if dynamic_world == null:
+		return
 	var count: int = _visual_rng.randi_range(1, 2)
 	var spread: float = block_size * 0.22
 	for i in range(count):
 		var prop_name: String = prop_names[_visual_rng.randi_range(0, prop_names.size() - 1)]
 		var sprite := Sprite2D.new()
 		sprite.texture = load("res://assets/pixel/props/%s.png" % prop_name)
-		sprite.position = block_center + Vector2(
+		dynamic_world.add_child(sprite)
+		# global_position, not position -- dynamic_world (EntityContainer)
+		# may not share ArenaBuilder's own transform, and block_center is a
+		# world-space coordinate.
+		sprite.global_position = block_center + Vector2(
 			_visual_rng.randf_range(-spread, spread),
 			_visual_rng.randf_range(-spread, spread)
 		)
-		sprite.z_index = 4
-		props.add_child(sprite)

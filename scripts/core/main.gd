@@ -45,7 +45,11 @@ const SURVIVOR_PROFILES: Array[Dictionary] = [
 @onready var death_overlay: DeathOverlay = $UI/DeathOverlay
 @onready var settlement: Settlement = $Settlement
 @onready var job_board: SettlementJobBoard = $Settlement/JobBoard
-@onready var survivor_container: Node2D = $SurvivorContainer
+## Phase 3A.1: survivors now spawn straight into EntityContainer (same
+## y_sort_enabled=true node Player/Zombies/ScavengePoints/props live in),
+## instead of a separate non-sorted SurvivorContainer, so they sort
+## correctly against everything else in the dynamic world layer.
+@onready var survivor_container: Node2D = $EntityContainer
 
 func _ready() -> void:
 	get_tree().paused = false

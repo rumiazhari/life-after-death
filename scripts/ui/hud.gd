@@ -4,11 +4,15 @@ extends CanvasLayer
 ## reaches into Player/SpawnManager/Weapon directly.
 
 @onready var health_label: Label = $Root/SafeArea/TopLeftPanel/TopLeft/HealthRow/HealthLabel
+@onready var health_bar: ProgressBar = $Root/SafeArea/TopLeftPanel/TopLeft/HealthBar
 @onready var ammo_label: Label = $Root/SafeArea/TopLeftPanel/TopLeft/AmmoRow/AmmoLabel
+@onready var ammo_bar: ProgressBar = $Root/SafeArea/TopLeftPanel/TopLeft/AmmoBar
 @onready var reload_label: Label = $Root/SafeArea/TopLeftPanel/TopLeft/ReloadLabel
 @onready var zombie_count_label: Label = $Root/SafeArea/TopRightPanel/TopRight/ZombieRow/ZombieCountLabel
 @onready var kills_label: Label = $Root/SafeArea/TopRightPanel/TopRight/KillsRow/KillsLabel
 @onready var fps_label: Label = $Root/SafeArea/TopRightPanel/TopRight/FPSLabel
+
+var _known_magazine_size: int = 1
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
@@ -27,9 +31,19 @@ func _process(_delta: float) -> void:
 
 func _on_health_changed(current: float, max_health: float) -> void:
 	health_label.text = "HP: %d / %d" % [int(ceil(current)), int(max_health)]
+	health_bar.max_value = max_health
+	health_bar.value = current
 
 func _on_ammo_changed(ammo_in_magazine: int, reserve_ammo: int) -> void:
 	ammo_label.text = "Ammo: %d / %d" % [ammo_in_magazine, reserve_ammo]
+	# Magazine fill, not total ammo including reserve -- "how close to
+	# needing a reload" is the at-a-glance question a bar should answer.
+	# weapon_ammo_changed doesn't carry magazine_size, so infer it as the
+	# highest ammo_in_magazine ever observed (a full/just-reloaded
+	# magazine) rather than reaching into Player/Weapon directly.
+	_known_magazine_size = maxi(_known_magazine_size, ammo_in_magazine)
+	ammo_bar.max_value = _known_magazine_size
+	ammo_bar.value = ammo_in_magazine
 
 func _on_reload_started(_duration: float) -> void:
 	reload_label.visible = true

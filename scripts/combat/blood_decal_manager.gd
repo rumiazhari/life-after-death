@@ -34,7 +34,7 @@ func _on_zombie_died(_zombie: Node, death_position: Vector2) -> void:
 	else:
 		sprite = _pool[_next_index]
 		_next_index = (_next_index + 1) % MAX_DECALS
-	sprite.texture = _decal_textures[randi() % _decal_textures.size()]
+	sprite.texture = _decal_textures[CosmeticRng.randi_range(0, _decal_textures.size() - 1)]
 	sprite.position = death_position
-	sprite.rotation = randf() * TAU
+	sprite.rotation = CosmeticRng.randf() * TAU
 	sprite.modulate = Color(1, 1, 1, 1)
