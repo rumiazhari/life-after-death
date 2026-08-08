@@ -51,6 +51,7 @@ var _nav_recheck_timer: float = 0.0
 ## cached path may no longer be valid and must be discarded before use.
 var _nav_path_revision: int = -1
 var _nav_target: Vector2 = Vector2.ZERO
+var _nav_path_target: Vector2 = Vector2.ZERO
 var _nav_goal_identity: int = 0
 var _nav_observed_revision: int = -1
 var _nav_previous_state: ZombiePerceptionComponent.State = ZombiePerceptionComponent.State.IDLE
@@ -139,6 +140,8 @@ func _seek_point(goal: Vector2) -> Vector2:
 		begin_navigation_goal(goal, target_id)
 	elif target_id != 0 and goal.distance_to(_nav_target) >= NAV_TARGET_RESAMPLE_DISTANCE:
 		_nav_target = goal
+		clear_cached_path()
+		clear_navigation_failure()
 		_nav_recheck_timer = 0.0
 	var sampled_goal: Vector2 = _nav_target
 	if _nav_failure_valid and (_nav_failure_revision != revision or not _nav_failure_goal.is_equal_approx(sampled_goal) or _nav_failure_target_id != target_id):
@@ -165,6 +168,7 @@ func _seek_point(goal: Vector2) -> Vector2:
 						_nav_path = result["path"]
 						_nav_path_index = 0
 						_nav_path_revision = result["revision"]
+						_nav_path_target = sampled_goal
 						_nav_no_path_retries = 0
 						nav_stuck = false
 					UrbanNavigationService.PathResult.NO_PATH:
@@ -203,6 +207,7 @@ func _clear_nav_path() -> void:
 	_nav_path.clear()
 	_nav_path_index = 0
 	_nav_path_revision = -1
+	_nav_path_target = Vector2.ZERO
 
 func reset_navigation_goal() -> void:
 	_clear_nav_path()

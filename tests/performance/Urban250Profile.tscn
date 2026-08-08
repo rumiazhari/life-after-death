@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource path="res://tests/performance/urban_250_profile.gd" type="Script" id="1"]
+
+[node name="Urban250Profile" type="Node"]
+script = ExtResource("1")

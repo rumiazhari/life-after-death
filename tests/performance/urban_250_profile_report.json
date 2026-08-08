@@ -1,0 +1,15 @@
+{
+  "active_zombie_max": 250,
+  "active_zombie_min": 250,
+  "average_fps": 164.514433302947,
+  "average_frame_ms": 6.07897137279842,
+  "direct_checks_per_second": 4.79979980471346,
+  "direct_checks_total": 96,
+  "elapsed_seconds": 20.0008341818188,
+  "minimum_fps": 163.0,
+  "node_count": 3757,
+  "path_requests_per_second": 0.0,
+  "path_requests_total": 0,
+  "samples": 3291,
+  "worst_frame_ms": 9.3630303030304
+}

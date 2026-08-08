@@ -85,9 +85,7 @@ func begin(survivor_data: SurvivorData) -> void:
 func stop() -> void:
 	_stopped = true
 	set_physics_process(false)
-	if current_action:
-		current_action.exit(self)
-		current_action = null
+	_exit_current_action()
 	if job_board and data:
 		job_board.release_survivor_permanently(data.id)
 	if SimulationClock.minute_changed.is_connected(_on_minute_changed):
@@ -118,7 +116,6 @@ func _physics_process(delta: float) -> void:
 			# The shared movement helper has conclusively exhausted this target;
 			# exit through the action's normal interruption cleanup immediately.
 			_exit_current_action()
-			survivor.reset_navigation_goal()
 			_decision_timer = 0.0
 
 	_perception_timer -= delta
@@ -218,6 +215,7 @@ func _exit_current_action() -> void:
 	if current_action:
 		current_action.exit(self)
 		current_action = null
+	survivor.reset_navigation_goal()
 	current_job = null
 	reserved_target_description = ""
 

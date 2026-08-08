@@ -166,6 +166,9 @@ func _run_all() -> void:
 	await _run_test("phase_3b7_survivor_zero_goal_is_initialized_once", _test_phase_3b7_survivor_zero_goal_is_initialized_once)
 	await _run_test("phase_3b7_zombie_idle_clears_navigation_lifecycle", _test_phase_3b7_zombie_idle_clears_navigation_lifecycle)
 	await _run_test("phase_3b7_zombie_same_target_remains_interval_bounded", _test_phase_3b7_zombie_same_target_remains_interval_bounded)
+	await _run_test("phase_3b8_zombie_resample_discards_cached_path", _test_phase_3b8_zombie_resample_discards_cached_path)
+	await _run_test("phase_3b8_survivor_action_exit_resets_navigation", _test_phase_3b8_survivor_action_exit_resets_navigation)
+	await _run_test("phase_3b8_idle_zombie_makes_no_navigation_requests", _test_phase_3b8_idle_zombie_makes_no_navigation_requests)
 
 	print("\n=== TEST RESULTS: %d passed, %d failed ===" % [_pass_count, _fail_count])
 	get_tree().quit(0 if _fail_count == 0 else 1)
@@ -286,6 +289,48 @@ func _test_phase_3b7_zombie_same_target_remains_interval_bounded() -> void:
 	target.queue_free()
 	await get_tree().process_frame
 
+func _test_phase_3b8_zombie_resample_discards_cached_path() -> void:
+	var zombie: Zombie = ZOMBIE_SCENE.instantiate()
+	var target := Node2D.new()
+	add_child(zombie)
+	add_child(target)
+	await get_tree().process_frame
+	zombie.global_position = Vector2.ZERO
+	target.global_position = Vector2(100, 0)
+	zombie.perception.target = target
+	zombie.perception.state = ZombiePerceptionComponent.State.CHASE
+	zombie._seek_current_goal()
+	zombie._nav_path = PackedVector2Array([Vector2(10, 0), Vector2(100, 0)])
+	zombie._nav_path_target = target.global_position
+	target.global_position += Vector2(30, 0)
+	zombie._seek_current_goal()
+	_assert(zombie._nav_path_target != Vector2(100, 0) or zombie._nav_path.is_empty(), "resampling a moving target must invalidate the old sampled path")
+	zombie.queue_free()
+	target.queue_free()
+	await get_tree().process_frame
+
+func _test_phase_3b8_survivor_action_exit_resets_navigation() -> void:
+	var settlement: Settlement = await _make_settlement(["general"])
+	var survivor: Survivor = await _make_survivor({"name": "ActionReset"}, settlement)
+	survivor.begin_navigation_goal(Vector2(100, 0))
+	survivor._nav_path = PackedVector2Array([Vector2(20, 0), Vector2(100, 0)])
+	survivor.ai._exit_current_action()
+	_assert(survivor._nav_path.is_empty() and not survivor._nav_goal_initialized, "exiting an action must reset its navigation ownership")
+	survivor.queue_free()
+	settlement.free()
+	await get_tree().process_frame
+
+func _test_phase_3b8_idle_zombie_makes_no_navigation_requests() -> void:
+	var zombie: Zombie = ZOMBIE_SCENE.instantiate()
+	add_child(zombie)
+	await get_tree().process_frame
+	zombie.perception.state = ZombiePerceptionComponent.State.IDLE
+	UrbanNavigationService.reset()
+	for i in range(10):
+		zombie._seek_current_goal()
+	_assert(UrbanNavigationService.path_requests_total == 0, "idle zombies must not request navigation paths")
+	zombie.queue_free()
+	await get_tree().process_frame
 ## --- Harness ---------------------------------------------------------
 
 func _run_test(test_name: String, fn: Callable) -> void:
