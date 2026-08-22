@@ -60,7 +60,7 @@ anchors_preset = 0
 offset_left = 12.0
 offset_top = 12.0
 offset_right = 244.0
-offset_bottom = 136.0
+offset_bottom = 163.0
 mouse_filter = 2
 
 [node name="TopLeft" type="VBoxContainer" parent="Root/SafeArea/TopLeftPanel"]
@@ -88,6 +88,11 @@ theme_override_styles/background = SubResource("StyleBoxFlat_bar_bg")
 theme_override_styles/fill = SubResource("StyleBoxFlat_health_fill")
 value = 100.0
 show_percentage = false
+
+[node name="WeaponLabel" type="Label" parent="Root/SafeArea/TopLeftPanel/TopLeft"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.93, 0.82, 0.38, 1)
+text = "Weapon 1/2: SMG-9"
 
 [node name="AmmoRow" type="HBoxContainer" parent="Root/SafeArea/TopLeftPanel/TopLeft"]
 layout_mode = 2

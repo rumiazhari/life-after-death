@@ -39,34 +39,33 @@ directly.
 
 The single source of input for gameplay: exposes `movement_vector`,
 `aim_vector`, `fire_pressed`, `reload_pressed`, `interact_pressed`,
-`pause_pressed` (plus `reload_requested`/`interact_requested`/
-`pause_requested` signals for the momentary ones). `Player` and
+`pause_pressed`, and weapon-slot/cycle requests (plus signals for the
+momentary actions). `Player` and
 `PauseMenu` read only from here — never `Input`/`InputMap` directly, and
 never from `MobileControls`.
 
 Desktop: computed every physics frame from the project's InputMap
-actions (`move_up`/`move_down`/... , `fire`, `reload`, `interact`,
-`pause`) and the mouse position relative to the viewport center (an
+actions (`move_up`/`move_down`/... , `fire`, `reload`, `weapon_slot_1`,
+`weapon_slot_2`, `weapon_cycle`, `interact`, `pause`) and the mouse position relative to the viewport center (an
 approximation of "aim at the mouse" that stays fully decoupled from the
 player's world position — see `MobileControls` below for why that
 matters).
 
 Mobile: `MobileControls` (`scripts/ui/mobile_controls.gd`) is the *only*
 node that calls InputRouter's touch setters (`set_touch_movement`,
-`set_touch_aim`, `request_reload`, etc.) in response to the on-screen
+`set_touch_aim`, `request_reload`, `request_weapon_cycle`, etc.) in response to the on-screen
 joysticks/buttons. InputRouter prefers touch state over
 keyboard/mouse whenever a touch is active, so the two input schemes
-never fight each other. This two-way decoupling (gameplay never reads
-touch UI; touch UI never reads gameplay) is what let the mobile input
-work land without changing `Weapon` at all and touching `Player` only at
-the InputRouter call sites.
+never fight each other. Gameplay never reads the touch UI and the touch
+UI never reads gameplay; both desktop and mobile weapon changes arrive
+through the same InputRouter signals.
 
 `process_mode = PROCESS_MODE_ALWAYS` on InputRouter is load-bearing: the
 pause action has to keep being read while `SceneTree.paused` is true, or
 nothing could ever unpause.
 
-Extension point: a new input source (gamepad, replay playback) is a new
-producer of the same six fields/signals; nothing downstream changes.
+Extension point: a new input source (gamepad, replay playback) produces
+the same fields/signals; nothing downstream changes.
 
 ## Touch controls — `scripts/ui/mobile_controls.gd`, `virtual_joystick.gd`
 
@@ -123,17 +122,28 @@ frequently-spawned node type (impact effects, pickups) can reuse it.
 
 - `weapon_data.gd` (`WeaponData`, a `Resource`): pure data — damage, fire
   rate, magazine size, reload duration, projectile speed/lifetime,
-  spread, automatic/semi-auto. `resources/weapons/smg.tres` is the one
-  firearm in this slice. Adding a new gun is adding a new `.tres`, not
-  new code.
+  spread, automatic/semi-auto, environment damage class/amount, optional
+  blast radius/noise, and projectile presentation. Player slot 1 uses
+  `resources/weapons/smg.tres`; slot 2 uses
+  `resources/weapons/breaching_charge.tres`.
 - `weapon.gd` (`Weapon`): fire-rate cooldown, magazine/reserve ammo,
-  reload timer, procedural muzzle flash. Reports every state change
+  reload timer, equipped/inactive state, procedural muzzle flash. Two
+  real Player weapon nodes retain their ammunition independently. Reports every state change
   through `GameEvents` and finds its projectile source via the
   `"projectile_spawner"` group — it has no reference to `ProjectileManager`.
 - `projectile.gd` / `projectile_manager.gd`: `Projectile` is an `Area2D`
   that travels in a straight line and reports hits via
-  `take_damage`; `ProjectileManager` owns the `ObjectPool` of them and is
+  `take_damage`; explosive impacts keep actor and structural damage
+  values separate, emit hearing noise, and request a pooled blast flash.
+  `ProjectileManager` owns the `ObjectPool` and is
   the only node in the `"projectile_spawner"` group.
+- `environment_damage.gd` / `environment_damage_component.gd`: separates
+  actor damage from structural damage, filters impacts as small-arms/heavy/
+  explosive, persists durability/destruction through `WorldState`,
+  conserves destroyed loot into `WorldDrop`, and reopens affected
+  navigation cells.
+- `explosion_effect_manager.gd`: presentation-only pool of eight blast
+  polygons driven by `GameEvents.environment_explosion`; it owns no damage.
 
 Extension point: new weapon behaviors (burst fire, shotgun spread,
 explosive) are new `Weapon`-like scripts or new `WeaponData` fields plus
@@ -143,7 +153,8 @@ branching in `try_fire`; they don't require touching `Player`.
 
 - `player.gd`: reads `InputRouter` (never `Input`/`InputMap`), updates
   velocity (accel/friction) and aim rotation independently, delegates
-  firing/reload to `Weapon`, forwards damage to `HealthComponent`. Aim
+  firing/reload to the selected `Weapon`, switches the two-slot loadout,
+  and forwards damage to `HealthComponent`. Aim
   direction only updates when `InputRouter.aim_vector` is non-zero and
   otherwise holds the last direction — this is what makes a centered/
   just-touched joystick (zero vector) not snap the aim to "right" before
@@ -161,11 +172,10 @@ branching in `try_fire`; they don't require touching `Player`.
   query radius, so neighbor lookups stay cheap as zombie count grows —
   this is what makes separation steering affordable for hundreds of
   zombies instead of an O(n²) scan.
-- `spawn_manager.gd` (`SpawnManager`): spawns zombies on a ring outside
-  the camera's *actual on-screen* visible half-extent (read from
-  `get_viewport().get_visible_rect()`, not the design-time reference
-  resolution, so this stays correct as stretch/aspect changes what's
-  actually visible per device), ramps population from
+- `spawn_manager.gd` (`SpawnManager`): selects generated exterior/interior
+  `SpawnRegion`s using city-seeded, phase-specific environment weights, then rejects
+  collision, safehouse, current-room, invalid-navigation, actor-overlap,
+  too-close and player-visible candidates. It ramps population from
   `initial_population` to `max_population` on a timer, purges freed
   references every tick, and reports population/kills through
   `GameEvents`. `max_population` comes from a `PopulationProfile`
@@ -182,15 +192,23 @@ directly by `main.gd`. See "Phase 2A" below for its AI.
 
 ## World — `scripts/world/`
 
-- `arena_builder.gd` (`ArenaBuilder`): procedurally builds a road grid
-  (with sidewalks/curbs/markings), building obstacles
-  (`StaticBody2D` + tiled roof), and a perimeter boundary, seeded by
-  `random_seed` for reproducibility. This is the "test arena," not a real
-  level; procedural city/world generation (explicitly out of scope for
-  this slice) would replace or extend this builder later. Visuals are
-  `TileMapLayer`-painted as of Phase 3A — see "Rendering / visual layer"
-  below for the full writeup; the seeded layout math (arena size, road
-  positions, building collision footprints) is unchanged.
+- `procedural_city_generator.gd` (`ProceduralCityGenerator`): creates and
+  validates deterministic semantic roads, intersections, blocks, parcels,
+  parking/alleys, generated building interiors, props, scavenging sites,
+  landmarks and phase-aware population regions. It creates no Nodes.
+- `procedural_building_generator.gd` (`ProceduralBuildingGenerator`): creates
+  each building's room graph, partitions, portals, windows, clearance corridors
+  and role-specific furniture, and proves required-room reachability.
+- `procedural_building.gd` (`ProceduralBuilding`): renders one validated
+  semantic building into the existing Room/Door/Window/roof/interaction node
+  contracts with final stable IDs before tree entry.
+- `procedural_district.gd` (`ProceduralDistrict`): validates and renders
+  the semantic model, constructs furnished procedural buildings,
+  creates weighted interior/exterior spawn regions and builds navigation
+  after collision settles. `Main` awaits `generation_completed` before
+  starting survivors or zombies.
+- `arena_builder.gd` remains an unused Phase 3A test/performance arena.
+  `UrbanDistrict01.tscn` remains a retained authored regression map.
 - `camera_rig.gd` (`CameraRig`): a `Camera2D` that lerps toward an
   assigned `target`. Kept separate from `Player.tscn` so the player scene
   has no camera dependency and the camera can be retargeted (e.g. a
@@ -957,6 +975,25 @@ several Section-13-style street/interior art items (van/truck, bicycles,
 vending machines, shopping carts) were not generated; no perception/nav
 telemetry counters were added to `DebugOverlay` (performance was measured
 via a temporary profiling probe instead, still true).
+
+## Phase 3C: the district re-authored as a designed city
+
+`DistrictBuilder`'s layout constants were rewritten from "a few roads plus
+a handful of building coordinates" into a full city plan: a 5x5 street
+grid (`ROADS`) enclosing sixteen zoned blocks (`BLOCKS`), each filled with
+authored building rows, mid-block alleys, yards and street furniture, plus
+`SURFACE_PATCHES` for the ground that differs inside a block. Sidewalks
+and curbs are now **derived from the grid** rather than painted per road
+(which is what fixes sidewalk being drawn across intersections), lane
+markings stop at every junction mouth, and all 25 junctions get zebra
+crossings. `BuildingShellBuilder` gained `add_decal()` (collision-free
+ground detail) and rooftop fixtures painted onto a child layer of each
+roof. Two new tests guard the plan itself -- a static
+footprint/block/street overlap check, and a live navigation-reachability
+check against the baked scene that asserts every landmark is walkable from
+the street grid. The build pipeline (constants -> `tools/bake_district.gd`
+-> committed `.tscn` -> `AuthoredDistrict`) is unchanged. See
+`docs/urban_map_design.md` "The city plan."
 
 ## Phase 3B.1: completing the authored district and local stealth systems
 

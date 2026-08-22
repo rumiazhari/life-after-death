@@ -50,12 +50,27 @@ const SURVIVOR_PROFILES: Array[Dictionary] = [
 ## instead of a separate non-sorted SurvivorContainer, so they sort
 ## correctly against everything else in the dynamic world layer.
 @onready var survivor_container: Node2D = $EntityContainer
+@onready var world: Node2D = $World
 
 func _ready() -> void:
 	get_tree().paused = false
 	var player: Node2D = get_tree().get_first_node_in_group("player")
 	camera_rig.set_target(player)
 	spawn_manager.set_camera(camera_rig)
+	# ProceduralDistrict builds collision, rooms, semantic spawn regions and
+	# navigation asynchronously over two physics frames. Population systems
+	# must not sample the world until that contract is complete.
+	if "generation_complete" in world and not world.get("generation_complete"):
+		await world.generation_completed
+	if "generation_succeeded" in world and not bool(world.get("generation_succeeded")):
+		push_error("Main initialization stopped because procedural world generation failed")
+		return
+	if world.has_method("get_safehouse_position"):
+		settlement.global_position = world.call("get_safehouse_position")
+	if player and world.has_method("get_player_spawn"):
+		player.global_position = world.call("get_player_spawn")
+	if "resolved_seed" in world:
+		spawn_manager.set_world_seed(int(world.get("resolved_seed")), player.global_position if player else Vector2.ZERO)
 	spawn_manager.begin()
 
 	_setup_settlement_jobs()
@@ -102,7 +117,16 @@ func _on_player_died() -> void:
 	death_overlay.open()
 
 func _restart_game() -> void:
+	_prepare_restart_state()
+	get_tree().reload_current_scene()
+
+## Performs the persistent/autoload half of the production restart. Kept
+## separate from SceneTree.reload_current_scene() so the full Main lifecycle
+## can exercise this exact reset order inside the regression runner without
+## replacing the TestRunner scene itself.
+func _prepare_restart_state() -> int:
 	get_tree().paused = false
+	var selected_seed := int(world.get("resolved_seed")) if world and "resolved_seed" in world else -1
 	NoiseManager.reset()
 	UrbanNavigationService.reset()
 	# WorldState/SimulationClock are autoloads and survive
@@ -112,8 +136,13 @@ func _restart_game() -> void:
 	# clean registry (fresh ids starting at 1 again) instead of piling onto
 	# whatever the previous run left behind.
 	WorldState.reset()
+	# A restart clears all generated nodes and persistent prop/door state, but
+	# rebuilds the same selected city. Changing the seed is an explicit world
+	# selection action, not an accidental side effect of dying/restarting.
+	if selected_seed >= 0:
+		WorldState.world_flags[&"city_seed"] = selected_seed
 	SimulationClock.reset()
-	get_tree().reload_current_scene()
+	return selected_seed
 
 func _on_quit_requested() -> void:
 	get_tree().quit()

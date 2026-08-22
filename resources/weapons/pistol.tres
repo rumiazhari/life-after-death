@@ -14,3 +14,6 @@ projectile_lifetime = 1.0
 spread_degrees = 4.5
 automatic = false
 starting_reserve_ammo = 60
+environment_damage_class = 0
+environment_damage = 8.0
+explosion_radius = 0.0

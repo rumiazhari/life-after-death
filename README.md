@@ -6,20 +6,25 @@ zombies, and a minimal HUD/pause/death loop). Phase 2A, on top of that,
 is an autonomous survivor and settlement simulation vertical slice: a
 small safehouse with four independent survivors who recognize their own
 needs, claim settlement work, respond to zombies, and keep themselves
-alive without the player directly commanding them. Phase 3B (completed in
-Phase 3B.1) replaces the procedural test arena with one fixed,
-**baked/committed** urban district containing all 5 planned enterable
-buildings, a systemic interaction framework (doors, loot, salvage), a
-bounded zombie-perception rebuild (vision cone + hearing + line-of-sight,
-no more unlimited-range targeting), authored zombie spawn regions with
-real rejection checks, a bounded room-portal visibility system, and
-survivor pathfinding through the same shared navigation grid zombies use
-— see [What's here](#whats-here) and `docs/urban_map_design.md`/
-`docs/building_system.md`/`docs/perception_system.md`/
-`docs/interaction_system.md` for the full writeups. Quests, economy,
-crafting, procedural world generation, factions, crime, children, upper
-floors/basements, drivable vehicles, and advanced construction are not
-implemented yet.
+alive without the player directly commanding them. The current main world
+is a deterministic, seed-driven streamed city. The finite regression generator
+retains its sixteen-block fixture, while normal gameplay loads an unbounded
+3x3 resident chunk window whose Prague-inspired districts use irregularly
+spaced street hierarchies, cobbled branches, tram corridors and continuous,
+dense attached frontage lots. Plazas occur in five percent of chunks and
+courtyards in six percent of eligible quarters rather than reserving open space
+in every chunk. Generated enterable
+buildings supply seeded footprints, rooms, doors, windows, functional furniture,
+painted/brick/shopfront facades and ridge-painted clay/slate roofs; exterior
+objects and scavenging sites follow zone rules; and zombie population regions
+are weighted by environmental use. Environment props are interactable and
+damageable, while wall segments require explosive-class structural damage
+and ordinary bullets cannot breach them. The earlier fixed
+`UrbanDistrict01` bake remains as a regression/reference map, not the main
+runtime world. See `docs/urban_map_design.md`, `docs/building_system.md`,
+`docs/perception_system.md`, and `docs/interaction_system.md`. Quests,
+economy, crafting, factions, crime, children, upper floors/basements,
+drivable vehicles, and advanced construction are not implemented yet.
 
 Runs on desktop (keyboard/mouse) and is configured for Android (landscape,
 dual on-screen joysticks, touch buttons) — see [Mobile / Android](#mobile--android) below for current export status.
@@ -40,8 +45,10 @@ godot --path .
 
 ### Testing
 
-A lightweight headless regression suite (no external test framework, 76
-tests as of Phase 3B.1) covers the survivor inventory/job data-integrity
+A lightweight headless regression suite (no external test framework) covers
+the procedural seed corpus, spatial/navigation invariants, generated interior
+reachability and persistence, environment-sensitive spawning, restart isolation,
+runtime generation/population profiling, and the survivor inventory/job data-integrity
 lifecycle -- reservation success/failure, capacity-aware scavenging,
 haul-job interruption before and after pickup, survivor death retaining a
 persistent record, and restart resetting simulation state -- plus
@@ -49,7 +56,7 @@ persistent record, and restart resetting simulation state -- plus
 collision, loot/salvage duplication prevention, persistent prop-container
 identity, zombie perception gating (distance/cone/wall/hearing),
 navigation-grid door awareness and request budget, and a survivor's local
-threat sensor -- plus (Phase 3B.1) authored spawn-region selection and
+threat sensor -- plus generated and retained-authored spawn-region selection and
 rejection checks, `DetectableComponent` visibility/noise behavior,
 survivor navigation around walls/through doors, bounded room-portal
 visibility (view cone, 2-hop depth, windows), snapshot serialization
@@ -91,6 +98,8 @@ touching gameplay code.
 | Aim             | Mouse position             |
 | Fire            | Left mouse button (hold — automatic weapon) |
 | Reload          | `R`                       |
+| Select weapon   | `1` SMG, `2` breaching charge |
+| Cycle weapon    | `Q`                       |
 | Interact        | `E` (doors, loot/salvage props) |
 | Pause / Resume  | `Escape`                  |
 | Restart (on death) | `Enter` or the on-screen Restart button |
@@ -102,7 +111,7 @@ touching gameplay code.
 | Move     | Left virtual joystick                       |
 | Aim      | Right virtual joystick                      |
 | Fire     | Automatic while the right joystick is held/dragged |
-| Reload / Interact / Pause | Dedicated on-screen buttons   |
+| Reload / Switch / Interact / Pause | Dedicated on-screen buttons   |
 | Restart (on death) | On-screen Restart button          |
 
 Both input schemes drive the same `InputRouter` autoload
@@ -114,27 +123,28 @@ Both input schemes drive the same `InputRouter` autoload
 - **Player**: eight-direction movement with acceleration/deceleration,
   mouse aiming decoupled from movement direction, health with brief
   post-hit invulnerability, and a death state.
-- **Combat**: a data-driven `WeaponData` resource, pooled projectiles,
-  reload, ammo HUD, a pixel muzzle-flash/hit-flash, and capped/recycled
-  blood decals on zombie death (`BloodDecalManager`, Phase 3A).
+- **Combat**: a two-slot SMG/breaching-charge loadout backed by
+  data-driven `WeaponData` resources, independent per-slot ammunition,
+  pooled projectiles, class-filtered structural damage, explosion noise
+  and a pooled blast flash. The HUD reports the selected slot and ammo.
 - **Zombies**: cheap CharacterBody2D actors that seek the player and
   separate from nearby zombies via a spatial-grid broad phase
   (`SwarmManager`) instead of per-instance pathfinding — built to scale
   to hundreds of concurrent zombies.
-- **World**: a procedurally generated test arena (roads, sidewalks/curbs,
-  crosswalks, ground variety, building obstacles with tiled rooftops,
-  boundary walls, decorative props) painted onto `TileMapLayer`s from the
-  generated pixel atlas (Phase 3A); collision geometry
-  (`StaticBody2D`/`RectangleShape2D`) and the seeded layout math are
-  unchanged from the original primitive-drawn build — see
-  `docs/architecture.md`'s "Rendering / visual layer" section.
+- **World**: `ProceduralCityGenerator` produces a renderer-independent,
+  seeded semantic model of streets, blocks, zones, building parcels,
+  exterior props, scavenging sites and zombie population regions.
+  `ProceduralDistrict` validates that model, paints its `TileMapLayer`s,
+  instantiates the enterable buildings, remaps persistent IDs, and builds
+  navigation only after collision is complete.
 - **UI**: HUD (health, ammo, reload status, zombie count, kills, FPS),
   a pause menu, and a death/restart overlay. All screen-edge UI insets
   itself to the platform safe area (notches, rounded corners, system
   bars) via a reusable `SafeArea` control.
 - **Input**: a centralized `InputRouter` autoload exposes
   `movement_vector` / `aim_vector` / `fire_pressed` / `reload_pressed` /
-  `interact_pressed` / `pause_pressed`. Desktop keeps using the project's
+  `interact_pressed` / `pause_pressed` plus weapon-slot/cycle signals.
+  Desktop keeps using the project's
   InputMap actions; `MobileControls` (dual joysticks + buttons) reports
   touch state into the same router. Neither side talks to the other.
 - **Debug overlay**: always-on readout of FPS, frame/physics time, active
@@ -163,17 +173,18 @@ Both input schemes drive the same `InputRouter` autoload
   panel showing its needs, utility scores, current goal/action, reserved
   target, inventory, health, fear, and morale. Selecting never controls
   the survivor — the player still doesn't issue orders in this phase.
-- **Urban district (Phase 3B, baked in Phase 3B.1)**: one fixed, **baked
-  and committed** map (`UrbanDistrict01`) — a main road, two side streets,
-  a service alley, a parking lot, a plaza, fixed street dressing (cars,
-  trees, a dumpster, benches, planters, signage), and 7 authored spawn
-  regions, all real editor-editable nodes (see `tools/bake_district.gd`).
-  Replaces the procedurally generated `ArenaBuilder` test arena as the
-  main game world (`ArenaBuilder` is kept, unused, as an optional
-  test/perf scene). See `docs/urban_map_design.md`.
+- **Procedural urban district**: each new run resolves one gameplay seed,
+  generates a connected five-by-five road network and sixteen variable
+  blocks, assigns safehouse/residential/commercial/civic/park/industrial
+  zones, explicit parcels, parking and alleys, and generates fourteen enterable
+  buildings. The same seed reproduces the complete semantic layout, interiors,
+  spawn-region sequence and stable IDs; cosmetic tile weathering uses a
+  separate RNG stream. `UrbanDistrict01` and its bake tool remain available
+  only for historical regression coverage.
 - **Enterable buildings**: all 5 planned archetypes — Restaurant,
   Convenience Store, Clinic, Apartment, and Workshop — each with real
-  interior walls, multiple named rooms, doors, and windows — not one big
+  seed-generated interior walls, multiple functional rooms, doors, windows and
+  clearance-checked furniture — not one big
   roof tile over an empty box. Roofs hide and rooms reveal on entry
   through a bounded view-cone/line-of-sight portal graph (up to 2 door/
   window hops, Project-Zomboid-style), reacting immediately to a door
@@ -191,8 +202,9 @@ Both input schemes drive the same `InputRouter` autoload
   committing to a chase; walls and closed doors block it; a loud nearby
   noise (gunshot, door, search, salvage) can draw investigation without
   ever seeing anything. A shared `DetectableComponent` makes a stationary
-  actor harder to spot than a moving one. Zombies spawn only in authored
-  regions, rejecting candidates inside walls, the safehouse, the player's
+  actor harder to spot than a moving one. Zombies use seeded, environment-tagged
+  generated regions with separate initial/replenishment weights, rejecting
+  candidates inside walls, disconnected space, the safehouse, the player's
   current room, or directly visible to the player. See
   `docs/perception_system.md`.
 - **Survivor navigation**: survivors path around walls/closed doors using
@@ -234,9 +246,9 @@ scenes/
   actors/   Player.tscn, Zombie.tscn, Survivor.tscn
   combat/   Projectile.tscn
   world/    Safehouse.tscn (settlement), ScavengePoint.tscn, Door.tscn,
-            Window.tscn, maps/UrbanDistrict01.tscn (Phase 3B, baked
-            committed content as of Phase 3B.1 -- see
-            tools/bake_district.gd), buildings/Restaurant01.tscn,
+            Window.tscn, maps/ProceduralDistrict.tscn (main runtime map),
+            maps/UrbanDistrict01.tscn (retained authored regression map),
+            buildings/Restaurant01.tscn,
             ConvenienceStore01.tscn, Clinic01.tscn, Apartment01.tscn,
             Workshop01.tscn (Phase 3B / 3B.1)
   ui/       HUD.tscn, PauseMenu.tscn, DeathOverlay.tscn,
@@ -249,15 +261,17 @@ scripts/
   actors/   player, zombie, spawn manager, swarm manager, survivor
   ai/       UtilityAction base, UtilityMath, SurvivorAI, actions/ (14
             behavior scripts), ZombiePerceptionComponent (Phase 3B)
-  combat/   weapon, weapon data, projectile, projectile manager
+  combat/   weapon, weapon data, projectile, projectile manager,
+            environment damage rules and durability component
   items/    ItemData, Inventory, ItemDatabase
   interaction/  InteractableComponent, PlayerInteractor,
             LootContainerComponent, SalvageableComponent,
             RestPointComponent (Phase 3B)
   jobs/     Job, SettlementJobBoard
   survivors/  SurvivorData
-  world/    procedural arena builder (TileMapLayer-based, Phase 3A, kept
-            as an unused test/perf scene), shared PixelTilesetBuilder,
+  world/    ProceduralCityGenerator semantic model, ProceduralDistrict
+            runtime renderer, legacy ArenaBuilder test/perf scene,
+            shared PixelTilesetBuilder,
             camera rig, Settlement, SettlementData, StorageContainer,
             ScavengePoint, SleepSpot, GuardPost,
             SafehouseInteriorBuilder, WorldDropVisualManager,
@@ -311,9 +325,10 @@ export_presets.cfg   Android export preset (see Mobile / Android above)
   produces a serializable shape (including Phase 3B door/prop state, with
   a matching `restore_phase_3b_state()` read path) but nothing reads/
   writes it to disk yet.
-- The district's own drift-detection (`DistrictLayoutChecksum` plus a
-  baked-scene structural test) checks counts/ids/positions, not a
-  full pixel-perfect tile-data hash.
+- The retained authored district's drift detection still checks its baked
+  counts/ids/positions. The runtime generator is guarded by same-seed,
+  cross-seed, multi-seed containment and live navigation tests instead of
+  a pixel-perfect tile-data hash.
 - The `ammunition` item is defined but not wired to `Weapon`'s reload,
   which still uses its own internal reserve-ammo counter — survivors and
   the player don't consume carried ammunition when firing.

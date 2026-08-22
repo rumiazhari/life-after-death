@@ -19,6 +19,10 @@ const PALETTE := {
 	"asphalt_dark": Color8(56, 56, 62),
 	"asphalt_mid": Color8(68, 68, 74),
 	"asphalt_light": Color8(80, 80, 86),
+	"cobble_light": Color8(132, 126, 114),
+	"cobble_mid": Color8(108, 104, 96),
+	"cobble_dark": Color8(78, 76, 72),
+	"sand_joint": Color8(150, 140, 122),
 	"sidewalk_light": Color8(172, 168, 154),
 	"sidewalk_mid": Color8(152, 148, 134),
 	"curb": Color8(118, 114, 102),
@@ -235,6 +239,14 @@ func _draw_env_tile(img: Image, rect: Rect2i, tile_name: StringName) -> void:
 	var rng := _rng_for(s)
 	if s.begins_with("asphalt_"):
 		_draw_asphalt(img, rect, rng, s)
+	elif s.begins_with("cobble_"):
+		_draw_cobble(img, rect, rng, s)
+	elif s == "stone_setts":
+		_draw_stone_setts(img, rect, rng)
+	elif s == "plaza_pavers":
+		_draw_plaza_pavers(img, rect, rng)
+	elif s == "tram_h" or s == "tram_v":
+		_draw_tram_track(img, rect, s == "tram_v")
 	elif s.begins_with("sidewalk_"):
 		_draw_sidewalk(img, rect, rng)
 	elif s.begins_with("curb_corner"):
@@ -294,6 +306,49 @@ func _draw_asphalt(img: Image, rect: Rect2i, rng: RandomNumberGenerator, tile_na
 				x = clampi(x + rng.randi_range(-1, 1), 2, 29)
 		_:
 			pass
+
+func _draw_cobble(img: Image, rect: Rect2i, rng: RandomNumberGenerator, tile_name: String) -> void:
+	img.fill_rect(rect, PALETTE.sand_joint)
+	var row := 0
+	for y in range(0, 32, 8):
+		var offset := 0 if row % 2 == 0 else -6
+		for x in range(offset, 32, 12):
+			var stone := Rect2i(rect.position + Vector2i(x + 1, y + 1), Vector2i(10, 6))
+			stone = stone.intersection(rect)
+			if stone.size.x > 0 and stone.size.y > 0:
+				img.fill_rect(stone, PALETTE.cobble_light if (x + y) % 3 else PALETTE.cobble_mid)
+				_outline_rect(img, stone, PALETTE.cobble_dark, 1)
+		row += 1
+	if tile_name == "cobble_1":
+		_speckle(img, rect, PALETTE.cobble_dark, 0.025, rng)
+
+func _draw_stone_setts(img: Image, rect: Rect2i, rng: RandomNumberGenerator) -> void:
+	img.fill_rect(rect, PALETTE.cobble_dark)
+	for y in range(0, 32, 6):
+		for x in range(0, 32, 8):
+			var inset := 1 + (1 if rng.randf() < 0.18 else 0)
+			img.fill_rect(_local(rect, x + inset, y + 1, 7 - inset, 4), PALETTE.cobble_mid)
+
+func _draw_plaza_pavers(img: Image, rect: Rect2i, rng: RandomNumberGenerator) -> void:
+	img.fill_rect(rect, PALETTE.sidewalk_light)
+	for y in range(0, 32, 8):
+		for x in range(0, 32, 8):
+			var tone: Color = PALETTE.sidewalk_mid if (x / 8 + y / 8) % 3 == 0 else PALETTE.sidewalk_light
+			img.fill_rect(_local(rect, x + 1, y + 1, 7, 7), tone)
+	_speckle(img, rect, PALETTE.curb_dark, 0.012, rng)
+
+func _draw_tram_track(img: Image, rect: Rect2i, vertical: bool) -> void:
+	img.fill_rect(rect, Color(0, 0, 0, 0))
+	if vertical:
+		img.fill_rect(_local(rect, 7, 0, 3, 32), PALETTE.metal_dark)
+		img.fill_rect(_local(rect, 22, 0, 3, 32), PALETTE.metal_dark)
+		img.fill_rect(_local(rect, 8, 0, 1, 32), PALETTE.metal)
+		img.fill_rect(_local(rect, 23, 0, 1, 32), PALETTE.metal)
+	else:
+		img.fill_rect(_local(rect, 0, 7, 32, 3), PALETTE.metal_dark)
+		img.fill_rect(_local(rect, 0, 22, 32, 3), PALETTE.metal_dark)
+		img.fill_rect(_local(rect, 0, 8, 32, 1), PALETTE.metal)
+		img.fill_rect(_local(rect, 0, 23, 32, 1), PALETTE.metal)
 
 func _draw_sidewalk(img: Image, rect: Rect2i, rng: RandomNumberGenerator) -> void:
 	img.fill_rect(rect, PALETTE.sidewalk_light)
@@ -440,6 +495,16 @@ func _draw_roof_tile(img: Image, rect: Rect2i, name: String, rng: RandomNumberGe
 		"corner_br":
 			img.fill_rect(_local(rect, 0, 28, 32, 4), dark)
 			img.fill_rect(_local(rect, 28, 0, 4, 32), dark)
+		"ridge_h":
+			for gy in range(6, 32, 8):
+				img.fill_rect(_local(rect, 0, gy, 32, 1), dark)
+			img.fill_rect(_local(rect, 0, 13, 32, 7), dark)
+			img.fill_rect(_local(rect, 0, 14, 32, 2), base.lightened(0.18))
+		"ridge_v":
+			for gy in range(6, 32, 8):
+				img.fill_rect(_local(rect, 0, gy, 32, 1), dark)
+			img.fill_rect(_local(rect, 13, 0, 7, 32), dark)
+			img.fill_rect(_local(rect, 14, 0, 2, 32), base.lightened(0.18))
 
 func _draw_roof_vent(img: Image, rect: Rect2i) -> void:
 	img.fill_rect(_local(rect, 10, 10, 12, 12), PALETTE.metal)

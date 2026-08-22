@@ -1,20 +1,17 @@
-[gd_scene load_steps=8 format=3]
+[gd_scene load_steps=7 format=3]
 
 [ext_resource type="Script" path="res://scripts/world/buildings/apartment_01.gd" id="1"]
 [ext_resource type="Script" path="res://scripts/world/room.gd" id="2"]
 [ext_resource type="PackedScene" path="res://scenes/world/Door.tscn" id="3"]
 
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_lobby"]
-size = Vector2(60, 140)
+size = Vector2(64, 172)
 
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_living"]
-size = Vector2(70, 140)
+size = Vector2(72, 172)
 
-[sub_resource type="RectangleShape2D" id="RectangleShape2D_kitchen"]
-size = Vector2(60, 140)
-
-[sub_resource type="RectangleShape2D" id="RectangleShape2D_bathroom"]
-size = Vector2(50, 140)
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_lane48"]
+size = Vector2(48, 172)
 
 [node name="Apartment01" type="Node2D"]
 script = ExtResource("1")
@@ -22,7 +19,7 @@ script = ExtResource("1")
 [node name="Rooms" type="Node2D" parent="."]
 
 [node name="Lobby" type="Area2D" parent="Rooms"]
-position = Vector2(-120, 0)
+position = Vector2(-132, 0)
 script = ExtResource("2")
 room_id = &"lobby"
 building_id = &"apartment_01"
@@ -31,7 +28,7 @@ building_id = &"apartment_01"
 shape = SubResource("RectangleShape2D_lobby")
 
 [node name="LivingRoom" type="Area2D" parent="Rooms"]
-position = Vector2(-55, 0)
+position = Vector2(-40, 0)
 script = ExtResource("2")
 room_id = &"living_room"
 building_id = &"apartment_01"
@@ -39,55 +36,47 @@ building_id = &"apartment_01"
 [node name="CollisionShape2D" type="CollisionShape2D" parent="Rooms/LivingRoom"]
 shape = SubResource("RectangleShape2D_living")
 
-[node name="Kitchen" type="Area2D" parent="Rooms"]
-position = Vector2(10, 0)
-script = ExtResource("2")
-room_id = &"kitchen"
-building_id = &"apartment_01"
-
-[node name="CollisionShape2D" type="CollisionShape2D" parent="Rooms/Kitchen"]
-shape = SubResource("RectangleShape2D_kitchen")
-
 [node name="Bedroom" type="Area2D" parent="Rooms"]
-position = Vector2(70, 0)
+position = Vector2(52, 0)
 script = ExtResource("2")
 room_id = &"bedroom"
 building_id = &"apartment_01"
 
 [node name="CollisionShape2D" type="CollisionShape2D" parent="Rooms/Bedroom"]
-shape = SubResource("RectangleShape2D_kitchen")
+shape = SubResource("RectangleShape2D_lane48")
 
 [node name="Bathroom" type="Area2D" parent="Rooms"]
-position = Vector2(125, 0)
+position = Vector2(136, 0)
 script = ExtResource("2")
 room_id = &"bathroom"
 building_id = &"apartment_01"
 
 [node name="CollisionShape2D" type="CollisionShape2D" parent="Rooms/Bathroom"]
-shape = SubResource("RectangleShape2D_bathroom")
+shape = SubResource("RectangleShape2D_lane48")
 
 [node name="Doors" type="Node2D" parent="."]
 
 [node name="EntranceDoor" parent="Doors" instance=ExtResource("3")]
-position = Vector2(-120, 70)
+position = Vector2(-144, 80)
+aperture_size = Vector2(64, 32)
 door_id = &"apartment_01/door_entrance"
 
+[node name="ServiceDoor" parent="Doors" instance=ExtResource("3")]
+position = Vector2(-48, -80)
+aperture_size = Vector2(64, 32)
+door_id = &"apartment_01/door_service"
+
 [node name="LobbyLivingDoor" parent="Doors" instance=ExtResource("3")]
-position = Vector2(-90, 0)
-rotation = 1.5707963268
+position = Vector2(-88, -16)
+aperture_size = Vector2(32, 64)
 door_id = &"apartment_01/door_lobby_living"
 
-[node name="LivingKitchenDoor" parent="Doors" instance=ExtResource("3")]
-position = Vector2(-20, 0)
-rotation = 1.5707963268
-door_id = &"apartment_01/door_living_kitchen"
-
-[node name="KitchenBedroomDoor" parent="Doors" instance=ExtResource("3")]
-position = Vector2(40, 0)
-rotation = 1.5707963268
-door_id = &"apartment_01/door_kitchen_bedroom"
+[node name="LivingBedroomDoor" parent="Doors" instance=ExtResource("3")]
+position = Vector2(8, -16)
+aperture_size = Vector2(32, 64)
+door_id = &"apartment_01/door_living_bedroom"
 
 [node name="BedroomBathroomDoor" parent="Doors" instance=ExtResource("3")]
-position = Vector2(100, 0)
-rotation = 1.5707963268
+position = Vector2(96, -16)
+aperture_size = Vector2(32, 64)
 door_id = &"apartment_01/door_bedroom_bathroom"

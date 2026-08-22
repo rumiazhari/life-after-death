@@ -11,7 +11,7 @@ extends CanvasLayer
 @onready var panel: Panel = $Panel
 @onready var label: Label = $Panel/Label
 
-var _selected: Survivor = null
+var _selected: Node = null
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
@@ -24,18 +24,18 @@ func _process(_delta: float) -> void:
 		return
 	label.text = _build_text(_selected)
 
-func _on_survivor_selected(survivor: Node2D) -> void:
-	_selected = survivor as Survivor
+func _on_survivor_selected(survivor: Node) -> void:
+	_selected = survivor if survivor != null and "data" in survivor and "carried_inventory" in survivor else null
 	panel.visible = _selected != null
 
-func _on_survivor_died(survivor: Node2D) -> void:
+func _on_survivor_died(survivor: Node) -> void:
 	if survivor == _selected:
 		_selected = null
 		panel.visible = false
 
-func _build_text(survivor: Survivor) -> String:
-	var data: SurvivorData = survivor.data
-	var ai: SurvivorAI = survivor.ai
+func _build_text(survivor: Node) -> String:
+	var data: SurvivorData = survivor.get("data")
+	var ai = survivor.get("ai") if "ai" in survivor else survivor.get("utility_ai")
 	if data == null:
 		return ""
 	var lines: Array[String] = []
@@ -44,12 +44,18 @@ func _build_text(survivor: Survivor) -> String:
 	lines.append("Hunger %d  Thirst %d  Fatigue %d  Infection %d" % [int(data.hunger), int(data.thirst), int(data.fatigue), int(data.infection_exposure)])
 	lines.append("Goal: %s" % data.current_goal)
 	lines.append("Action: %s" % data.current_action)
-	lines.append("Target: %s" % ai.reserved_target_description)
+	var target_description := "none"
+	if ai != null and "reserved_target_description" in ai:
+		target_description = String(ai.get("reserved_target_description"))
+	elif ai != null and "reserved_target_id" in ai and StringName(ai.get("reserved_target_id")) != &"":
+		target_description = String(ai.get("reserved_target_id"))
+	lines.append("Target: %s" % target_description)
 	lines.append("Scores:")
-	var score_keys: Array = ai.last_scores.keys()
+	var scores: Dictionary = ai.get("last_scores") if ai != null and "last_scores" in ai else {}
+	var score_keys: Array = scores.keys()
 	score_keys.sort()
 	for key in score_keys:
-		lines.append("  %s: %.2f" % [key, ai.last_scores[key]])
+		lines.append("  %s: %.2f" % [key, scores[key]])
 	lines.append("Carried:")
 	var inv: Inventory = survivor.carried_inventory
 	var any_items: bool = false

@@ -15,8 +15,11 @@ extends CanvasLayer
 @onready var left_joystick: TouchJoystick = $SafeArea/LeftJoystick
 @onready var right_joystick: TouchJoystick = $SafeArea/RightJoystick
 @onready var reload_button: Button = $SafeArea/ActionButtons/ReloadButton
+@onready var switch_button: Button = $SafeArea/ActionButtons/SwitchButton
 @onready var interact_button: Button = $SafeArea/ActionButtons/InteractButton
 @onready var pause_button: Button = $SafeArea/ActionButtons/PauseButton
+@onready var zoom_in_button: Button = $SafeArea/ZoomButtons/ZoomInButton
+@onready var zoom_out_button: Button = $SafeArea/ZoomButtons/ZoomOutButton
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
@@ -26,8 +29,11 @@ func _ready() -> void:
 	left_joystick.value_changed.connect(_on_left_joystick_changed)
 	right_joystick.value_changed.connect(_on_right_joystick_changed)
 	reload_button.pressed.connect(func() -> void: InputRouter.request_reload())
+	switch_button.pressed.connect(func() -> void: InputRouter.request_weapon_cycle())
 	interact_button.pressed.connect(func() -> void: InputRouter.request_interact())
 	pause_button.pressed.connect(func() -> void: InputRouter.request_pause())
+	zoom_in_button.pressed.connect(func() -> void: InputRouter.request_camera_zoom(-1.0))
+	zoom_out_button.pressed.connect(func() -> void: InputRouter.request_camera_zoom(1.0))
 
 func _input(event: InputEvent) -> void:
 	if not (event is InputEventScreenTouch or event is InputEventScreenDrag):

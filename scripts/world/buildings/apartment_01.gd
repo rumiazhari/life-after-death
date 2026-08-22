@@ -1,11 +1,20 @@
 class_name Apartment01
 extends BuildingVisibilityController
-## Shotgun-style apartment: Lobby -> Living Room -> Kitchen -> Bedroom ->
+## Shotgun-style apartment: Lobby -> Living Room / Kitchen -> Bedroom ->
 ## Bathroom, each room the building's full height, divided by simple
-## vertical partitions (same authoring pattern as every other building --
-## see docs/building_system.md).
+## vertical partitions -- same authoring pattern as every other building,
+## see docs/building_system.md. The living room and kitchen share one open
+## plan lane (matching the runtime archetype's four-room plan), and a north
+## service door opens the kitchen lane onto the Ash Row backyard.
+##
+## Geometry contract: HALF_EXTENT (192, 86) snaps its wall ring to columns
+## +-176 and rows +-80, so the interior spans (-160..160) x (-64..64). The
+## three partitions split it into four walkable lanes -- every lane is at
+## least 48px clear, comfortably wider than the player's 32px collider
+## (the original 300px-wide footprint left lanes of only 12-38px and was
+## physically impassable end to end).
 
-const HALF_EXTENT := Vector2(150, 70)
+const HALF_EXTENT := Vector2(192, 86)
 const WALL_TEXTURE := preload("res://assets/pixel/props/wall_concrete.png")
 const INTERIOR_WALL_TEXTURE := preload("res://assets/pixel/props/wall_interior.png")
 const FLOOR_TILE := &"floor_interior_plain"
@@ -19,14 +28,12 @@ const CABINET_TEXTURE := preload("res://assets/pixel/props/medical_cabinet.png")
 const WINDOW_SCENE := preload("res://scenes/world/Window.tscn")
 
 ## Vertical partition x-positions (building-local), in room order:
-## Lobby|LivingRoom, LivingRoom|Kitchen, Kitchen|Bedroom, Bedroom|Bathroom.
-const PARTITION_X := [-90.0, -20.0, 40.0, 100.0]
-## Each room's building-local half-extent (x, y) -- y is the same full
-## HALF_EXTENT.y for every room since none of them are vertically split.
-const ROOM_HALF_X := {"lobby": 30.0, "living": 35.0, "kitchen": 30.0, "bedroom": 30.0, "bathroom": 25.0}
+## Lobby|LivingRoom, LivingRoom|Bedroom, Bedroom|Bathroom.
+const PARTITION_X := [-88.0, 8.0, 96.0]
 
 func _ready() -> void:
-	building_id = &"apartment_01"
+	if building_id == &"":
+		building_id = &"apartment_01"
 	roof_node_path = NodePath("Roof")
 	rooms_container_path = NodePath("Rooms")
 	_build_shell()
@@ -34,71 +41,89 @@ func _ready() -> void:
 	super._ready()
 
 func _build_shell() -> void:
-	var entrance_gap := Rect2(Vector2(-136, HALF_EXTENT.y - 16), Vector2(32, 32))
-	BuildingShellBuilder.build_perimeter_walls(self, HALF_EXTENT, WALL_TEXTURE, [entrance_gap])
+	# Door bays are two wall cells wide (the runtime-standard 64px transverse
+	# aperture -- a one-cell gap exactly matches the player diameter and can
+	# still collide at its edges). Bay rects anchor half a cell west/north of
+	# the door node so the carved pair is exactly what the slab seals.
+	# Ring rows snap to y = -80 / +80; the entrance pair sits in the lobby
+	# lane of the south wall, the service pair in the living/kitchen lane of
+	# the north wall.
+	var entrance_bay := Rect2(Vector2(-160, 64), Vector2(64, 32))
+	var service_bay := Rect2(Vector2(-64, -96), Vector2(64, 32))
+	var window_gaps: Array[Rect2] = [
+		Rect2(Vector2(-64, 64), Vector2(32, 32)), # living-room south window cell
+		Rect2(Vector2(32, -96), Vector2(32, 32)), # bedroom north window cell
+		Rect2(Vector2(128, -96), Vector2(32, 32)), # bathroom north window cell
+	]
+	var perimeter_gaps: Array[Rect2] = [entrance_bay, service_bay]
+	perimeter_gaps.append_array(window_gaps)
+	BuildingShellBuilder.build_perimeter_walls(self, HALF_EXTENT, WALL_TEXTURE, perimeter_gaps)
+	# Partitions span only the interior (inner wall faces at y = +-64); each
+	# door bay carves their middle two of four cells, leaving real wall
+	# stubs above and below every doorway.
 	for x in PARTITION_X:
-		var door_gap := Rect2(Vector2(x - 16, -16), Vector2(32, 32))
-		BuildingShellBuilder.build_partition(self, Vector2(x, -HALF_EXTENT.y), Vector2(x, HALF_EXTENT.y), INTERIOR_WALL_TEXTURE, [door_gap])
+		var door_gap := Rect2(Vector2(x - 16, -32), Vector2(32, 64))
+		BuildingShellBuilder.build_partition(self, Vector2(x, -64), Vector2(x, 64), INTERIOR_WALL_TEXTURE, [door_gap])
 
-	var roof := TileMapLayer.new()
-	roof.name = "Roof"
-	roof.tile_set = PixelTilesetBuilder.get_tileset()
-	roof.z_index = 5
-	add_child(roof)
-	BuildingShellBuilder.paint_roof(roof, HALF_EXTENT, "A")
+	BuildingExteriorRenderer.build_authored(
+		self, HALF_EXTENT, "A", &"painted_plaster", &"apartment", 4,
+		[Vector2(-128.0, 80.0)], [Vector2(-48.0, 80.0)]
+	)
 
 	var lobby: Node2D = $Rooms/Lobby
 	var living: Node2D = $Rooms/LivingRoom
-	var kitchen: Node2D = $Rooms/Kitchen
 	var bedroom: Node2D = $Rooms/Bedroom
 	var bathroom: Node2D = $Rooms/Bathroom
-	BuildingShellBuilder.fill_floor(lobby, Vector2(ROOM_HALF_X["lobby"], HALF_EXTENT.y), FLOOR_TILE)
-	BuildingShellBuilder.fill_floor(living, Vector2(ROOM_HALF_X["living"], HALF_EXTENT.y), FLOOR_TILE)
-	BuildingShellBuilder.fill_floor(kitchen, Vector2(ROOM_HALF_X["kitchen"], HALF_EXTENT.y), FLOOR_TILE)
-	BuildingShellBuilder.fill_floor(bedroom, Vector2(ROOM_HALF_X["bedroom"], HALF_EXTENT.y), FLOOR_TILE)
-	BuildingShellBuilder.fill_floor(bathroom, Vector2(ROOM_HALF_X["bathroom"], HALF_EXTENT.y), FLOOR_TILE)
+	BuildingShellBuilder.fill_floor(lobby, Vector2(24.0, 86.0), FLOOR_TILE)
+	BuildingShellBuilder.fill_floor(living, Vector2(36.0, 86.0), FLOOR_TILE)
+	BuildingShellBuilder.fill_floor(bedroom, Vector2(28.0, 86.0), FLOOR_TILE)
+	BuildingShellBuilder.fill_floor(bathroom, Vector2(24.0, 86.0), FLOOR_TILE)
 
-	# All prop positions below are LOCAL to their own room node (each
-	# room's own origin is its building-space center) -- see
-	# docs/building_system.md's authoring pattern.
+	# All prop positions below are LOCAL to their own room node (each room's
+	# origin is its lane center -- see Apartment01.tscn) and sized/placed to
+	# stay inside their 48-80px-wide lanes without pinching a doorway or a
+	# doorway approach cone.
 	BuildingShellBuilder.add_physical_prop(lobby, Vector2(0.0, -40.0), BENCH_TEXTURE, Vector2(32, 12))
-	BuildingShellBuilder.add_physical_prop(living, Vector2(0.0, -40.0), TABLE_TEXTURE, Vector2(32, 20))
-	BuildingShellBuilder.add_physical_prop(living, Vector2(-12.0, -20.0), CHAIR_TEXTURE, Vector2(14, 16))
-	BuildingShellBuilder.add_physical_prop(living, Vector2(12.0, -20.0), CHAIR_TEXTURE, Vector2(14, 16))
-	BuildingShellBuilder.add_physical_prop(kitchen, Vector2(0.0, -45.0), COUNTER_TEXTURE, Vector2(48, 20))
+	BuildingShellBuilder.add_physical_prop(living, Vector2(-6.0, -54.0), COUNTER_TEXTURE, Vector2(48, 20))
+	BuildingShellBuilder.add_physical_prop(living, Vector2(-20.0, 38.0), TABLE_TEXTURE, Vector2(32, 20))
 	BuildingShellBuilder.add_loot_furniture(
-		kitchen, Vector2(0.0, 40.0), FRIDGE_TEXTURE, Vector2(20, 24),
+		living, Vector2(18.0, 32.0), FRIDGE_TEXTURE, Vector2(20, 24),
 		&"apartment_01/kitchen_fridge", 50.0, {"food_ration": 2, "water_bottle": 2}
 	)
-	BuildingShellBuilder.add_physical_prop(bedroom, Vector2(0.0, -20.0), BED_TEXTURE, Vector2(28, 40))
+	BuildingShellBuilder.add_physical_prop(bedroom, Vector2(0.0, -44.0), BED_TEXTURE, Vector2(24, 36))
 	BuildingShellBuilder.add_loot_furniture(
-		bedroom, Vector2(15.0, 40.0), CABINET_TEXTURE, Vector2(20, 24),
+		bedroom, Vector2(10.0, 34.0), CABINET_TEXTURE, Vector2(20, 24),
 		&"apartment_01/dresser", 40.0, {"materials": 2, "medical_supplies": 1}
 	)
-	BuildingShellBuilder.add_physical_prop(bathroom, Vector2(0.0, -45.0), COUNTER_TEXTURE, Vector2(30, 16))
+	BuildingShellBuilder.add_physical_prop(bathroom, Vector2(0.0, -40.0), COUNTER_TEXTURE, Vector2(30, 16))
 
+	# Windows replace their whole perimeter wall cell (the cell is carved via
+	# window_gaps above), so they sit flush inside the wall run: solid to
+	# movement, transparent to the Vision layer while intact.
 	var window_living: BuildingWindow = WINDOW_SCENE.instantiate()
 	window_living.window_id = &"apartment_01/window_living"
-	window_living.position = Vector2(-55.0, -HALF_EXTENT.y)
+	window_living.position = Vector2(-48.0, 80.0)
 	add_child(window_living)
 	var window_bedroom: BuildingWindow = WINDOW_SCENE.instantiate()
 	window_bedroom.window_id = &"apartment_01/window_bedroom"
-	window_bedroom.position = Vector2(70.0, -HALF_EXTENT.y)
+	window_bedroom.position = Vector2(48.0, -80.0)
 	add_child(window_bedroom)
+	var window_bathroom: BuildingWindow = WINDOW_SCENE.instantiate()
+	window_bathroom.window_id = &"apartment_01/window_bathroom"
+	window_bathroom.position = Vector2(144.0, -80.0)
+	add_child(window_bathroom)
 
 func _link_doors_to_rooms() -> void:
 	var entrance: Door = $Doors/EntranceDoor
+	var service: Door = $Doors/ServiceDoor
 	var lobby_living: Door = $Doors/LobbyLivingDoor
-	var living_kitchen: Door = $Doors/LivingKitchenDoor
-	var kitchen_bedroom: Door = $Doors/KitchenBedroomDoor
+	var living_bedroom: Door = $Doors/LivingBedroomDoor
 	var bedroom_bathroom: Door = $Doors/BedroomBathroomDoor
 	var lobby: Room = $Rooms/Lobby
 	var living: Room = $Rooms/LivingRoom
-	var kitchen: Room = $Rooms/Kitchen
 	var bedroom: Room = $Rooms/Bedroom
 	var bathroom: Room = $Rooms/Bathroom
 	lobby.doors = [entrance, lobby_living]
-	living.doors = [lobby_living, living_kitchen]
-	kitchen.doors = [living_kitchen, kitchen_bedroom]
-	bedroom.doors = [kitchen_bedroom, bedroom_bathroom]
+	living.doors = [service, lobby_living, living_bedroom]
+	bedroom.doors = [living_bedroom, bedroom_bathroom]
 	bathroom.doors = [bedroom_bathroom]

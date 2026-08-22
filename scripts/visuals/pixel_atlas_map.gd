@@ -19,6 +19,8 @@ const ENV_ATLAS_PATH := "res://assets/pixel/environment/environment_atlas.png"
 const ENV_TILE_NAMES: Array[StringName] = [
 	# Roads / asphalt
 	&"asphalt_0", &"asphalt_1", &"asphalt_2", &"asphalt_3",
+	# Prague street surfaces and tram tracks
+	&"cobble_0", &"cobble_1", &"stone_setts", &"plaza_pavers", &"tram_h", &"tram_v",
 	# Sidewalks
 	&"sidewalk_0", &"sidewalk_1",
 	# Curbs (straight + corners)
@@ -31,15 +33,19 @@ const ENV_TILE_NAMES: Array[StringName] = [
 	# Roof variant A (brick red)
 	&"roofA_center", &"roofA_edge_top", &"roofA_edge_bottom", &"roofA_edge_left", &"roofA_edge_right",
 	&"roofA_corner_tl", &"roofA_corner_tr", &"roofA_corner_bl", &"roofA_corner_br",
+	&"roofA_ridge_h", &"roofA_ridge_v",
 	# Roof variant B (slate blue)
 	&"roofB_center", &"roofB_edge_top", &"roofB_edge_bottom", &"roofB_edge_left", &"roofB_edge_right",
 	&"roofB_corner_tl", &"roofB_corner_tr", &"roofB_corner_bl", &"roofB_corner_br",
+	&"roofB_ridge_h", &"roofB_ridge_v",
 	# Roof variant C (tan)
 	&"roofC_center", &"roofC_edge_top", &"roofC_edge_bottom", &"roofC_edge_left", &"roofC_edge_right",
 	&"roofC_corner_tl", &"roofC_corner_tr", &"roofC_corner_bl", &"roofC_corner_br",
+	&"roofC_ridge_h", &"roofC_ridge_v",
 	# Roof variant D (green patina)
 	&"roofD_center", &"roofD_edge_top", &"roofD_edge_bottom", &"roofD_edge_left", &"roofD_edge_right",
 	&"roofD_corner_tl", &"roofD_corner_tr", &"roofD_corner_bl", &"roofD_corner_br",
+	&"roofD_ridge_h", &"roofD_ridge_v",
 	# Rooftop details
 	&"roof_vent", &"roof_pipe", &"roof_sign", &"roof_duct", &"roof_tank",
 	# Safehouse

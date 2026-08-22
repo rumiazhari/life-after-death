@@ -45,18 +45,21 @@ shape = SubResource("RectangleShape2D_quad")
 [node name="Doors" type="Node2D" parent="."]
 
 [node name="EntranceDoor" parent="Doors" instance=ExtResource("3")]
-position = Vector2(0, 90)
+position = Vector2(-16, 80)
+aperture_size = Vector2(64, 32)
 door_id = &"restaurant_01/door_entrance"
 
 [node name="KitchenDoor" parent="Doors" instance=ExtResource("3")]
-position = Vector2(-60, 20)
+position = Vector2(-72, 20)
+aperture_size = Vector2(64, 32)
 door_id = &"restaurant_01/door_kitchen"
 
 [node name="PantryDoor" parent="Doors" instance=ExtResource("3")]
-position = Vector2(0, -35)
-rotation = 1.5707963268
+position = Vector2(0, -42)
+aperture_size = Vector2(32, 64)
 door_id = &"restaurant_01/door_pantry"
 
 [node name="ServiceDoor" parent="Doors" instance=ExtResource("3")]
-position = Vector2(60, -90)
+position = Vector2(48, -80)
+aperture_size = Vector2(64, 32)
 door_id = &"restaurant_01/door_service"

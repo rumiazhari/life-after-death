@@ -1,7 +1,10 @@
 extends Node
 
 const MAIN_SCENE: PackedScene = preload("res://scenes/main/Main.tscn")
+const PROFILE_CITY_SEED := 20260821
 const PROFILE_SECONDS := 20.0
+const STRESS_SEARCH_ATTEMPTS := 480
+const STRESS_PLAYER_HEALTH := 1_000_000.0
 
 var _main: Node
 var _spawn_manager: SpawnManager
@@ -17,13 +20,36 @@ var _frame_sum_ms := 0.0
 var _worst_frame_ms := 0.0
 var _samples := 0
 var _total_wait := 0.0
+var _generation_ms := 0
+var _finished := false
 
 func _ready() -> void:
 	_main = MAIN_SCENE.instantiate()
+	var world := _main.get_node("World") as StreamingWorld
+	world.city_seed = PROFILE_CITY_SEED
 	add_child(_main)
-	await get_tree().process_frame
+	if not world.generation_complete:
+		await world.generation_completed
+	if not world.generation_succeeded:
+		print("URBAN_250_PROFILE_FAILED procedural generation failed for seed %d" % PROFILE_CITY_SEED)
+		_finish_and_quit(1)
+		return
+	_generation_ms = world.generation_duration_ms
+	await get_tree().physics_frame
 	_spawn_manager = get_tree().get_first_node_in_group("spawn_manager")
+	if _spawn_manager == null:
+		print("URBAN_250_PROFILE_FAILED SpawnManager was not initialized")
+		_finish_and_quit(1)
+		return
 	_spawn_manager.apply_population_profile(SpawnManager.PopulationProfile.STRESS)
+	# Keep production's strict candidate validation, but spend a larger search
+	# budget so this harness measures a full stress population instead of the
+	# random acceptance rate of one small bounded search.
+	_spawn_manager.max_region_search_attempts = STRESS_SEARCH_ATTEMPTS
+	var player: Player = get_tree().get_first_node_in_group("player") as Player
+	if player:
+		player.health_component.max_health = STRESS_PLAYER_HEALTH
+		player.health_component.reset_health()
 	_spawn_manager.spawn_burst(250)
 	set_process(true)
 
@@ -33,6 +59,10 @@ func _process(delta: float) -> void:
 	_warmup += delta
 	_total_wait += delta
 	var population := get_tree().get_nodes_in_group("zombies").size()
+	if _total_wait >= 45.0 and population < 250:
+		print("URBAN_250_PROFILE_FAILED population did not stabilize count=%d wait_seconds=%.3f" % [population, _total_wait])
+		_finish_and_quit(1)
+		return
 	if _warmup < 2.0 or population < 250:
 		return
 	if _elapsed == 0.0:
@@ -52,14 +82,16 @@ func _process(delta: float) -> void:
 	_samples += 1
 	if _elapsed >= PROFILE_SECONDS:
 		_finish()
-	elif _total_wait >= 45.0:
-		print("URBAN_250_PROFILE_FAILED population did not stabilize")
-		get_tree().quit(1)
 
 func _finish() -> void:
+	if _finished:
+		return
+	_finished = true
 	var checks: int = UrbanNavigationService.direct_path_checks_total - _start_checks
 	var requests: int = UrbanNavigationService.path_requests_total - _start_requests
 	var report := {
+		"city_seed": PROFILE_CITY_SEED,
+		"generation_ms": _generation_ms,
 		"elapsed_seconds": _elapsed,
 		"active_zombie_min": _min_population,
 		"active_zombie_max": _max_population,
@@ -82,4 +114,16 @@ func _finish() -> void:
 	if workspace_file:
 		workspace_file.store_string(JSON.stringify(report, "  "))
 	var valid := _elapsed >= 19.5 and _min_population >= 245 and _max_population <= 250
-	get_tree().quit(0 if valid else 1)
+	# _finish already owns the completion flag; schedule termination directly.
+	call_deferred("_quit_after_report", 0 if valid else 1)
+
+func _finish_and_quit(exit_code: int) -> void:
+	if _finished:
+		return
+	_finished = true
+	# Let FileAccess close and the game-helper logger forward the terminal
+	# report before ending this custom benchmark scene.
+	call_deferred("_quit_after_report", exit_code)
+
+func _quit_after_report(exit_code: int) -> void:
+	get_tree().quit(exit_code)

@@ -46,6 +46,7 @@ texture = ExtResource("14")
 position = Vector2(-110, -110)
 script = ExtResource("2")
 storage_role = "general"
+physical_interaction_enabled = true
 starting_items = {
 "materials": 12
 }
@@ -57,6 +58,7 @@ texture = ExtResource("7")
 position = Vector2(-36, -110)
 script = ExtResource("2")
 storage_role = "food"
+physical_interaction_enabled = true
 starting_items = {
 "food_ration": 8
 }
@@ -68,6 +70,7 @@ texture = ExtResource("8")
 position = Vector2(38, -110)
 script = ExtResource("2")
 storage_role = "water"
+physical_interaction_enabled = true
 starting_items = {
 "water_bottle": 8
 }
@@ -79,6 +82,7 @@ texture = ExtResource("9")
 position = Vector2(112, -110)
 script = ExtResource("2")
 storage_role = "medical"
+physical_interaction_enabled = true
 starting_items = {
 "medical_supplies": 4
 }

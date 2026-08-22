@@ -9,6 +9,7 @@ signal fired()
 
 @export var data: WeaponData
 @export var owning_actor_path: NodePath
+@export var equipped: bool = true
 
 @onready var muzzle: Marker2D = $Muzzle
 @onready var muzzle_flash: Sprite2D = $Muzzle/MuzzleFlash
@@ -31,7 +32,9 @@ func _ready() -> void:
 		ammo_in_magazine = data.magazine_size
 		reserve_ammo = data.starting_reserve_ammo
 	muzzle_flash.visible = false
-	_notify_ammo()
+	set_process(equipped)
+	if equipped:
+		_notify_ammo()
 
 func _process(delta: float) -> void:
 	if _cooldown_remaining > 0.0:
@@ -46,7 +49,7 @@ func _process(delta: float) -> void:
 			muzzle_flash.visible = false
 
 func try_fire(direction: Vector2) -> bool:
-	if data == null or is_reloading or _cooldown_remaining > 0.0:
+	if not equipped or data == null or is_reloading or _cooldown_remaining > 0.0:
 		return false
 	if ammo_in_magazine <= 0:
 		try_reload()
@@ -77,13 +80,14 @@ func _resolve_owning_actor() -> void:
 		node = node.get_parent()
 
 func try_reload() -> bool:
-	if data == null or is_reloading:
+	if not equipped or data == null or is_reloading:
 		return false
 	if ammo_in_magazine >= data.magazine_size or reserve_ammo <= 0:
 		return false
 	is_reloading = true
 	_reload_remaining = data.reload_duration
-	GameEvents.weapon_reload_started.emit(data.reload_duration)
+	if _reports_player_state():
+		GameEvents.weapon_reload_started.emit(data.reload_duration)
 	return true
 
 func reset_weapon() -> void:
@@ -93,6 +97,16 @@ func reset_weapon() -> void:
 	if data:
 		ammo_in_magazine = data.magazine_size
 		reserve_ammo = data.starting_reserve_ammo
+	if equipped:
+		_notify_ammo()
+
+func set_equipped(value: bool) -> void:
+	equipped = value
+	set_process(value)
+	if not value:
+		muzzle_flash.visible = false
+		_muzzle_flash_remaining = 0.0
+		return
 	_notify_ammo()
 
 func _finish_reload() -> void:
@@ -101,11 +115,16 @@ func _finish_reload() -> void:
 	var loaded: int = mini(needed, reserve_ammo)
 	ammo_in_magazine += loaded
 	reserve_ammo -= loaded
-	GameEvents.weapon_reload_finished.emit(ammo_in_magazine, reserve_ammo)
+	if _reports_player_state():
+		GameEvents.weapon_reload_finished.emit(ammo_in_magazine, reserve_ammo)
 	_notify_ammo()
 
 func _notify_ammo() -> void:
-	GameEvents.weapon_ammo_changed.emit(ammo_in_magazine, reserve_ammo)
+	if _reports_player_state():
+		GameEvents.weapon_ammo_changed.emit(ammo_in_magazine, reserve_ammo)
+
+func _reports_player_state() -> bool:
+	return _owning_actor != null and is_instance_valid(_owning_actor) and _owning_actor.is_in_group("player")
 
 func _spawn_projectile(direction: Vector2) -> void:
 	if _projectile_spawner == null or not is_instance_valid(_projectile_spawner):
@@ -121,7 +140,13 @@ func _spawn_projectile(direction: Vector2) -> void:
 		fire_direction,
 		data.projectile_speed,
 		data.damage,
-		data.projectile_lifetime
+		data.projectile_lifetime,
+		data.environment_damage_class,
+		data.environment_damage,
+		data.explosion_radius,
+		data.explosion_noise_loudness,
+		data.projectile_visual_scale,
+		data.projectile_tint
 	)
 	muzzle_flash.visible = true
 	_muzzle_flash_remaining = MUZZLE_FLASH_DURATION

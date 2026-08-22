@@ -1,0 +1,309 @@
+[gd_scene load_steps=36 format=3]
+
+[ext_resource path="res://scripts/voxel/voxel_isometric_prototype.gd" type="Script" id="1"]
+[ext_resource path="res://scripts/voxel/voxel_chunk.gd" type="Script" id="2"]
+[ext_resource path="res://scripts/voxel/voxel_prototype_player.gd" type="Script" id="3"]
+[ext_resource path="res://scripts/voxel/voxel_prototype_projectile_manager.gd" type="Script" id="4"]
+[ext_resource path="res://scripts/voxel/voxel_prototype_door.gd" type="Script" id="5"]
+[ext_resource path="res://scripts/voxel/voxel_prototype_loot.gd" type="Script" id="6"]
+[ext_resource path="res://scripts/voxel/voxel_prototype_zombie.gd" type="Script" id="7"]
+[ext_resource path="res://scripts/voxel/voxel_structural_damage_service.gd" type="Script" id="8"]
+[ext_resource path="res://scripts/voxel/voxel_weapon_3d.gd" type="Script" id="9"]
+[ext_resource path="res://scripts/voxel/voxel_interactor_3d.gd" type="Script" id="10"]
+[ext_resource path="res://scripts/core/health_component.gd" type="Script" id="11"]
+[ext_resource path="res://scripts/interaction/interactable_component.gd" type="Script" id="12"]
+[ext_resource path="res://resources/weapons/smg.tres" type="Resource" id="13"]
+[ext_resource path="res://resources/weapons/breaching_charge.tres" type="Resource" id="14"]
+[ext_resource path="res://scripts/voxel/voxel_survivor_3d.gd" type="Script" id="15"]
+[ext_resource path="res://resources/weapons/pistol.tres" type="Resource" id="16"]
+[ext_resource path="res://scripts/voxel/voxel_isometric_camera_rig.gd" type="Script" id="17"]
+[ext_resource path="res://scripts/voxel/voxel_roof_occlusion_controller_3d.gd" type="Script" id="18"]
+[ext_resource path="res://scenes/ui/HUD.tscn" type="PackedScene" id="19"]
+
+[sub_resource type="Environment" id="Environment_main"]
+background_mode = 1
+background_color = Color(0.16, 0.2, 0.25, 1)
+ambient_light_source = 2
+ambient_light_color = Color(0.72, 0.79, 0.9, 1)
+ambient_light_energy = 0.55
+tonemap_mode = 2
+
+[sub_resource type="CapsuleShape3D" id="Capsule_player"]
+radius = 0.32
+height = 1.4
+
+[sub_resource type="CapsuleMesh" id="CapsuleMesh_player"]
+radius = 0.32
+height = 1.4
+
+[sub_resource type="StandardMaterial3D" id="Material_player"]
+albedo_color = Color(0.2, 0.58, 0.92, 1)
+
+[sub_resource type="CapsuleShape3D" id="Capsule_zombie"]
+radius = 0.34
+height = 1.4
+
+[sub_resource type="CapsuleMesh" id="CapsuleMesh_zombie"]
+radius = 0.34
+height = 1.4
+
+[sub_resource type="StandardMaterial3D" id="Material_zombie"]
+albedo_color = Color(0.5, 0.72, 0.3, 1)
+
+[sub_resource type="CapsuleShape3D" id="Capsule_survivor"]
+radius = 0.32
+height = 1.4
+
+[sub_resource type="CapsuleMesh" id="CapsuleMesh_survivor"]
+radius = 0.32
+height = 1.4
+
+[sub_resource type="StandardMaterial3D" id="Material_survivor"]
+albedo_color = Color(0.92, 0.66, 0.2, 1)
+
+[sub_resource type="BoxShape3D" id="Box_door"]
+size = Vector3(2, 2.4, 0.18)
+
+[sub_resource type="BoxMesh" id="BoxMesh_door"]
+size = Vector3(2, 2.4, 0.18)
+
+[sub_resource type="StandardMaterial3D" id="Material_door"]
+albedo_color = Color(0.34, 0.18, 0.08, 1)
+
+[sub_resource type="BoxShape3D" id="Box_loot"]
+size = Vector3(0.8, 0.65, 0.65)
+
+[sub_resource type="BoxMesh" id="BoxMesh_loot"]
+size = Vector3(0.8, 0.65, 0.65)
+
+[sub_resource type="StandardMaterial3D" id="Material_loot"]
+albedo_color = Color(0.88, 0.55, 0.12, 1)
+
+[sub_resource type="SphereShape3D" id="Sphere_interactor"]
+radius = 2.2
+
+[sub_resource type="BoxShape3D" id="Box_door_interaction"]
+size = Vector3(3, 2.8, 2.5)
+
+[sub_resource type="BoxShape3D" id="Box_loot_interaction"]
+size = Vector3(1.8, 1.5, 1.8)
+
+[sub_resource type="BoxMesh" id="Box_muzzle_flash"]
+size = Vector3(0.14, 0.14, 0.28)
+
+[sub_resource type="StandardMaterial3D" id="Material_muzzle_flash"]
+albedo_color = Color(1, 0.65, 0.12, 1)
+emission_enabled = true
+emission = Color(1, 0.2, 0.02, 1)
+
+[node name="VoxelIsometricPrototype" type="Node3D"]
+script = ExtResource("1")
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("Environment_main")
+
+[node name="Sun" type="DirectionalLight3D" parent="."]
+rotation_degrees = Vector3(-55, -35, 0)
+shadow_enabled = true
+directional_shadow_max_distance = 60.0
+
+[node name="VoxelChunk" type="StaticBody3D" parent="."]
+collision_layer = 1
+collision_mask = 0
+script = ExtResource("2")
+
+[node name="Mesh" type="MeshInstance3D" parent="VoxelChunk"]
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="VoxelChunk"]
+
+[node name="RoofChunk" type="StaticBody3D" parent="."]
+collision_layer = 1
+collision_mask = 0
+script = ExtResource("2")
+
+[node name="Mesh" type="MeshInstance3D" parent="RoofChunk"]
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="RoofChunk"]
+
+[node name="Actors" type="Node3D" parent="."]
+
+[node name="Player" type="CharacterBody3D" parent="Actors"]
+position = Vector3(-5, 1.75, 5)
+collision_layer = 2
+collision_mask = 1
+script = ExtResource("3")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Actors/Player"]
+shape = SubResource("Capsule_player")
+
+[node name="Mesh" type="MeshInstance3D" parent="Actors/Player"]
+mesh = SubResource("CapsuleMesh_player")
+material_override = SubResource("Material_player")
+
+[node name="HealthComponent" type="Node" parent="Actors/Player"]
+script = ExtResource("11")
+max_health = 100.0
+invulnerability_duration = 0.1
+
+[node name="VoxelInteractor3D" type="Area3D" parent="Actors/Player"]
+collision_layer = 0
+collision_mask = 64
+script = ExtResource("10")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Actors/Player/VoxelInteractor3D"]
+shape = SubResource("Sphere_interactor")
+
+[node name="WeaponPivot" type="Node3D" parent="Actors/Player"]
+
+[node name="SMG" type="Node3D" parent="Actors/Player/WeaponPivot"]
+script = ExtResource("9")
+data = ExtResource("13")
+
+[node name="Muzzle" type="Marker3D" parent="Actors/Player/WeaponPivot/SMG"]
+position = Vector3(0, 0.45, 0.7)
+
+[node name="MuzzleFlash" type="MeshInstance3D" parent="Actors/Player/WeaponPivot/SMG/Muzzle"]
+mesh = SubResource("Box_muzzle_flash")
+material_override = SubResource("Material_muzzle_flash")
+
+[node name="BreachingCharge" type="Node3D" parent="Actors/Player/WeaponPivot"]
+script = ExtResource("9")
+data = ExtResource("14")
+equipped = false
+
+[node name="Muzzle" type="Marker3D" parent="Actors/Player/WeaponPivot/BreachingCharge"]
+position = Vector3(0, 0.45, 0.7)
+
+[node name="MuzzleFlash" type="MeshInstance3D" parent="Actors/Player/WeaponPivot/BreachingCharge/Muzzle"]
+mesh = SubResource("Box_muzzle_flash")
+material_override = SubResource("Material_muzzle_flash")
+
+[node name="Zombie" type="CharacterBody3D" parent="Actors"]
+position = Vector3(-5, 1.75, -6)
+rotation_degrees = Vector3(0, 180, 0)
+collision_layer = 4
+collision_mask = 1
+script = ExtResource("7")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Actors/Zombie"]
+shape = SubResource("Capsule_zombie")
+
+[node name="Mesh" type="MeshInstance3D" parent="Actors/Zombie"]
+mesh = SubResource("CapsuleMesh_zombie")
+material_override = SubResource("Material_zombie")
+
+[node name="HealthComponent" type="Node" parent="Actors/Zombie"]
+script = ExtResource("11")
+max_health = 50.0
+
+[node name="Survivor" type="CharacterBody3D" parent="Actors"]
+position = Vector3(2, 1.75, 5)
+collision_layer = 2
+collision_mask = 1
+script = ExtResource("15")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Actors/Survivor"]
+shape = SubResource("Capsule_survivor")
+
+[node name="Mesh" type="MeshInstance3D" parent="Actors/Survivor"]
+mesh = SubResource("CapsuleMesh_survivor")
+material_override = SubResource("Material_survivor")
+
+[node name="HealthComponent" type="Node" parent="Actors/Survivor"]
+script = ExtResource("11")
+max_health = 100.0
+
+[node name="WeaponPivot" type="Node3D" parent="Actors/Survivor"]
+
+[node name="Pistol" type="Node3D" parent="Actors/Survivor/WeaponPivot"]
+script = ExtResource("9")
+data = ExtResource("16")
+
+[node name="Muzzle" type="Marker3D" parent="Actors/Survivor/WeaponPivot/Pistol"]
+position = Vector3(0, 0.45, 0.7)
+
+[node name="MuzzleFlash" type="MeshInstance3D" parent="Actors/Survivor/WeaponPivot/Pistol/Muzzle"]
+mesh = SubResource("Box_muzzle_flash")
+material_override = SubResource("Material_muzzle_flash")
+
+[node name="Door" type="StaticBody3D" parent="."]
+position = Vector3(8, 2.2, -0.95)
+collision_layer = 1
+script = ExtResource("5")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Door"]
+shape = SubResource("Box_door")
+
+[node name="Mesh" type="MeshInstance3D" parent="Door"]
+mesh = SubResource("BoxMesh_door")
+material_override = SubResource("Material_door")
+
+[node name="InteractionArea" type="Area3D" parent="Door"]
+collision_layer = 64
+collision_mask = 0
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Door/InteractionArea"]
+shape = SubResource("Box_door_interaction")
+
+[node name="InteractableComponent" type="Node" parent="Door/InteractionArea"]
+script = ExtResource("12")
+interact_label = "Open / close door"
+
+[node name="LootCrate" type="StaticBody3D" parent="."]
+position = Vector3(9, 1.35, -4)
+collision_layer = 1
+script = ExtResource("6")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="LootCrate"]
+shape = SubResource("Box_loot")
+
+[node name="Mesh" type="MeshInstance3D" parent="LootCrate"]
+mesh = SubResource("BoxMesh_loot")
+material_override = SubResource("Material_loot")
+
+[node name="InteractionArea" type="Area3D" parent="LootCrate"]
+collision_layer = 64
+collision_mask = 0
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="LootCrate/InteractionArea"]
+shape = SubResource("Box_loot_interaction")
+
+[node name="InteractableComponent" type="Node" parent="LootCrate/InteractionArea"]
+script = ExtResource("12")
+interact_label = "Search crate"
+
+[node name="ProjectileManager" type="Node3D" parent="."]
+script = ExtResource("4")
+
+[node name="StructuralDamageService" type="Node" parent="."]
+script = ExtResource("8")
+
+[node name="RoofOcclusionController" type="Node" parent="."]
+script = ExtResource("18")
+
+[node name="CameraRig" type="Node3D" parent="."]
+position = Vector3(-5, 0, 5)
+script = ExtResource("17")
+
+[node name="Camera3D" type="Camera3D" parent="CameraRig"]
+position = Vector3(14, 17, 14)
+rotation_degrees = Vector3(-35.264, 45, 0)
+projection = 1
+size = 30.0
+current = true
+
+[node name="PrototypeLabel" type="Label" parent="."]
+anchors_preset = 12
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 24.0
+offset_top = -38.0
+offset_right = -24.0
+offset_bottom = -12.0
+grow_vertical = 0
+text = "VOXEL ISOMETRIC PROTOTYPE  |  WASD · mouse aim · wheel zoom · E interact"
+theme_override_colors/font_color = Color(0.92, 0.95, 1, 1)
+theme_override_font_sizes/font_size = 18
+
+[node name="HUD" parent="." instance=ExtResource("19")]

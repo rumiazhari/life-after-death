@@ -7,17 +7,14 @@ script = ExtResource("1")
 
 [node name="Panel" type="Panel" parent="."]
 visible = false
-anchors_preset = 3
+anchors_preset = 1
 anchor_left = 1.0
-anchor_top = 1.0
 anchor_right = 1.0
-anchor_bottom = 1.0
-offset_left = -300.0
-offset_top = -360.0
+offset_left = -316.0
+offset_top = 124.0
 offset_right = -16.0
-offset_bottom = -16.0
+offset_bottom = 600.0
 grow_horizontal = 0
-grow_vertical = 0
 mouse_filter = 2
 
 [node name="Label" type="Label" parent="Panel"]

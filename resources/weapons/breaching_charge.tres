@@ -1,0 +1,22 @@
+[gd_resource type="Resource" script_class="WeaponData" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/combat/weapon_data.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+weapon_name = "Breaching Charge"
+damage = 90.0
+fire_rate = 0.5
+magazine_size = 1
+reload_duration = 2.5
+projectile_speed = 420.0
+projectile_lifetime = 1.5
+spread_degrees = 0.0
+automatic = false
+starting_reserve_ammo = 3
+environment_damage_class = 2
+environment_damage = 180.0
+explosion_radius = 128.0
+explosion_noise_loudness = 45.0
+projectile_visual_scale = 2.5
+projectile_tint = Color(1, 0.42, 0.12, 1)

@@ -1,7 +1,7 @@
 class_name SpawnManager
 extends Node
-## Spawns zombies inside the district's own authored `SpawnRegion` nodes
-## (Phase 3B.1) and gradually ramps the active population up to a
+## Spawns zombies inside generated or retained-authored `SpawnRegion` nodes
+## and gradually ramps the active population up to a
 ## configurable cap. Purges invalid references every tick instead of
 ## trusting scene-tree bookkeeping.
 ##
@@ -44,7 +44,7 @@ const POPULATION_PROFILES := {
 ## unaffected by however much CosmeticRng is drawn from elsewhere.
 @export var rng_seed: int = -1
 
-## -- Phase 3B.1: authored-region spawning ----------------------------
+## -- Environment-region spawning -------------------------------------
 ## A candidate must clear every one of these before it's used. See
 ## `_pick_region_spawn_position()`.
 @export var min_distance_to_player: float = 260.0
@@ -78,13 +78,23 @@ var _kill_count: int = 0
 ## deliberately separate from CosmeticRng. See docs/architecture.md
 ## "RNG isolation".
 var _gameplay_rng := RandomNumberGenerator.new()
+var _active_rng_seed: int = -1
+var _exterior_navigation_anchor: Vector2 = Vector2.ZERO
+var _spawn_phase: StringName = &"replenishment"
+var _started: bool = false
 
 func _ready() -> void:
 	add_to_group("spawn_manager")
+	# Main owns the startup order. Keep replenishment disabled while the
+	# procedural district is still generating collision/navigation, and keep it
+	# disabled permanently if generation fails before begin() is reached.
+	set_process(false)
 	if rng_seed >= 0:
 		_gameplay_rng.seed = rng_seed
+		_active_rng_seed = rng_seed
 	else:
 		_gameplay_rng.randomize()
+		_active_rng_seed = int(_gameplay_rng.seed)
 	_entity_container = get_node_or_null(entity_container_path)
 	if _entity_container == null:
 		_entity_container = get_tree().get_first_node_in_group("entity_container")
@@ -96,9 +106,25 @@ func apply_population_profile(profile: PopulationProfile) -> void:
 	max_population = POPULATION_PROFILES.get(profile, max_population)
 
 func begin() -> void:
-	spawn_burst(initial_population)
+	if _started:
+		return
+	_started = true
+	set_process(true)
+	_spawn_phase = &"initial"
+	spawn_burst(initial_population, &"initial")
+	_spawn_phase = &"replenishment"
+
+## Binds zombie selection and point sampling to the generated city seed.
+## The salt keeps the spawn stream independent from structural generation.
+func set_world_seed(world_seed: int, exterior_anchor: Vector2 = Vector2.ZERO) -> void:
+	_active_rng_seed = int((world_seed ^ 0x5A17F00D) & 0x7FFFFFFF)
+	rng_seed = _active_rng_seed
+	_gameplay_rng.seed = _active_rng_seed
+	_exterior_navigation_anchor = exterior_anchor
 
 func _process(delta: float) -> void:
+	if not _started:
+		return
 	_purge_invalid()
 	_spawn_timer += delta
 	if _spawn_timer >= spawn_interval:
@@ -112,13 +138,15 @@ func set_camera(camera: Camera2D) -> void:
 func active_zombie_count() -> int:
 	return _active_zombies.size()
 
-func spawn_burst(count: int) -> void:
+func spawn_burst(count: int, phase: StringName = &"replenishment") -> void:
 	for i in range(count):
 		if _active_zombies.size() >= max_population:
 			break
-		_spawn_one()
+		_spawn_one(phase)
 
 func reset() -> void:
+	_started = false
+	set_process(false)
 	for zombie in _active_zombies:
 		if is_instance_valid(zombie):
 			zombie.queue_free()
@@ -126,20 +154,23 @@ func reset() -> void:
 	_spawn_timer = 0.0
 	_last_reported_count = -1
 	_kill_count = 0
+	_spawn_phase = &"replenishment"
+	if _active_rng_seed >= 0:
+		_gameplay_rng.seed = _active_rng_seed
 	GameEvents.kill_count_changed.emit(_kill_count)
 
 func _try_spawn_batch() -> void:
 	var to_spawn: int = mini(spawn_batch_size, max_population - _active_zombies.size())
 	for i in range(to_spawn):
-		_spawn_one()
+		_spawn_one(&"replenishment")
 
-## Skips the spawn entirely (returns null) if no authored region yields a
+## Skips the spawn entirely (returns null) if no eligible region yields a
 ## valid candidate within `max_region_search_attempts` -- see the class
 ## doc "no arbitrary camera-ring fallback."
-func _spawn_one() -> Node2D:
+func _spawn_one(phase: StringName = &"replenishment") -> Node2D:
 	if zombie_scene == null or _entity_container == null:
 		return null
-	var position: Variant = _pick_region_spawn_position()
+	var position: Variant = _pick_region_spawn_position(phase)
 	if position == null:
 		return null
 	var zombie: Node2D = zombie_scene.instantiate()
@@ -158,26 +189,50 @@ func _is_inside_any_settlement(position: Vector2) -> bool:
 			return true
 	return false
 
-## Chooses among the district's authored `SpawnRegion` nodes (never a
+## Chooses among the district's `SpawnRegion` nodes (never a
 ## random camera-relative point) using ONLY this manager's own private
 ## `_gameplay_rng` -- see docs/urban_map_design.md "Spawn regions" for why
 ## a region's own `random_point()` deliberately takes the caller's RNG
 ## instead of drawing from a stream of its own. Returns null (never a
 ## fallback position) if nothing valid turns up within the attempt budget.
-func _pick_region_spawn_position() -> Variant:
+func _pick_region_spawn_position(phase: StringName = &"replenishment") -> Variant:
 	var regions: Array = get_tree().get_nodes_in_group("spawn_regions")
 	if regions.is_empty():
 		return null
 	var player: Node2D = get_tree().get_first_node_in_group("player")
 	var player_room: Room = Room.room_containing(player) if player else null
 	for attempt in range(max_region_search_attempts):
-		var region: SpawnRegion = regions[_gameplay_rng.randi_range(0, regions.size() - 1)]
+		var region: SpawnRegion = _pick_weighted_region(regions, phase)
+		if region == null:
+			return null
 		var candidate: Vector2 = region.random_point(_gameplay_rng)
-		if _is_valid_spawn_candidate(candidate, player, player_room):
+		if _is_valid_spawn_candidate(candidate, player, player_room, region):
 			return candidate
 	return null
 
-func _is_valid_spawn_candidate(candidate: Vector2, player: Node2D, player_room: Room) -> bool:
+func _pick_weighted_region(regions: Array, phase: StringName = &"replenishment") -> SpawnRegion:
+	var total := 0.0
+	for candidate in regions:
+		if candidate is SpawnRegion:
+			total += (candidate as SpawnRegion).weight_for_phase(phase)
+	if total <= 0.0:
+		return null
+	var roll := _gameplay_rng.randf() * total
+	var last_eligible: SpawnRegion = null
+	for candidate in regions:
+		if not candidate is SpawnRegion:
+			continue
+		var region := candidate as SpawnRegion
+		var weight := region.weight_for_phase(phase)
+		if weight <= 0.0:
+			continue
+		last_eligible = region
+		roll -= weight
+		if roll <= 0.0:
+			return region
+	return last_eligible
+
+func _is_valid_spawn_candidate(candidate: Vector2, player: Node2D, player_room: Room, region: SpawnRegion = null) -> bool:
 	# Full zombie footprint against World collision (walls, furniture,
 	# closed doors) AND every actor layer in one shape query -- not just
 	# the center point, so a candidate whose center clears an obstacle but
@@ -190,6 +245,11 @@ func _is_valid_spawn_candidate(candidate: Vector2, player: Node2D, player_room: 
 		return false
 	if not _footprint_fully_navigable(candidate):
 		return false
+	if region != null:
+		if not region.is_reachable:
+			return false
+		if not region.is_indoor and not UrbanNavigationService.are_positions_connected(candidate, _exterior_navigation_anchor):
+			return false
 	if player:
 		var dist: float = candidate.distance_to(player.global_position)
 		if dist < min_distance_to_player:

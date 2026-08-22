@@ -13,6 +13,7 @@ extends Node
 ## drop is already registered in `drops`, so a listener can rely on
 ## get_drop(id) returning it immediately.
 signal drop_registered(drop: WorldDrop)
+signal drop_removed(drop_id: int)
 
 var survivors: Dictionary = {} ## int id -> SurvivorData
 var settlements: Dictionary = {} ## int id -> SettlementData
@@ -114,6 +115,15 @@ func register_drop(drop: WorldDrop) -> int:
 
 func get_drop(id: int) -> WorldDrop:
 	return drops.get(id)
+
+
+func unregister_drop(id: int) -> WorldDrop:
+	var drop: WorldDrop = drops.get(id)
+	if drop == null:
+		return null
+	drops.erase(id)
+	drop_removed.emit(id)
+	return drop
 
 ## --- Phase 3B: doors, and generic persistent world-prop state -----------
 

@@ -24,6 +24,28 @@ reacting to a close one. See `docs/perception_system.md`,
 these systems do; the tests are the executable version of the same
 contracts.
 
+The runtime-procedural acceptance group additionally exercises a fixed
+13-seed difficult corpus, complete same-seed fingerprints, meaningful
+different-seed structure, deterministic retry recovery and explicit exhaustion,
+road/intersection/parcel/entrance/prop invariants, generated room-graph and
+furniture clearance, phase-specific environment spawn weights, runtime stable
+IDs and persistence, same-seed restart isolation, full-Main safehouse/landmark/
+room navigation, generated TileMap and interaction construction, damage-class
+doors/windows/walls/props, five-seed runtime generation timing, exact population
+caps, and the 250-zombie live performance scene.
+
+The streamed Prague group additionally checks cross-chunk portal equality,
+regional profile assignment, nine-quarter/multi-lot morphology, one approach
+branch per building, courtyard passage width and footprint clearance, mixed
+cobble/asphalt surfaces, tram-corridor presence, ridge-roof metadata, bounded
+facade massing, origin-only safehouse reservation, at least 88-percent ordinary
+quarter coverage, and deterministic plaza/courtyard rarity bounds.
+It also validates projected exteriors: deterministic metadata, semantic
+entrance alignment, bounded facade heights, compound-footprint south-outline
+extraction, northward roof displacement, zero added collision,
+global-transform-safe actor-layer sorting, streamed cleanup, and facade
+hide/restore during interior transitions.
+
 One test-harness note worth knowing if you add more tests here: several
 pre-existing tests (`_make_survivor()` call sites) add a real `Survivor`
 to the tree and never free it, since nothing in those tests' assertions
@@ -41,9 +63,10 @@ godot --headless --path . res://tests/TestRunner.tscn
 ```
 
 Exits 0 if every test passes, nonzero otherwise -- safe to use as a
-pre-commit/CI gate. Tests construct data types (`Inventory`, `Job`,
-`SettlementJobBoard`, `StorageContainer`, `ScavengePoint`) directly rather
-than spinning up a full `Main.tscn` play session, and reset
+pre-commit/CI gate. Focused tests construct data types (`Inventory`, `Job`,
+`SettlementJobBoard`, `StorageContainer`, `ScavengePoint`) directly; procedural
+integration tests also instantiate real `ProceduralDistrict` and `Main` scenes.
+The harness resets
 `WorldState`/`SimulationClock` before each test so they can't leak state
 into each other.
 

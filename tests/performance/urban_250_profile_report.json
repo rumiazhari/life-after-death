@@ -1,15 +1,17 @@
 {
   "active_zombie_max": 250,
   "active_zombie_min": 250,
-  "average_fps": 164.514433302947,
-  "average_frame_ms": 6.07897137279842,
-  "direct_checks_per_second": 4.79979980471346,
-  "direct_checks_total": 96,
-  "elapsed_seconds": 20.0008341818188,
-  "minimum_fps": 163.0,
-  "node_count": 3757,
-  "path_requests_per_second": 0.0,
-  "path_requests_total": 0,
-  "samples": 3291,
-  "worst_frame_ms": 9.3630303030304
+  "average_fps": 144.885901413306,
+  "average_frame_ms": 6.89837711134126,
+  "city_seed": 20260821,
+  "direct_checks_per_second": 4.49858384580532,
+  "direct_checks_total": 90,
+  "elapsed_seconds": 20.0062960000001,
+  "generation_ms": 1376,
+  "minimum_fps": 143.0,
+  "node_count": 95204,
+  "path_requests_per_second": 1.49952794860177,
+  "path_requests_total": 30,
+  "samples": 2901,
+  "worst_frame_ms": 6.94444444444444
 }

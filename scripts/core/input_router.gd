@@ -13,6 +13,9 @@ extends Node
 signal reload_requested()
 signal interact_requested()
 signal pause_requested()
+signal weapon_slot_requested(slot_index: int)
+signal weapon_cycle_requested(direction: int)
+signal camera_zoom_requested(direction: float)
 
 var movement_vector: Vector2 = Vector2.ZERO
 var aim_vector: Vector2 = Vector2.ZERO
@@ -20,6 +23,8 @@ var fire_pressed: bool = false
 var reload_pressed: bool = false
 var interact_pressed: bool = false
 var pause_pressed: bool = false
+var weapon_slot_pressed: int = -1
+var weapon_cycle_pressed: int = 0
 
 var _touch_movement_active: bool = false
 var _touch_movement: Vector2 = Vector2.ZERO
@@ -30,6 +35,7 @@ var _touch_firing: bool = false
 var _pending_reload: bool = false
 var _pending_interact: bool = false
 var _pending_pause: bool = false
+var _pending_weapon_cycle: int = 0
 
 func _ready() -> void:
 	# Must keep reading input while SceneTree.paused is true, otherwise the
@@ -49,9 +55,12 @@ func _physics_process(_delta: float) -> void:
 	reload_pressed = Input.is_action_just_pressed("reload") or _pending_reload
 	interact_pressed = Input.is_action_just_pressed("interact") or _pending_interact
 	pause_pressed = Input.is_action_just_pressed("pause") or _pending_pause
+	weapon_slot_pressed = _desktop_weapon_slot()
+	weapon_cycle_pressed = (1 if Input.is_action_just_pressed("weapon_cycle") else 0) + _pending_weapon_cycle
 	_pending_reload = false
 	_pending_interact = false
 	_pending_pause = false
+	_pending_weapon_cycle = 0
 
 	if reload_pressed:
 		reload_requested.emit()
@@ -59,6 +68,10 @@ func _physics_process(_delta: float) -> void:
 		interact_requested.emit()
 	if pause_pressed:
 		pause_requested.emit()
+	if weapon_slot_pressed >= 0:
+		weapon_slot_requested.emit(weapon_slot_pressed)
+	elif weapon_cycle_pressed != 0:
+		weapon_cycle_requested.emit(weapon_cycle_pressed)
 
 func _keyboard_movement_vector() -> Vector2:
 	var raw := Vector2(
@@ -74,6 +87,25 @@ func _mouse_aim_vector() -> Vector2:
 	var center: Vector2 = viewport.get_visible_rect().size * 0.5
 	var to_mouse: Vector2 = viewport.get_mouse_position() - center
 	return Vector2.ZERO if to_mouse.length() < 1.0 else to_mouse.normalized()
+
+func _desktop_weapon_slot() -> int:
+	if Input.is_action_just_pressed("weapon_slot_1"):
+		return 0
+	if Input.is_action_just_pressed("weapon_slot_2"):
+		return 1
+	return -1
+
+
+func _unhandled_input(event: InputEvent) -> void:
+	if event is InputEventMouseButton and event.pressed:
+		if event.button_index == MOUSE_BUTTON_WHEEL_UP:
+			camera_zoom_requested.emit(-1.0)
+		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+			camera_zoom_requested.emit(1.0)
+
+
+func request_camera_zoom(direction: float) -> void:
+	camera_zoom_requested.emit(clampf(direction, -1.0, 1.0))
 
 ## --- Mobile touch reporting -----------------------------------------
 ## Called only by MobileControls / VirtualJoystick. Gameplay code never
@@ -105,3 +137,6 @@ func request_interact() -> void:
 
 func request_pause() -> void:
 	_pending_pause = true
+
+func request_weapon_cycle(direction: int = 1) -> void:
+	_pending_weapon_cycle = 1 if direction >= 0 else -1

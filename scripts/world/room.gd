@@ -32,8 +32,8 @@ func _ready() -> void:
 	collision_mask = LAYER_PLAYER | LAYER_SURVIVOR
 	monitoring = true
 
-## Global-space bounding rectangle, read directly from this Room's own
-## RectangleShape2D (every authored Room uses one) -- a cheap point-in-room
+## Global-space axis-aligned bounding rectangle, transformed from this
+## Room's RectangleShape2D (every authored/generated Room uses one) -- a cheap point-in-room
 ## test (`get_bounds_rect().has_point(p)`) for callers that need "is this
 ## position inside this room" without waiting on an actual physics overlap
 ## (e.g. SpawnManager rejecting a candidate that falls inside the player's
@@ -43,7 +43,18 @@ func get_bounds_rect() -> Rect2:
 	if shape_node == null or not (shape_node.shape is RectangleShape2D):
 		return Rect2(global_position, Vector2.ZERO)
 	var size: Vector2 = (shape_node.shape as RectangleShape2D).size
-	return Rect2(global_position - size * 0.5, size)
+	var half := size * 0.5
+	var corners := [Vector2(-half.x, -half.y), Vector2(half.x, -half.y), Vector2(half.x, half.y), Vector2(-half.x, half.y)]
+	var first: Vector2 = shape_node.global_transform * corners[0]
+	var minimum := first
+	var maximum := first
+	for i in range(1, corners.size()):
+		var point: Vector2 = shape_node.global_transform * corners[i]
+		minimum.x = minf(minimum.x, point.x)
+		minimum.y = minf(minimum.y, point.y)
+		maximum.x = maxf(maximum.x, point.x)
+		maximum.y = maxf(maximum.y, point.y)
+	return Rect2(minimum, maximum - minimum)
 
 ## The Room currently containing `body` (typically the player), or null.
 ## Iterates the "rooms" group rather than requiring a caller to know which

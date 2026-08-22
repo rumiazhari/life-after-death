@@ -14,11 +14,11 @@ func _ready() -> void:
 	if projectile_scene:
 		_pool = ObjectPool.new(projectile_scene, self, prewarm_count)
 
-func spawn_projectile(start_position: Vector2, direction: Vector2, speed: float, damage: float, lifetime: float) -> void:
+func spawn_projectile(start_position: Vector2, direction: Vector2, speed: float, damage: float, lifetime: float, environment_damage_class: int = EnvironmentDamage.DamageClass.SMALL_ARMS, environment_damage: float = 0.0, explosion_radius: float = 0.0, explosion_noise_loudness: float = 0.0, projectile_visual_scale: float = 1.0, projectile_tint: Color = Color.WHITE) -> void:
 	if _pool == null:
 		return
 	var projectile: Projectile = _pool.acquire()
-	projectile.setup(start_position, direction, speed, damage, lifetime, _pool)
+	projectile.setup(start_position, direction, speed, damage, lifetime, _pool, environment_damage_class, environment_damage, explosion_radius, explosion_noise_loudness, projectile_visual_scale, projectile_tint)
 
 func active_projectile_count() -> int:
 	return get_child_count() - _pool.available_count()

@@ -1,0 +1,80 @@
+[gd_scene load_steps=13 format=3]
+
+[ext_resource path="res://scripts/voxel/voxel_prototype_player.gd" type="Script" id="1"]
+[ext_resource path="res://scripts/core/health_component.gd" type="Script" id="2"]
+[ext_resource path="res://scripts/voxel/voxel_interactor_3d.gd" type="Script" id="3"]
+[ext_resource path="res://scripts/voxel/voxel_weapon_3d.gd" type="Script" id="4"]
+[ext_resource path="res://resources/weapons/smg.tres" type="Resource" id="5"]
+[ext_resource path="res://resources/weapons/breaching_charge.tres" type="Resource" id="6"]
+
+[sub_resource type="CapsuleShape3D" id="PlayerShape"]
+radius = 0.32
+height = 1.4
+
+[sub_resource type="CapsuleMesh" id="PlayerMesh"]
+radius = 0.32
+height = 1.4
+
+[sub_resource type="StandardMaterial3D" id="PlayerMaterial"]
+albedo_color = Color(0.2, 0.58, 0.92, 1)
+
+[sub_resource type="SphereShape3D" id="InteractorShape"]
+radius = 2.2
+
+[sub_resource type="BoxMesh" id="MuzzleMesh"]
+size = Vector3(0.14, 0.14, 0.28)
+
+[sub_resource type="StandardMaterial3D" id="MuzzleMaterial"]
+albedo_color = Color(1, 0.65, 0.12, 1)
+emission_enabled = true
+emission = Color(1, 0.2, 0.02, 1)
+
+[node name="VoxelPlayer3D" type="CharacterBody3D"]
+collision_layer = 2
+collision_mask = 1
+script = ExtResource("1")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="."]
+shape = SubResource("PlayerShape")
+
+[node name="Mesh" type="MeshInstance3D" parent="."]
+mesh = SubResource("PlayerMesh")
+material_override = SubResource("PlayerMaterial")
+
+[node name="HealthComponent" type="Node" parent="."]
+script = ExtResource("2")
+max_health = 100.0
+invulnerability_duration = 0.1
+
+[node name="VoxelInteractor3D" type="Area3D" parent="."]
+collision_layer = 0
+collision_mask = 64
+script = ExtResource("3")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="VoxelInteractor3D"]
+shape = SubResource("InteractorShape")
+
+[node name="WeaponPivot" type="Node3D" parent="."]
+
+[node name="SMG" type="Node3D" parent="WeaponPivot"]
+script = ExtResource("4")
+data = ExtResource("5")
+
+[node name="Muzzle" type="Marker3D" parent="WeaponPivot/SMG"]
+position = Vector3(0, 0.45, 0.7)
+
+[node name="MuzzleFlash" type="MeshInstance3D" parent="WeaponPivot/SMG/Muzzle"]
+mesh = SubResource("MuzzleMesh")
+material_override = SubResource("MuzzleMaterial")
+
+[node name="BreachingCharge" type="Node3D" parent="WeaponPivot"]
+script = ExtResource("4")
+data = ExtResource("6")
+equipped = false
+
+[node name="Muzzle" type="Marker3D" parent="WeaponPivot/BreachingCharge"]
+position = Vector3(0, 0.45, 0.7)
+
+[node name="MuzzleFlash" type="MeshInstance3D" parent="WeaponPivot/BreachingCharge/Muzzle"]
+mesh = SubResource("MuzzleMesh")
+material_override = SubResource("MuzzleMaterial")

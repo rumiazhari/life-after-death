@@ -1,0 +1,20 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/world/procedural_district.gd" id="1"]
+
+[node name="ProceduralDistrict" type="Node2D"]
+script = ExtResource("1")
+
+[node name="GroundLayers" type="Node2D" parent="."]
+
+[node name="Buildings" type="Node2D" parent="."]
+y_sort_enabled = true
+
+[node name="StreetProps" type="Node2D" parent="."]
+y_sort_enabled = true
+
+[node name="SpawnRegions" type="Node2D" parent="."]
+
+[node name="Navigation" type="Node2D" parent="."]
+
+[node name="Boundaries" type="Node2D" parent="."]

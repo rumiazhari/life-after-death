@@ -1,7 +1,7 @@
 [gd_scene format=3 uid="uid://3rwkr4ohqr4y"]
 
 [ext_resource type="Script" uid="uid://bjjmbkfmunbmo" path="res://scripts/core/main.gd" id="1"]
-[ext_resource type="PackedScene" path="res://scenes/world/maps/UrbanDistrict01.tscn" id="2"]
+[ext_resource type="PackedScene" path="res://scenes/world/maps/StreamingWorld.tscn" id="2"]
 [ext_resource type="PackedScene" path="res://scenes/actors/Player.tscn" id="3"]
 [ext_resource type="Script" uid="uid://nq7wu0504j1c" path="res://scripts/combat/projectile_manager.gd" id="4"]
 [ext_resource type="PackedScene" path="res://scenes/combat/Projectile.tscn" id="5"]
@@ -20,6 +20,7 @@
 [ext_resource type="Script" path="res://scripts/combat/blood_decal_manager.gd" id="18"]
 [ext_resource type="Script" path="res://scripts/world/world_drop_visual_manager.gd" id="19"]
 [ext_resource type="Script" path="res://scripts/combat/hit_effect_manager.gd" id="20"]
+[ext_resource type="Script" path="res://scripts/combat/explosion_effect_manager.gd" id="21"]
 
 [node name="Main" type="Node2D" unique_id=209900488]
 script = ExtResource("1")
@@ -30,7 +31,7 @@ script = ExtResource("1")
 y_sort_enabled = true
 
 [node name="Player" parent="EntityContainer" unique_id=2102308281 instance=ExtResource("3")]
-position = Vector2(-950, -820)
+position = Vector2(-976, -846)
 
 [node name="ProjectileContainer" type="Node2D" parent="." unique_id=1874001166]
 script = ExtResource("4")
@@ -56,8 +57,11 @@ script = ExtResource("19")
 z_index = 2
 script = ExtResource("20")
 
+[node name="ExplosionEffectManager" type="Node2D" parent="."]
+script = ExtResource("21")
+
 [node name="Settlement" parent="." unique_id=2000328190 instance=ExtResource("15")]
-position = Vector2(-950, -950)
+position = Vector2(-976, -976)
 
 [node name="UI" type="Node" parent="." unique_id=260325458]
 

@@ -1,4 +1,4 @@
-[gd_scene load_steps=9 format=3]
+[gd_scene load_steps=10 format=3]
 
 [ext_resource type="Script" path="res://scripts/actors/player.gd" id="1"]
 [ext_resource type="Script" path="res://scripts/core/health_component.gd" id="2"]
@@ -9,6 +9,7 @@
 [ext_resource type="Texture2D" path="res://assets/pixel/effects/muzzle_flash.png" id="7"]
 [ext_resource type="Script" path="res://scripts/interaction/player_interactor.gd" id="8"]
 [ext_resource type="Script" path="res://scripts/core/detectable_component.gd" id="9"]
+[ext_resource type="Resource" path="res://resources/weapons/breaching_charge.tres" id="10"]
 
 [sub_resource type="CircleShape2D" id="CircleShape2D_player"]
 radius = 16.0
@@ -52,6 +53,18 @@ data = ExtResource("4")
 position = Vector2(24, 0)
 
 [node name="MuzzleFlash" type="Sprite2D" parent="WeaponPivot/Weapon/Muzzle"]
+visible = false
+texture = ExtResource("7")
+
+[node name="BreachingCharge" type="Node2D" parent="WeaponPivot"]
+script = ExtResource("3")
+data = ExtResource("10")
+equipped = false
+
+[node name="Muzzle" type="Marker2D" parent="WeaponPivot/BreachingCharge"]
+position = Vector2(24, 0)
+
+[node name="MuzzleFlash" type="Sprite2D" parent="WeaponPivot/BreachingCharge/Muzzle"]
 visible = false
 texture = ExtResource("7")
 

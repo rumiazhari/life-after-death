@@ -105,7 +105,10 @@ contract.
 `_ready()`, a door with a non-empty `door_id` reads its `is_open` state
 from `WorldState.get_door_open(door_id)` instead of always starting
 closed, so re-entering a scene (or, later, a save/load) restores exactly
-how it was left.
+how it was left. Doors also carry an explosive-class
+`EnvironmentDamageComponent`; a breaching charge removes the complete door,
+records it as open, persists the destroyed structure state and re-samples its
+navigation cell. Small-arms and heavy non-explosive hits are rejected.
 
 `Door` also emits `state_changed(is_open: bool)` (Phase 3B.1) whenever
 `_apply_state()` runs — the event `BuildingVisibilityController` listens
@@ -115,12 +118,13 @@ even while the player is stationary (see `docs/building_system.md`).
 ## Windows — `scripts/world/window.gd` (`class_name BuildingWindow`)
 
 Named `BuildingWindow`, not `Window` — Godot's own `Window` class (an OS
-window) already owns that name. Always physically solid (blocks
-movement) regardless of state. Vision blocking is authored per-instance
-via `is_boarded`: intact lets a room-reveal/perception raycast pass,
-boarded blocks it exactly like a wall. No breaking/climbing gameplay this
-pass — `is_boarded` is set once at authoring time, not toggled by any
-interaction.
+window) already owns that name. While present it is physically solid. Vision
+blocking is authored per-instance via `is_boarded`: intact lets a room-reveal/
+perception raycast pass, while boarded blocks it exactly like a wall. Intact
+glass accepts small-arms damage; boarded windows require heavy-class damage.
+Destruction removes the complete window collider and persists through its
+stable environment-object ID. There is no climbing animation or separate
+shattered sprite.
 
 ## Persistent world-prop state — `scripts/core/world_state.gd`
 
@@ -187,16 +191,23 @@ thing that ever actually listens.
 | Shelves / fridges / medical cabinets | `LootContainerComponent`, deterministic starting contents |
 | Wrecked/salvage cars, dumpsters | `LootContainerComponent` (dumpster) or `SalvageableComponent` (wreck) |
 | Sedan (street) | `LootContainerComponent` (trunk-style loot, no driving) |
-| Doors | physical + vision block while closed, interactable, noise on toggle |
-| Windows | physical always, vision block per authored state |
-| Tables / chairs / counters / benches / trees / planters | physical obstacle only (`add_physical_prop`) — no salvage/search yet, see Known limitations |
+| Doors | physical + vision block while closed, interactable, noise on toggle, explosive-destructible |
+| Windows | physical while present, vision block per authored state, small-arms/heavy destructible by state |
+| Tables / chairs / counters / benches / trees / planters | physical obstacle + `InteractableComponent` + `SalvageableComponent` + class-filtered `EnvironmentDamageComponent` |
+| Building wall segments | physical + vision obstacle; explosive structural damage only |
+
+The Player can exercise that structural contract directly: slot 1 is the
+SMG (`1`), slot 2 is the breaching charge (`2`), and `Q` or the mobile
+Switch button cycles them. The charge deals 90 actor damage and 180
+structural damage inside a 128 px blast, emits an `explosion` noise for
+zombie hearing, and never substitutes the structural value for actor damage.
 
 ## Known limitations
 
-- Tables/chairs/counters/trees are physical-obstacle-only —
-  cover/vision-blocker/salvage-metadata participation for these (as the
-  full spec describes) wasn't implemented; they exist and block movement
-  but declare no further systemic role.
+- Generic furniture and exterior objects are now salvageable and
+  class-filtered destructibles. Cover scoring remains unimplemented.
+- Destroyed doors/windows are removed rather than replaced by separate broken
+  sprites or climb-through animations.
 - No `VisionBlockerComponent`/`NoiseEmitterComponent`/`WorldPropData`
   resource as distinct classes — vision blocking is expressed directly
   via collision layer (walls/doors/windows), and noise emission is a

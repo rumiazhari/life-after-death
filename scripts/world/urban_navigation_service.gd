@@ -30,7 +30,7 @@ var _built: bool = false
 var _requests_this_frame: int = 0
 var direct_path_checks_total: int = 0
 var path_requests_total: int = 0
-var _door_cells: Dictionary = {} ## StringName door_id -> Vector2i cell
+var _door_cells: Dictionary = {} ## StringName door_id -> Array[Vector2i] aperture cells
 ## Bumped whenever the grid is rebuilt or any door's walkability changes --
 ## a path cached by a caller becomes stale the instant this changes, since
 ## the route it was computed against may no longer be valid (or a
@@ -50,8 +50,23 @@ func _physics_process(_delta: float) -> void:
 ## once at district load, not per frame. `half_extent` is the district's
 ## own arena_half_size.
 func build(half_extent: Vector2) -> void:
+	# Preserve the authored district's historical grid origin exactly.  Its
+	# 1400px half extent is intentionally not tile-aligned, and changing that
+	# origin shifts every landmark/navigation fixture by eight pixels.
 	var size := Vector2i(ceili(half_extent.x * 2.0 / CELL_SIZE), ceili(half_extent.y * 2.0 / CELL_SIZE))
 	_origin = -half_extent
+	_build_grid(size)
+
+## StreamingWorld rebuilds only the currently resident rectangle.  The grid
+## therefore remains bounded even though semantic chunk coordinates do not.
+func build_rect(world_rect: Rect2) -> void:
+	var aligned_position := Vector2(floorf(world_rect.position.x / CELL_SIZE) * CELL_SIZE, floorf(world_rect.position.y / CELL_SIZE) * CELL_SIZE)
+	var aligned_end := Vector2(ceilf(world_rect.end.x / CELL_SIZE) * CELL_SIZE, ceilf(world_rect.end.y / CELL_SIZE) * CELL_SIZE)
+	var size := Vector2i(roundi((aligned_end.x - aligned_position.x) / CELL_SIZE), roundi((aligned_end.y - aligned_position.y) / CELL_SIZE))
+	_origin = aligned_position
+	_build_grid(size)
+
+func _build_grid(size: Vector2i) -> void:
 	_grid.region = Rect2i(Vector2i.ZERO, size)
 	_grid.cell_size = Vector2(CELL_SIZE, CELL_SIZE)
 	_grid.diagonal_mode = AStarGrid2D.DIAGONAL_MODE_ONLY_IF_NO_OBSTACLES
@@ -70,17 +85,57 @@ func build(half_extent: Vector2) -> void:
 	_door_cells.clear()
 	_revision += 1
 
-func register_door(door_id: StringName, world_position: Vector2) -> void:
-	_door_cells[door_id] = world_to_cell(world_position)
+func register_door(door_id: StringName, world_position: Vector2, aperture_size: Vector2 = Vector2(CELL_SIZE, CELL_SIZE)) -> void:
+	var aperture := Rect2(world_position - aperture_size * 0.5, aperture_size)
+	var cells: Array[Vector2i] = []
+	var from_cell := world_to_cell(aperture.position)
+	var to_cell := world_to_cell(aperture.end - Vector2(0.001, 0.001))
+	for x in range(from_cell.x, to_cell.x + 1):
+		for y in range(from_cell.y, to_cell.y + 1):
+			var cell := Vector2i(x, y)
+			if _grid.is_in_boundsv(cell):
+				cells.append(cell)
+	_door_cells[door_id] = cells
 
 func mark_door_open(door_id: StringName) -> void:
 	if _door_cells.has(door_id):
-		_grid.set_point_solid(_door_cells[door_id], false)
+		for cell: Vector2i in _door_cells[door_id]:
+			_grid.set_point_solid(cell, false)
 		_revision += 1
 
 func mark_door_closed(door_id: StringName) -> void:
 	if _door_cells.has(door_id):
-		_grid.set_point_solid(_door_cells[door_id], true)
+		for cell: Vector2i in _door_cells[door_id]:
+			_grid.set_point_solid(cell, true)
+		_revision += 1
+
+## Destructible environment bodies call this while their body is being
+## removed. Cells are re-sampled against every OTHER World collider instead
+## of blindly opened; overlapping walls/furniture therefore stay solid.
+func mark_area_free(world_rect: Rect2, excluded_rid: RID = RID()) -> void:
+	if not _built:
+		return
+	var from_cell := world_to_cell(world_rect.position)
+	var to_cell := world_to_cell(world_rect.end - Vector2(0.001, 0.001))
+	var changed := false
+	var space_state := get_tree().root.get_world_2d().direct_space_state
+	var query := PhysicsPointQueryParameters2D.new()
+	query.collision_mask = WORLD_MASK
+	query.collide_with_bodies = true
+	query.collide_with_areas = false
+	if excluded_rid.is_valid():
+		query.exclude = [excluded_rid]
+	for x in range(from_cell.x, to_cell.x + 1):
+		for y in range(from_cell.y, to_cell.y + 1):
+			var cell := Vector2i(x, y)
+			if not _grid.is_in_boundsv(cell):
+				continue
+			query.position = _cell_to_world(cell)
+			var should_be_solid := not space_state.intersect_point(query, 1).is_empty()
+			if _grid.is_point_solid(cell) != should_be_solid:
+				_grid.set_point_solid(cell, should_be_solid)
+				changed = true
+	if changed:
 		_revision += 1
 
 ## True when `pos`'s grid cell exists and isn't solid -- used by
@@ -95,6 +150,23 @@ func is_position_free(pos: Vector2) -> bool:
 	if not _grid.is_in_boundsv(cell):
 		return false
 	return not _grid.is_point_solid(cell)
+
+## Unbudgeted connectivity predicate for spawn/landmark validation. It does
+## not increment the per-frame actor path budget and returns true before the
+## grid is built, matching is_position_free()'s pre-build contract.
+func are_positions_connected(from: Vector2, to: Vector2) -> bool:
+	if not _built:
+		return true
+	var from_cell := world_to_cell(from)
+	var to_cell := world_to_cell(to)
+	if not _grid.is_in_boundsv(from_cell) or not _grid.is_in_boundsv(to_cell):
+		return false
+	if _grid.is_point_solid(from_cell) or _grid.is_point_solid(to_cell):
+		return false
+	return not _grid.get_id_path(from_cell, to_cell).is_empty()
+
+func is_built() -> bool:
+	return _built
 
 func world_to_cell(pos: Vector2) -> Vector2i:
 	return Vector2i(floori((pos.x - _origin.x) / CELL_SIZE), floori((pos.y - _origin.y) / CELL_SIZE))

@@ -17,6 +17,8 @@ extends CharacterBody2D
 
 var aim_direction: Vector2 = Vector2.RIGHT
 var is_dead: bool = false
+var weapon_slot_index: int = 0
+var weapon_slots: Array[Weapon] = []
 ## Phase 3B: what loot containers/salvage transfer into. 60kg is generous
 ## relative to a Survivor's 20kg since the player is the one doing most of
 ## the district looting in this slice.
@@ -31,7 +33,11 @@ func _ready() -> void:
 	health_component.died.connect(_on_died)
 	health_component.damaged.connect(_on_damaged)
 	health_component.health_changed.connect(_on_health_changed)
+	_collect_weapon_slots()
+	InputRouter.weapon_slot_requested.connect(equip_weapon_slot)
+	InputRouter.weapon_cycle_requested.connect(cycle_weapon)
 	_on_health_changed(health_component.current_health, health_component.max_health)
+	call_deferred("_emit_equipped_weapon")
 
 func _physics_process(delta: float) -> void:
 	if is_dead:
@@ -69,6 +75,47 @@ func _update_firing() -> void:
 			weapon.try_fire(aim_direction)
 	_fire_was_held = fire_held
 
+func _collect_weapon_slots() -> void:
+	weapon_slots.clear()
+	for child in weapon_pivot.get_children():
+		if child is Weapon:
+			weapon_slots.append(child as Weapon)
+	if weapon_slots.is_empty():
+		return
+	weapon_slot_index = clampi(weapon_slot_index, 0, weapon_slots.size() - 1)
+	for i in range(weapon_slots.size()):
+		weapon_slots[i].set_equipped(i == weapon_slot_index)
+	weapon = weapon_slots[weapon_slot_index]
+
+func equip_weapon_slot(slot_index: int) -> bool:
+	if slot_index < 0 or slot_index >= weapon_slots.size() or slot_index == weapon_slot_index:
+		return false
+	weapon_slots[weapon_slot_index].set_equipped(false)
+	weapon_slot_index = slot_index
+	weapon = weapon_slots[weapon_slot_index]
+	weapon.set_equipped(true)
+	_fire_was_held = InputRouter.fire_pressed
+	_emit_equipped_weapon()
+	return true
+
+func cycle_weapon(direction: int = 1) -> bool:
+	if weapon_slots.size() < 2:
+		return false
+	var next_slot := posmod(weapon_slot_index + direction, weapon_slots.size())
+	return equip_weapon_slot(next_slot)
+
+func _emit_equipped_weapon() -> void:
+	if weapon == null or weapon.data == null:
+		return
+	GameEvents.weapon_equipped.emit(
+		weapon.data.weapon_name,
+		weapon_slot_index,
+		weapon_slots.size(),
+		weapon.ammo_in_magazine,
+		weapon.reserve_ammo,
+		weapon.data.magazine_size
+	)
+
 func take_damage(amount: float, source: Node = null) -> void:
 	if is_dead:
 		return
@@ -79,8 +126,15 @@ func respawn(spawn_position: Vector2) -> void:
 	velocity = Vector2.ZERO
 	is_dead = false
 	health_component.reset_health()
-	if weapon:
-		weapon.reset_weapon()
+	for slot_weapon in weapon_slots:
+		slot_weapon.reset_weapon()
+	if not weapon_slots.is_empty():
+		if weapon_slot_index != 0:
+			weapon_slots[weapon_slot_index].set_equipped(false)
+		weapon_slot_index = 0
+		weapon = weapon_slots[0]
+		weapon.set_equipped(true)
+		_emit_equipped_weapon()
 	body_visual.modulate = Color(1, 1, 1)
 	GameEvents.player_respawned.emit()
 

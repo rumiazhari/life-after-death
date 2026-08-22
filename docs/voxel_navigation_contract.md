@@ -1,0 +1,13 @@
+# Voxel navigation contract
+
+`VoxelNavigationService` reads `VoxelWorldData` directly. A traversable cell requires a walkable material at elevation zero and empty headroom at elevations one and two. Its four-direction A* path, Bresenham direct-path check, and connectivity query therefore observe structural destruction and door aperture mutations immediately, without maintaining a second collision-derived grid.
+
+`VoxelSpawnSampler` converts the existing generated spawn-region position and radius from semantic pixels into voxel world cells. Sampling uses the world seed plus the region's existing stable ID, then rejects any cell that fails `VoxelNavigationService.is_walkable()`.
+
+`VoxelPathFollower3D` is the common `CharacterBody3D` movement adapter for voxel survivors and zombies. It follows voxel-center waypoints, repaths at a bounded interval, and has no actor-specific perception or job logic. `VoxelPrototypeZombie` now uses this adapter when a navigation service is supplied and retains its previous direct movement only as an isolated fallback.
+
+`VoxelZombiePerception3D` retains the current idle, suspicious, investigate, chase, attack, and search transitions at voxel scale. Vision uses the navigation service's headroom-aware direct traversal, while hearing consumes `NoiseManager` through an explicit XZ-to-`Vector2` mapping. `VoxelSurvivor3D` retains `SurvivorData`, `HealthComponent`, capacity-limited carried inventory, stable `WorldState` registration, fear response, and inventory-preserving death.
+
+`VoxelSurvivorAI3D` uses the existing `UtilityMath` urgency, risk, distance, and combat-confidence curves for idle, eat, drink, flee, and semantic scavenge decisions. `VoxelSemanticJobBoard` reserves each stable scavenge ID for one survivor at a time and performs capacity-aware harvesting directly against the stable object's stock. The resulting stock is written to both `VoxelWorldData` and the existing `WorldState` prop flags.
+
+The origin chunk's existing semantic safehouse position and entrance now produce stable general, food, water, and medical storage plus rest-point and guard-post services. `VoxelSettlementRuntime` resolves those records, exposes their persistent `WorldState` inventories, routes items through the existing `ItemData.Category`, and enforces one-survivor claims for beds and guard posts. The utility loop uses them for exact deposits, sleep recovery, guard duty, existing-threshold self-treatment, reservation-backed supply retrieval, and one-helper-per-patient treatment. Confident survivors fight through `VoxelWeapon3D`; fearful survivors flee an immediate threat or seek the semantic safehouse position when outside its radius.

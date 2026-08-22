@@ -64,6 +64,7 @@ const MAX_PORTAL_DEPTH := 2
 const VISION_MASK := 32
 
 var _roof: CanvasItem
+var _exterior_covers: Array[CanvasItem] = []
 var _rooms: Array[Room] = []
 var _player_inside: bool = false
 var _current_room: Room = null
@@ -168,6 +169,9 @@ func _find_room_still_containing_player() -> Room:
 func _apply_states() -> void:
 	if _roof:
 		_roof.visible = not _player_inside
+	for cover in _exterior_covers:
+		if is_instance_valid(cover):
+			cover.visible = not _player_inside
 	var revealed: Dictionary = {} # Room -> true
 	if _player_inside and _current_room:
 		revealed[_current_room] = true
@@ -235,6 +239,16 @@ func _has_line_of_sight(from: Vector2, to: Vector2) -> bool:
 ## For tests/debug: current exterior/interior presentation state.
 func is_roof_visible() -> bool:
 	return _roof == null or _roof.visible
+
+func register_exterior_cover(cover: CanvasItem) -> void:
+	if cover != null and not _exterior_covers.has(cover):
+		_exterior_covers.append(cover)
+
+func is_projected_exterior_visible() -> bool:
+	for cover in _exterior_covers:
+		if is_instance_valid(cover) and cover.visible:
+			return true
+	return _exterior_covers.is_empty()
 
 func current_room_id() -> StringName:
 	return _current_room.room_id if _current_room else &""

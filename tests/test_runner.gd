@@ -35,8 +35,13 @@ const SPAWN_MANAGER_SCRIPT: GDScript = preload("res://scripts/actors/spawn_manag
 const PLAYER_SCENE: PackedScene = preload("res://scenes/actors/Player.tscn")
 const DOOR_SCENE: PackedScene = preload("res://scenes/world/Door.tscn")
 const WINDOW_SCENE: PackedScene = preload("res://scenes/world/Window.tscn")
+const SCAVENGE_POINT_SCENE: PackedScene = preload("res://scenes/world/ScavengePoint.tscn")
 const CONVENIENCE_STORE_SCENE: PackedScene = preload("res://scenes/world/buildings/ConvenienceStore01.tscn")
 const CLINIC_SCENE: PackedScene = preload("res://scenes/world/buildings/Clinic01.tscn")
+const PROCEDURAL_DISTRICT_SCENE: PackedScene = preload("res://scenes/world/maps/ProceduralDistrict.tscn")
+const PROCEDURAL_RETRY_PROBE_SCRIPT: GDScript = preload("res://tests/procedural_retry_probe.gd")
+const FAILING_PROCEDURAL_DISTRICT_SCRIPT: GDScript = preload("res://tests/failing_procedural_district.gd")
+const PROCEDURAL_SEED_CORPUS: Array[int] = [0, 1, 2, 3, 7, 31, 42, 255, 1024, 8801, 65535, 20260821, 2147483646]
 
 func _ready() -> void:
 	call_deferred("_run_all")
@@ -71,6 +76,41 @@ func _run_all() -> void:
 	await _run_test("cosmetic_rng_does_not_affect_zombie_retarget_timing", _test_cosmetic_rng_does_not_affect_zombie_retarget_timing)
 	await _run_test("cosmetic_rng_does_not_affect_spawn_positions", _test_cosmetic_rng_does_not_affect_spawn_positions)
 
+	## --- Procedural city and environment destruction -----------------------
+	await _run_test("procedural_city_same_seed_is_identical", _test_procedural_city_same_seed_is_identical)
+	await _run_test("procedural_city_different_seed_changes_layout", _test_procedural_city_different_seed_changes_layout)
+	await _run_test("procedural_city_generated_model_passes_invariants", _test_procedural_city_generated_model_passes_invariants)
+	await _run_test("procedural_compound_buildings_have_enterable_wings", _test_procedural_compound_buildings_have_enterable_wings)
+	await _run_test("streamed_chunk_edges_and_building_branches_are_deterministic", _test_streamed_chunk_edges_and_building_branches_are_deterministic)
+	await _run_test("streamed_prague_courtyards_have_clear_passages", _test_streamed_prague_courtyards_have_clear_passages)
+	await _run_test("streamed_prague_theme_has_transit_roofs_and_active_frontages", _test_streamed_prague_theme_has_transit_roofs_and_active_frontages)
+	await _run_test("projected_prague_exteriors_are_deterministic_and_portal_aligned", _test_projected_prague_exteriors_are_deterministic_and_portal_aligned)
+	await _run_test("compound_footprints_extract_only_exposed_south_facades", _test_compound_footprints_extract_only_exposed_south_facades)
+	await _run_test("projected_exterior_runtime_is_visual_only_and_sortable", _test_projected_exterior_runtime_is_visual_only_and_sortable)
+	await _run_test("streamed_prague_quarters_are_dense_and_open_spaces_are_rare", _test_streamed_prague_quarters_are_dense_and_open_spaces_are_rare)
+	await _run_test("procedural_seed_corpus_is_deterministic_valid_and_bounded", _test_procedural_seed_corpus_is_deterministic_valid_and_bounded)
+	await _run_test("procedural_generation_retries_and_fails_explicitly", _test_procedural_generation_retries_and_fails_explicitly)
+	await _run_test("procedural_runtime_failure_propagates_attempt_diagnostics", _test_procedural_runtime_failure_propagates_attempt_diagnostics)
+	await _run_test("procedural_roads_parcels_entrances_and_exteriors_are_valid", _test_procedural_roads_parcels_entrances_and_exteriors_are_valid)
+	await _run_test("procedural_interiors_are_reachable_furnished_and_clear", _test_procedural_interiors_are_reachable_furnished_and_clear)
+	await _run_test("procedural_spawn_phases_are_environmental_and_deterministic", _test_procedural_spawn_phases_are_environmental_and_deterministic)
+	await _run_test("spawn_manager_waits_for_generation_begin_and_reset", _test_spawn_manager_waits_for_generation_begin_and_reset)
+	await _run_test("generated_building_runtime_ids_and_state_persist", _test_generated_building_runtime_ids_and_state_persist)
+	await _run_test("generated_scavenge_stock_persists_by_stable_id", _test_generated_scavenge_stock_persists_by_stable_id)
+	await _run_test("procedural_restart_is_isolated_and_reuses_selected_seed", _test_procedural_restart_is_isolated_and_reuses_selected_seed)
+	await _run_test("procedural_runtime_generation_profile", _test_procedural_runtime_generation_profile)
+	await _run_test("procedural_full_main_landmarks_rooms_and_safehouse_are_navigable", _test_procedural_full_main_landmarks_rooms_and_safehouse_are_navigable)
+	await _run_test("population_profile_caps_are_exact", _test_population_profile_caps_are_exact)
+	await _run_test("environment_walls_reject_bullets_and_accept_explosives", _test_environment_walls_reject_bullets_and_accept_explosives)
+	await _run_test("environment_props_are_interactable_and_damageable", _test_environment_props_are_interactable_and_damageable)
+	await _run_test("environment_destroyed_loot_becomes_world_drop", _test_environment_destroyed_loot_becomes_world_drop)
+	await _run_test("environment_destruction_state_restores", _test_environment_destruction_state_restores)
+	await _run_test("environment_destruction_resamples_live_navigation_with_overlaps", _test_environment_destruction_resamples_live_navigation_with_overlaps)
+	await _run_test("doors_and_windows_enforce_damage_classes_and_persist", _test_doors_and_windows_enforce_damage_classes_and_persist)
+	await _run_test("destroyed_safehouse_storage_does_not_duplicate_on_rebuild", _test_destroyed_safehouse_storage_does_not_duplicate_on_rebuild)
+	await _run_test("player_weapon_slots_preserve_independent_ammo", _test_player_weapon_slots_preserve_independent_ammo)
+	await _run_test("explosion_separates_actor_and_structural_damage", _test_explosion_separates_actor_and_structural_damage)
+
 	## --- Phase 3B.1: authored-region spawning ------------------------------
 	await _run_test("spawn_region_production_spawn_lands_in_authored_region", _test_spawn_region_production_spawn_lands_in_authored_region)
 	await _run_test("spawn_region_selection_is_deterministic_for_same_seed", _test_spawn_region_selection_is_deterministic_for_same_seed)
@@ -102,6 +142,8 @@ func _run_all() -> void:
 	## --- Phase 3B: fixed district, buildings, interaction, perception -----
 	await _run_test("district_layout_checksum_matches_committed_baseline", _test_district_layout_checksum_matches_committed_baseline)
 	await _run_test("baked_district_scene_has_expected_structure", _test_baked_district_scene_has_expected_structure)
+	await _run_test("district_buildings_fit_their_blocks_without_overlapping", _test_district_buildings_fit_their_blocks_without_overlapping)
+	await _run_test("baked_district_landmarks_are_reachable", _test_baked_district_landmarks_are_reachable)
 	await _run_test("door_closed_blocks_and_open_permits_movement_and_vision", _test_door_closed_blocks_and_open_permits_movement_and_vision)
 	await _run_test("door_interact_toggles_exactly_once_and_persists", _test_door_interact_toggles_exactly_once_and_persists)
 	await _run_test("door_refuses_to_close_on_blocking_body", _test_door_refuses_to_close_on_blocking_body)
@@ -331,6 +373,1120 @@ func _test_phase_3b8_idle_zombie_makes_no_navigation_requests() -> void:
 	_assert(UrbanNavigationService.path_requests_total == 0, "idle zombies must not request navigation paths")
 	zombie.queue_free()
 	await get_tree().process_frame
+func _test_procedural_city_same_seed_is_identical() -> void:
+	var generator := ProceduralCityGenerator.new()
+	var first: Dictionary = generator.generate(8801)
+	var second: Dictionary = generator.generate(8801)
+	_assert(generator.signature(first) == generator.signature(second), "the same gameplay seed must reproduce the exact semantic road/block/building model")
+
+func _test_procedural_city_different_seed_changes_layout() -> void:
+	var generator := ProceduralCityGenerator.new()
+	var first: Dictionary = generator.generate(8801)
+	var second: Dictionary = generator.generate(8802)
+	_assert(generator.signature(first) != generator.signature(second), "different seeds must alter semantic layout rather than only cosmetic tile variants")
+
+func _test_procedural_city_generated_model_passes_invariants() -> void:
+	var generator := ProceduralCityGenerator.new()
+	for seed_value in [1, 42, 8801, 20260821, 2147483646]:
+		var city: Dictionary = generator.generate(seed_value)
+		var errors: Array[String] = generator.validate(city)
+		_assert(errors.is_empty(), "seed %d failed generator invariants: %s" % [seed_value, str(errors)])
+		_assert((city["roads"] as Array).size() == 10, "each city must have five horizontal and five vertical roads")
+		_assert((city["blocks"] as Array).size() == 16, "each city must produce sixteen urban blocks")
+
+func _test_procedural_compound_buildings_have_enterable_wings() -> void:
+	var forms: Dictionary = {}
+	var building_generator := ProceduralBuildingGenerator.new()
+	for seed_value in range(64):
+		var interior: Dictionary = building_generator.generate(&"compound_regression", &"workshop", Vector2(256, 256), seed_value, true)
+		var errors: Array[String] = building_generator.validate(interior)
+		_assert(errors.is_empty(), "compound workshop seed %d must keep every room/door/furniture invariant: %s" % [seed_value, str(errors)])
+		forms[interior["form"]] = true
+		for door in interior["doors"]:
+			var aperture: Vector2 = door["aperture_size"]
+			_assert(maxf(aperture.x, aperture.y) >= 64.0, "generated door %s must expose a two-cell traversal aperture" % String(door["id"]))
+		if interior["form"] == &"rectangle":
+			continue
+		_assert((interior["perimeter_rects"] as Array).size() == 2, "compound form must expose both occupied footprint rectangles")
+		var wing: Dictionary = (interior["rooms"] as Array).back()
+		_assert(wing["role"] == &"service_annex", "compound form must append an enterable service-annex room")
+		var wing_door_found := false
+		for door in interior["doors"]:
+			if not bool(door["exterior"]) and door["room_b"] == wing["id"]:
+				wing_door_found = true
+		_assert(wing_door_found, "service-annex room must connect through a real interior door")
+	_assert(forms.has(&"rectangle"), "compound generator must retain rectangular building forms")
+	_assert(forms.has(&"rear_wing") and forms.has(&"side_wing"), "compound generator must exercise rear and side building silhouettes")
+
+func _test_streamed_chunk_edges_and_building_branches_are_deterministic() -> void:
+	var generator := ProceduralCityGenerator.new()
+	var origin: Dictionary = generator.generate_streamed_chunk(20260821, Vector2i.ZERO)
+	var eastern_neighbor: Dictionary = generator.generate_streamed_chunk(20260821, Vector2i.RIGHT)
+	_assert(generator.validate(origin).is_empty(), "streamed origin chunk must validate after its road branches are appended")
+	_assert(origin["road_topology"] == &"prague_frontage_branch_graph", "streamed chunks must expose the Prague frontage/branch topology")
+	_assert(origin["district_profile"] in PragueRegionalPlan.PROFILES, "streamed chunks must select one deterministic Prague district profile")
+	_assert((origin["blocks"] as Array).size() == 9, "streamed Prague chunks must replace the finite 4x4 grid with nine larger urban quarters")
+	_assert((origin["parcels"] as Array).size() > (origin["blocks"] as Array).size(), "large streamed quarters must subdivide into multiple street-fronting lots")
+	_assert(origin["edge_contracts"][&"east"] == eastern_neighbor["edge_contracts"][&"west"], "adjacent streamed chunks must derive the same shared road portals")
+	var driveway_count := 0
+	for road in origin["roads"]:
+		if road["kind"] == &"driveway":
+			driveway_count += 1
+	_assert(driveway_count == (origin["buildings"] as Array).size(), "every streamed building must contribute one connected entrance branch")
+
+func _test_streamed_prague_courtyards_have_clear_passages() -> void:
+	var generator := ProceduralCityGenerator.new()
+	var courtyard_count := 0
+	for y in range(-4, 5):
+		for x in range(-4, 5):
+			var city := generator.generate_streamed_chunk(20260821, Vector2i(x, y))
+			for courtyard in city.get("courtyards", []):
+				courtyard_count += 1
+				_assert(float(courtyard["passage_width"]) >= 64.0, "courtyard passages must retain the same two-cell traversal width as open doors")
+				var access: Rect2 = courtyard["access_corridor"]
+				_assert(access.intersects(courtyard["rect"]), "courtyard passage must connect directly to the paved court")
+				for building in city["buildings"]:
+					if building["block_id"] == courtyard["block_id"]:
+						_assert(not access.intersects(building["footprint"]), "courtyard passage must not be occupied by a frontage building")
+	_assert(courtyard_count > 0, "the deterministic 9x9 chunk corpus must still exercise the rare courtyard path")
+
+func _test_streamed_prague_theme_has_transit_roofs_and_active_frontages() -> void:
+	var city := ProceduralCityGenerator.new().generate_streamed_chunk(20260821, Vector2i.ZERO)
+	var surfaces: Dictionary = {}
+	var has_tram := false
+	for road in city["roads"]:
+		surfaces[road.get("surface", &"asphalt")] = true
+		has_tram = has_tram or bool(road.get("tram", false))
+	_assert(surfaces.has(&"cobble") and surfaces.has(&"asphalt"), "Prague chunks must combine paved local streets with asphalt regional corridors")
+	_assert(has_tram, "each Prague chunk must carry the regional tram-capable arterial through its selected axis")
+	var facade_styles: Dictionary = {}
+	for building in city["buildings"]:
+		facade_styles[building["facade_style"]] = true
+		_assert(building["roof_shape"] == &"pitched_ridge", "Prague frontage buildings must use the ridge-painted roof contract")
+		_assert(int(building["storeys"]) in [3, 4, 5], "Prague facade massing must record a bounded three-to-five-storey presentation")
+		_assert(BuildingExteriorRenderer.validate(building).is_empty(), "every Prague building must expose a valid projected exterior contract")
+	_assert(facade_styles.size() >= 2, "one streamed quarter must exercise more than one facade treatment")
+
+func _test_projected_prague_exteriors_are_deterministic_and_portal_aligned() -> void:
+	var generator := ProceduralCityGenerator.new()
+	var first := generator.generate_streamed_chunk(20260821, Vector2i.ZERO)
+	var second := generator.generate_streamed_chunk(20260821, Vector2i.ZERO)
+	for index in range((first["buildings"] as Array).size()):
+		var building: Dictionary = first["buildings"][index]
+		var repeated: Dictionary = second["buildings"][index]
+		_assert(building["exterior"] == repeated["exterior"], "projected exterior metadata must regenerate identically for %s" % String(building["id"]))
+		var exterior: Dictionary = building["exterior"]
+		_assert(int(exterior["projection_height_tiles"]) in [2, 3, 4], "projected facade height must remain bounded")
+		var semantic_entrance: Vector2 = building["entrance_position"] - building["position"]
+		var entrance_positions: Array = exterior["entrance_positions"]
+		_assert(not entrance_positions.is_empty() and (entrance_positions[0] as Vector2).is_equal_approx(semantic_entrance), "projected entrance must use the real semantic door coordinate")
+
+func _test_compound_footprints_extract_only_exposed_south_facades() -> void:
+	var rects: Array = [
+		Rect2(Vector2(-64, -64), Vector2(128, 128)),
+		Rect2(Vector2(64, -64), Vector2(64, 64)),
+	]
+	var spans := BuildingExteriorRenderer.south_facade_spans(rects)
+	_assert(spans.size() == 2, "an east rear wing must preserve its own exposed south edge and the main frontage")
+	var total_width := 0.0
+	for span in spans:
+		total_width += (span as Rect2).size.x
+	_assert(is_equal_approx(total_width, 192.0), "south outline extraction must cover each exposed boundary cell exactly once")
+
+func _test_projected_exterior_runtime_is_visual_only_and_sortable() -> void:
+	var city := ProceduralCityGenerator.new().generate_streamed_chunk(20260821, Vector2i.ZERO)
+	var spec: Dictionary = city["buildings"][0]
+	var building := ProceduralBuilding.new()
+	building.configure(spec)
+	building.position = spec["position"]
+	add_child(building)
+	await get_tree().process_frame
+	var roof := building.get_node("Roof") as TileMapLayer
+	var facade := building.projected_facade()
+	var expected_offset := -float(spec["exterior"]["projection_height_tiles"]) * PixelAtlasMap.TILE_SIZE
+	_assert(is_equal_approx(roof.position.y, expected_offset), "roof artwork must shift north by the facade projection height")
+	_assert(facade != null and facade.projection_height == -expected_offset, "runtime building must own one configured projected facade")
+	_assert(facade.find_children("*", "CollisionObject2D", true, false).is_empty(), "projected exterior visuals must add no gameplay collision")
+	var semantic_entrance_before: Vector2 = spec["interior"]["doors"][0]["position"]
+	_assert((building.specification["interior"]["doors"][0]["position"] as Vector2).is_equal_approx(semantic_entrance_before), "exterior construction must not displace semantic doors")
+	var facade_global_before := facade.global_position
+	var sort_parent := Node2D.new()
+	sort_parent.y_sort_enabled = true
+	add_child(sort_parent)
+	building.attach_exterior_sort_parent(sort_parent)
+	_assert(facade.get_parent() == sort_parent and facade.global_position.is_equal_approx(facade_global_before), "facade proxy must join the actor sort layer without moving")
+	building.queue_free()
+	await get_tree().process_frame
+	_assert(not is_instance_valid(facade), "external facade proxy must be released with its owning building")
+	sort_parent.queue_free()
+	await get_tree().process_frame
+
+func _test_streamed_prague_quarters_are_dense_and_open_spaces_are_rare() -> void:
+	var generator := ProceduralCityGenerator.new()
+	var plaza_chunk_count := 0
+	var courtyard_count := 0
+	var sampled_chunks := 0
+	for y in range(-4, 5):
+		for x in range(-4, 5):
+			var coordinate := Vector2i(x, y)
+			var city := generator.generate_streamed_chunk(20260821, coordinate)
+			sampled_chunks += 1
+			plaza_chunk_count += 1 if not (city.get("public_spaces", []) as Array).is_empty() else 0
+			courtyard_count += (city.get("courtyards", []) as Array).size()
+			_assert(bool(city.get("has_safehouse", false)) == (coordinate == Vector2i.ZERO), "only the origin chunk may reserve the safehouse quarter")
+			if abs(coordinate.x) > 1 or abs(coordinate.y) > 1:
+				continue
+			for block in city["blocks"]:
+				if block["zone"] in [&"safehouse", &"park"]:
+					continue
+				var buildable: Rect2 = (block["rect"] as Rect2).grow(-ProceduralCityGenerator.SIDEWALK_DEPTH)
+				var occupied_area := 0.0
+				for building in city["buildings"]:
+					if building["block_id"] != block["id"]:
+						continue
+					for local_rect in building["interior"]["perimeter_rects"]:
+						occupied_area += (local_rect as Rect2).get_area()
+				var density := occupied_area / buildable.get_area()
+				var minimum_density := 0.60 if bool(block.get("courtyard_reserved", false)) else 0.88
+				_assert(density >= minimum_density, "chunk %s quarter %s size=%s buildings=%d occupied=%.0f coverage %.3f must meet dense threshold %.2f" % [str(coordinate), String(block["id"]), str(buildable.size), (city["buildings"] as Array).filter(func(item: Dictionary) -> bool: return item["block_id"] == block["id"]).size(), occupied_area, density, minimum_density])
+	_assert(plaza_chunk_count > 0 and plaza_chunk_count <= int(ceil(sampled_chunks * 0.12)), "plazas must occur in the deterministic corpus but remain below twelve percent of chunks")
+	_assert(courtyard_count > 0 and courtyard_count <= sampled_chunks, "courtyards must occur but average no more than one per sampled chunk")
+
+func _test_procedural_seed_corpus_is_deterministic_valid_and_bounded() -> void:
+	var generator := ProceduralCityGenerator.new()
+	var archetypes: Dictionary = {}
+	var layouts: Dictionary = {}
+	var maximum_generation_us: int = 0
+	var total_generation_us: int = 0
+	for seed_value in PROCEDURAL_SEED_CORPUS:
+		var started_at := Time.get_ticks_usec()
+		var first: Dictionary = generator.generate(seed_value)
+		var elapsed_us := int(Time.get_ticks_usec() - started_at)
+		maximum_generation_us = maxi(maximum_generation_us, elapsed_us)
+		total_generation_us += elapsed_us
+		var second: Dictionary = generator.generate(seed_value)
+		var errors: Array[String] = generator.validate(first)
+		_assert(errors.is_empty(), "difficult seed %d must validate: %s" % [seed_value, str(errors)])
+		_assert(int(first.get("generation_attempt", ProceduralCityGenerator.MAX_GENERATION_ATTEMPTS)) < ProceduralCityGenerator.MAX_GENERATION_ATTEMPTS, "seed %d must finish within the deterministic retry budget" % seed_value)
+		_assert(String(first.get("generation_error", "")).is_empty(), "seed %d must not report a generation failure" % seed_value)
+		_assert(generator.signature(first) == generator.signature(second), "seed %d must reproduce its complete semantic model" % seed_value)
+		_assert(_semantic_id_snapshot(first) == _semantic_id_snapshot(second), "seed %d must reproduce every stable semantic id" % seed_value)
+		for building in first["buildings"]:
+			archetypes[building["archetype"]] = true
+			layouts[building["interior"]["layout"]] = true
+	_assert(archetypes.size() == ProceduralCityGenerator.BUILDING_ARCHETYPES.size(), "difficult-seed corpus must exercise all five generated building archetypes")
+	_assert(
+		layouts.has(&"strip_x") and layouts.has(&"strip_y") and layouts.has(&"grid_2x2"),
+		"difficult-seed corpus must exercise both generated strip orientations and the four-room grid layout"
+	)
+	_assert(total_generation_us < 10_000_000, "semantic generation corpus must remain under a generous 10-second test ceiling")
+	print("PROCEDURAL_SEMANTIC_PROFILE seeds=%d average_ms=%.3f max_ms=%.3f" % [PROCEDURAL_SEED_CORPUS.size(), float(total_generation_us) / float(PROCEDURAL_SEED_CORPUS.size()) / 1000.0, float(maximum_generation_us) / 1000.0])
+
+func _test_procedural_generation_retries_and_fails_explicitly() -> void:
+	var retry_generator = PROCEDURAL_RETRY_PROBE_SCRIPT.new()
+	retry_generator.forced_validation_failures = 2
+	var recovered: Dictionary = retry_generator.generate(20260821)
+	_assert(int(recovered["generation_attempt"]) == 2, "generator must advance through deterministic attempts after validation rejection")
+	_assert(retry_generator.validation_calls == 3, "generator must stop retrying immediately after the first valid attempt")
+	_assert(String(recovered["generation_error"]).is_empty(), "a recovered deterministic retry must not retain a failure marker")
+
+	var repeated_generator = PROCEDURAL_RETRY_PROBE_SCRIPT.new()
+	repeated_generator.forced_validation_failures = 2
+	var repeated: Dictionary = repeated_generator.generate(20260821)
+	_assert(ProceduralCityGenerator.new().signature(recovered) == ProceduralCityGenerator.new().signature(repeated), "the same seed and rejection count must reproduce the recovered retry layout")
+	_assert(recovered["attempt_seed"] == repeated["attempt_seed"], "deterministic retry attempts must use the same derived seed")
+
+	var failing_generator = PROCEDURAL_RETRY_PROBE_SCRIPT.new()
+	failing_generator.forced_validation_failures = ProceduralCityGenerator.MAX_GENERATION_ATTEMPTS
+	var failed: Dictionary = failing_generator.generate(20260821)
+	_assert(int(failed["generation_attempt"]) == ProceduralCityGenerator.MAX_GENERATION_ATTEMPTS, "exhausted generation must expose the retry bound")
+	_assert(not String(failed["generation_error"]).is_empty(), "exhausted generation must return an explicit failure message")
+	_assert((failed["validation_errors"] as Array).size() == ProceduralCityGenerator.MAX_GENERATION_ATTEMPTS, "exhausted generation must retain one diagnostic per deterministic attempt")
+	_assert(not ProceduralCityGenerator.new().validate(failed).is_empty(), "the explicit failure model must remain safely validateable by the runtime gate")
+
+func _test_procedural_runtime_failure_propagates_attempt_diagnostics() -> void:
+	var district := FAILING_PROCEDURAL_DISTRICT_SCRIPT.new() as ProceduralDistrict
+	var observed_errors: Array[String] = []
+	district.generation_failed.connect(func(_seed_value: int, errors: Array[String]) -> void: observed_errors.append_array(errors))
+	add_child(district)
+	await get_tree().process_frame
+	_assert(district.generation_complete and not district.generation_succeeded, "runtime district must stop cleanly after exhausting deterministic generation attempts")
+	_assert(district.generation_errors.size() == ProceduralCityGenerator.MAX_GENERATION_ATTEMPTS + 1, "runtime failure must expose its summary plus every per-attempt validation diagnostic")
+	_assert(observed_errors == district.generation_errors, "generation_failed must emit the same complete diagnostics retained on the failed district")
+	_assert(district.generation_errors.any(func(error: String) -> bool: return error.begins_with("attempt 0:")), "runtime failure diagnostics must identify the first rejected deterministic attempt")
+	_assert(district.generation_errors.any(func(error: String) -> bool: return error.begins_with("attempt 7:")), "runtime failure diagnostics must identify the final rejected deterministic attempt")
+	district.free()
+	await get_tree().process_frame
+
+func _semantic_id_snapshot(city: Dictionary) -> Array[String]:
+	var result: Array[String] = []
+	for road in city["roads"]:
+		result.append("road:" + String(road["id"]))
+	for intersection in city["intersections"]:
+		result.append("intersection:" + String(intersection["id"]))
+	for block in city["blocks"]:
+		result.append("block:" + String(block["id"]))
+	for parcel in city["parcels"]:
+		result.append("parcel:" + String(parcel["id"]))
+	for building in city["buildings"]:
+		result.append("building:" + String(building["id"]))
+		for room in building["interior"]["rooms"]:
+			result.append("room:" + String(room["stable_id"]))
+		for door in building["interior"]["doors"]:
+			result.append("door:" + String(door["id"]))
+		for window in building["interior"]["windows"]:
+			result.append("window:" + String(window["id"]))
+		for furniture in building["interior"]["furniture"]:
+			result.append("furniture:" + String(furniture["id"]))
+	for exterior in city["exterior_zones"]:
+		result.append("exterior:" + String(exterior["id"]))
+	for prop in city["props"]:
+		result.append("prop:" + String(prop["id"]))
+	for region in city["spawn_regions"]:
+		result.append("spawn:" + String(region["id"]))
+	for point in city["scavenge_points"]:
+		result.append("scavenge:" + String(point["id"]))
+	for landmark in city["landmarks"]:
+		result.append("landmark:" + String(landmark["id"]))
+	result.sort()
+	return result
+
+func _test_procedural_roads_parcels_entrances_and_exteriors_are_valid() -> void:
+	var generator := ProceduralCityGenerator.new()
+	var exterior_kinds: Dictionary = {}
+	var placement_roles: Dictionary = {}
+	for seed_value in [0, 42, 20260821]:
+		var city: Dictionary = generator.generate(seed_value)
+		_assert((city["intersections"] as Array).size() == 25, "seed %d must materialize all 25 road intersections" % seed_value)
+		var road_ids: Dictionary = {}
+		for road in city["roads"]:
+			road_ids[road["id"]] = true
+		for intersection in city["intersections"]:
+			for road_id in intersection["road_ids"]:
+				_assert(road_ids.has(road_id), "intersection %s must reference a generated road" % String(intersection["id"]))
+		var building_by_parcel: Dictionary = {}
+		for building in city["buildings"]:
+			building_by_parcel[building["parcel_id"]] = building
+			_assert(not building.has("scene"), "generated building %s must not instance an authored complete-scene template" % String(building["id"]))
+			_assert(is_zero_approx(float(building["rotation"])), "generated building roots remain unrotated so semantic and runtime bounds agree")
+			for road in city["roads"]:
+				_assert(not (building["footprint"] as Rect2).intersects(road["rect"]), "building %s must not overlap carriageway %s" % [String(building["id"]), String(road["id"])])
+		for parcel in city["parcels"]:
+			_assert(road_ids.has(parcel["frontage_road_id"]), "parcel %s must front a connected generated road" % String(parcel["id"]))
+			_assert(building_by_parcel.has(parcel["id"]), "parcel %s must own exactly one generated building" % String(parcel["id"]))
+			_assert((parcel["access_corridor"] as Rect2).has_point(parcel["entrance_position"]), "parcel entrance must lie in its clear approach corridor")
+			_assert((parcel["access_corridor"] as Rect2).has_point(parcel["approach_position"]), "parcel sidewalk approach must lie in its clear approach corridor")
+		for exterior in city["exterior_zones"]:
+			exterior_kinds[exterior["kind"]] = true
+		for prop in city["props"]:
+			placement_roles[prop["placement_role"]] = true
+			if prop["kind"] == &"car":
+				_assert(prop["interaction"] == &"loot" and not (prop["items"] as Dictionary).is_empty(), "intact generated cars must expose deterministic trunk loot")
+			elif prop["kind"] == &"wreck":
+				_assert(prop["interaction"] == &"salvage" and (prop["items"] as Dictionary).is_empty(), "generated wrecks must remain material salvage rather than trunk loot")
+		_assert(generator.validate(city).is_empty(), "seed %d must reject no overlaps, blocked entrances, or isolated parcels" % seed_value)
+	_assert(exterior_kinds.has(&"parking") and exterior_kinds.has(&"alley") and exterior_kinds.has(&"park"), "semantic city must contain parking, alleys, and a public park")
+	for required_role in [&"sidewalk", &"parking", &"alley", &"public", &"medical", &"service"]:
+		_assert(placement_roles.has(required_role), "exterior prop rules must produce %s placement" % String(required_role))
+
+func _test_procedural_interiors_are_reachable_furnished_and_clear() -> void:
+	var generator := ProceduralCityGenerator.new()
+	var archetypes: Dictionary = {}
+	var roles: Dictionary = {}
+	for seed_value in [1, 42, 8801, 20260821]:
+		var city: Dictionary = generator.generate(seed_value)
+		for building in city["buildings"]:
+			archetypes[building["archetype"]] = true
+			var interior: Dictionary = building["interior"]
+			var errors: Array[String] = ProceduralBuildingGenerator.new().validate(interior)
+			_assert(errors.is_empty(), "generated interior %s must satisfy graph and clearance validation: %s" % [String(building["id"]), str(errors)])
+			_assert((interior["doors"] as Array).any(func(door: Dictionary) -> bool: return bool(door["exterior"])), "generated interior %s needs an exterior graph root" % String(building["id"]))
+			_assert(not (interior["windows"] as Array).is_empty(), "generated interior %s needs generated exterior windows" % String(building["id"]))
+			var furniture_per_room: Dictionary = {}
+			for furniture in interior["furniture"]:
+				furniture_per_room[furniture["room_id"]] = int(furniture_per_room.get(furniture["room_id"], 0)) + 1
+				_assert((furniture["clearance_rect"] as Rect2).encloses(furniture["collision_rect"]), "furniture %s must carry an explicit clearance footprint" % String(furniture["id"]))
+			for room in interior["rooms"]:
+				roles[room["role"]] = true
+				_assert(furniture_per_room.get(room["id"], 0) > 0, "required room %s must contain function-aware furniture" % String(room["id"]))
+	_assert(archetypes.size() == 5, "interior corpus must cover apartment, store, restaurant, clinic, and workshop generators")
+	for required_role in [&"living_room", &"kitchen", &"bedroom", &"bathroom", &"retail_floor", &"stock_room", &"dining_room", &"pantry", &"waiting_area", &"exam_room", &"medical_storage", &"work_floor", &"loading_bay", &"storage", &"office"]:
+		_assert(roles.has(required_role), "generated archetypes must include functional room role %s" % String(required_role))
+
+func _test_procedural_spawn_phases_are_environmental_and_deterministic() -> void:
+	var city: Dictionary = ProceduralCityGenerator.new().generate(20260821)
+	var regions := _spawn_regions_from_city(city)
+	var initial_ids: Array[String] = []
+	var replenishment_ids: Array[String] = []
+	var has_indoor_initial := false
+	var has_exterior_replenishment := false
+	for region_node in regions:
+		var region := region_node as SpawnRegion
+		if region.allows_phase(&"initial"):
+			initial_ids.append(String(region.region_id))
+			has_indoor_initial = has_indoor_initial or region.is_indoor
+		if region.allows_phase(&"replenishment"):
+			replenishment_ids.append(String(region.region_id))
+			has_exterior_replenishment = has_exterior_replenishment or not region.is_indoor
+		_assert(region.is_reachable, "spawn region %s must be generated only from an accessibility-approved environment" % String(region.region_id))
+		_assert(not region.environment_tags.is_empty(), "spawn region %s must retain its environment tags" % String(region.region_id))
+	initial_ids.sort()
+	replenishment_ids.sort()
+	_assert(initial_ids != replenishment_ids, "initial and replenishment phases must expose different eligible region sets")
+	_assert(has_indoor_initial, "initial outbreak placement must include reachable generated interiors")
+	_assert(has_exterior_replenishment, "replenishment must include connected exterior regions")
+	var first_initial := _weighted_region_sequence(regions, 20260821, &"initial", 32)
+	var second_initial := _weighted_region_sequence(regions, 20260821, &"initial", 32)
+	var first_replenishment := _weighted_region_sequence(regions, 20260821, &"replenishment", 32)
+	_assert(first_initial == second_initial, "city seed must reproduce initial environment-region selection")
+	_assert(first_initial != first_replenishment, "initial and replenishment phase weights must produce distinct deterministic selection streams")
+	for region in regions:
+		(region as SpawnRegion).free()
+
+func _test_spawn_manager_waits_for_generation_begin_and_reset() -> void:
+	var container := Node2D.new()
+	container.add_to_group("entity_container")
+	add_child(container)
+	var region := SpawnRegion.new()
+	region.region_id = &"test/startup_gate"
+	region.radius = 180.0
+	add_child(region)
+	await get_tree().physics_frame
+	UrbanNavigationService.build(Vector2(512, 512))
+	var manager := SpawnManager.new()
+	manager.zombie_scene = ZOMBIE_SCENE
+	manager.initial_population = 2
+	add_child(manager)
+	await get_tree().process_frame
+	manager.set_world_seed(73021, Vector2.ZERO)
+	_assert(not manager.is_processing(), "spawn replenishment must stay disabled while procedural generation is pending")
+	manager.begin()
+	_assert(manager.is_processing(), "Main.begin() must enable replenishment only after generation succeeds")
+	_assert(manager.active_zombie_count() == 2, "the first begin() must create exactly one configured initial burst")
+	manager.begin()
+	_assert(manager.active_zombie_count() == 2, "a repeated begin() must not duplicate the initial zombie burst")
+	manager.reset()
+	_assert(not manager.is_processing(), "restart reset must disable replenishment until the regenerated world calls begin()")
+	manager.queue_free()
+	region.queue_free()
+	container.queue_free()
+	await get_tree().process_frame
+	UrbanNavigationService.reset()
+
+func _spawn_regions_from_city(city: Dictionary) -> Array[SpawnRegion]:
+	var result: Array[SpawnRegion] = []
+	for spec in city["spawn_regions"]:
+		var region := SpawnRegion.new()
+		region.region_id = spec["id"]
+		region.position = spec["position"]
+		region.radius = spec["radius"]
+		region.category = spec["category"]
+		region.environment_tags.assign(spec["environment_tags"])
+		region.initial_weight = spec["initial_weight"]
+		region.replenishment_weight = spec["replenishment_weight"]
+		region.allow_initial = spec["allow_initial"]
+		region.allow_replenishment = spec["allow_replenishment"]
+		region.is_indoor = spec["indoor"]
+		region.is_reachable = spec["reachable"]
+		result.append(region)
+	return result
+
+func _weighted_region_sequence(regions: Array[SpawnRegion], seed_value: int, phase: StringName, count: int) -> Array[String]:
+	var manager := SpawnManager.new()
+	manager.set_world_seed(seed_value)
+	var untyped_regions: Array = regions
+	var result: Array[String] = []
+	for _i in range(count):
+		var selected: SpawnRegion = manager._pick_weighted_region(untyped_regions, phase)
+		result.append(String(selected.region_id) if selected else "")
+	manager.free()
+	return result
+
+func _test_generated_building_runtime_ids_and_state_persist() -> void:
+	var city: Dictionary = ProceduralCityGenerator.new().generate(8801)
+	var spec: Dictionary = city["buildings"][0]
+	var first: ProceduralBuilding = await _instantiate_generated_building(spec)
+	var first_ids := _runtime_generated_id_snapshot(first)
+	_assert_no_duplicate_runtime_ids(first_ids)
+	_assert(first.semantic_room_count() == (spec["interior"]["rooms"] as Array).size(), "runtime building must materialize every semantic room")
+	var door := first.get_tree().get_nodes_in_group("doors").filter(func(node: Node) -> bool: return first.is_ancestor_of(node))[0] as Door
+	var persisted_door_id := door.door_id
+	door.toggle()
+	_assert(door.is_open, "generated door must remain interactable")
+	var loot := _first_descendant_of_type(first, LootContainerComponent) as LootContainerComponent
+	_assert(loot != null, "generated building must materialize searchable loot furniture")
+	var loot_id := loot.prop_id
+	var sink := Inventory.new(0.0)
+	loot.get_inventory().move_all_to(sink)
+	_assert(not sink.is_empty(), "generated loot furniture must contain function-appropriate starting items")
+	first.free()
+	await get_tree().process_frame
+
+	var second: ProceduralBuilding = await _instantiate_generated_building(spec)
+	var second_ids := _runtime_generated_id_snapshot(second)
+	_assert(first_ids == second_ids, "rebuilding a seed must reproduce all typed runtime IDs")
+	var restored_door := _find_door_by_id(second, persisted_door_id)
+	_assert(restored_door != null and restored_door.is_open, "generated door state must resolve through its stable ID after reconstruction")
+	var restored_loot := _find_loot_by_id(second, loot_id)
+	_assert(restored_loot != null and restored_loot.get_inventory().is_empty(), "generated loot depletion must resolve through its stable ID after reconstruction")
+	var wall_damage := _find_explosive_wall_damage(second)
+	_assert(wall_damage != null, "generated shell must contain explosive-rated destructible walls")
+	var destroyed_wall_id := wall_damage.object_id
+	wall_damage.apply_damage(999.0, EnvironmentDamage.DamageClass.EXPLOSIVE)
+	await get_tree().process_frame
+	_assert(WorldState.get_prop_state_flag(destroyed_wall_id, &"destroyed", false), "generated wall destruction must persist under its stable ID")
+	second.free()
+	await get_tree().process_frame
+	var third: ProceduralBuilding = await _instantiate_generated_building(spec)
+	await get_tree().process_frame
+	_assert(_find_environment_damage_by_id(third, destroyed_wall_id) == null, "persistently destroyed generated wall must not reappear after reconstruction")
+	third.free()
+	await get_tree().process_frame
+
+func _test_generated_scavenge_stock_persists_by_stable_id() -> void:
+	var point_id := StringName("city/test/scavenge/materials")
+	var first := SCAVENGE_POINT_SCENE.instantiate() as ScavengePoint
+	first.point_id = point_id
+	first.remaining_stock = 9
+	first.yield_per_scavenge = 3
+	add_child(first)
+	await get_tree().process_frame
+	_assert(first.harvest(2) == 2 and first.remaining_stock == 7, "partial generated scavenging must remove only the accepted stock")
+	_assert(WorldState.get_prop_state_flag(point_id, &"remaining_stock", -1) == 7, "partial generated scavenging must persist the exact remainder under point_id")
+	first.free()
+	await get_tree().process_frame
+
+	var rebuilt := SCAVENGE_POINT_SCENE.instantiate() as ScavengePoint
+	rebuilt.point_id = point_id
+	rebuilt.remaining_stock = 9
+	rebuilt.yield_per_scavenge = 20
+	add_child(rebuilt)
+	await get_tree().process_frame
+	_assert(rebuilt.remaining_stock == 7, "reconstructing the same generated scavenge ID must restore its partial remainder, not its seed stock")
+	_assert(rebuilt.harvest(20) == 7, "the restored generated scavenge site must yield only its persisted remainder")
+	_assert(WorldState.get_prop_state_flag(point_id, &"remaining_stock", -1) == 0, "depletion must persist an exact zero remainder")
+	await get_tree().process_frame
+	await get_tree().process_frame
+	_assert(not is_instance_valid(rebuilt), "a fully depleted generated scavenge site must leave the runtime tree")
+
+	var depleted_rebuild := SCAVENGE_POINT_SCENE.instantiate() as ScavengePoint
+	depleted_rebuild.point_id = point_id
+	depleted_rebuild.remaining_stock = 9
+	add_child(depleted_rebuild)
+	await get_tree().process_frame
+	await get_tree().process_frame
+	_assert(not is_instance_valid(depleted_rebuild), "a persistently depleted generated scavenge site must not reconstruct with fresh stock")
+
+func _instantiate_generated_building(spec: Dictionary) -> ProceduralBuilding:
+	var building := ProceduralBuilding.new()
+	building.configure(spec)
+	add_child(building)
+	await get_tree().physics_frame
+	return building
+
+func _runtime_generated_id_snapshot(root: Node) -> Array[String]:
+	var result: Array[String] = []
+	_collect_runtime_generated_ids(root, result)
+	result.sort()
+	return result
+
+func _assert_no_duplicate_runtime_ids(sorted_ids: Array[String]) -> void:
+	for index in range(1, sorted_ids.size()):
+		_assert(sorted_ids[index] != sorted_ids[index - 1], "generated runtime ID must be unique within its persistence domain: %s" % sorted_ids[index])
+
+func _collect_runtime_generated_ids(node: Node, output: Array[String]) -> void:
+	if node is ProceduralBuilding:
+		output.append("building:" + String((node as ProceduralBuilding).building_id))
+	elif node is Room:
+		var room := node as Room
+		output.append("room:%s/%s" % [String(room.building_id), String(room.room_id)])
+	elif node is Door:
+		output.append("door:" + String((node as Door).door_id))
+	elif node is BuildingWindow:
+		output.append("window:" + String((node as BuildingWindow).window_id))
+	elif node is LootContainerComponent:
+		output.append("loot:" + String((node as LootContainerComponent).prop_id))
+	elif node is SalvageableComponent:
+		output.append("salvage:" + String((node as SalvageableComponent).prop_id))
+	elif node is EnvironmentDamageComponent:
+		var object_id := (node as EnvironmentDamageComponent).object_id
+		_assert(object_id != &"", "every generated damage component must have a stable object ID")
+		output.append("damage:" + String(object_id))
+	for child in node.get_children():
+		_collect_runtime_generated_ids(child, output)
+
+func _first_descendant_of_type(root: Node, type_script: Variant) -> Node:
+	for child in root.get_children():
+		if is_instance_of(child, type_script):
+			return child
+		var nested := _first_descendant_of_type(child, type_script)
+		if nested:
+			return nested
+	return null
+
+func _find_door_by_id(root: Node, id: StringName) -> Door:
+	if root is Door and (root as Door).door_id == id:
+		return root as Door
+	for child in root.get_children():
+		var found := _find_door_by_id(child, id)
+		if found:
+			return found
+	return null
+
+func _find_loot_by_id(root: Node, id: StringName) -> LootContainerComponent:
+	if root is LootContainerComponent and (root as LootContainerComponent).prop_id == id:
+		return root as LootContainerComponent
+	for child in root.get_children():
+		var found := _find_loot_by_id(child, id)
+		if found:
+			return found
+	return null
+
+func _find_explosive_wall_damage(root: Node) -> EnvironmentDamageComponent:
+	if root is EnvironmentDamageComponent:
+		var damage := root as EnvironmentDamageComponent
+		if damage.minimum_damage_class == EnvironmentDamage.DamageClass.EXPLOSIVE and "/wall_" in String(damage.object_id):
+			return damage
+	for child in root.get_children():
+		var found := _find_explosive_wall_damage(child)
+		if found:
+			return found
+	return null
+
+func _find_environment_damage_by_id(root: Node, id: StringName) -> EnvironmentDamageComponent:
+	if root is EnvironmentDamageComponent and (root as EnvironmentDamageComponent).object_id == id:
+		return root as EnvironmentDamageComponent
+	for child in root.get_children():
+		var found := _find_environment_damage_by_id(child, id)
+		if found:
+			return found
+	return null
+
+func _test_procedural_restart_is_isolated_and_reuses_selected_seed() -> void:
+	var main_scene: PackedScene = load("res://scenes/main/Main.tscn")
+	var first := main_scene.instantiate() as Main
+	var first_world := first.get_node("World") as StreamingWorld
+	first_world.city_seed = 65535
+	var first_manager := first.get_node("SpawnManager") as SpawnManager
+	first_manager.initial_population = 0
+	first_manager.spawn_interval = 9999.0
+	add_child(first)
+	for _i in range(30):
+		if first_world.generation_complete:
+			break
+		await get_tree().physics_frame
+	await get_tree().process_frame
+	_assert(first_world.generation_succeeded, "production Main restart fixture must finish its first generated world")
+	var first_origin := first_world.get_chunk(Vector2i.ZERO)
+	var first_signature := ProceduralCityGenerator.new().signature(first_origin.city_model)
+	var first_ids: Array[String] = []
+	for building in first_origin.get_node("Buildings").get_children():
+		first_ids.append_array(_runtime_generated_id_snapshot(building))
+	first_ids.sort()
+	_assert_no_duplicate_runtime_ids(first_ids)
+	var selected_seed := first_world.resolved_seed
+	var first_counts := _main_runtime_group_counts(first)
+	var first_survivor_nodes: Array[Node] = get_tree().get_nodes_in_group("survivors").filter(func(node: Node) -> bool: return first.is_ancestor_of(node))
+	_assert(first_counts[&"survivors"] == 4, "production Main must register exactly four survivors before restart")
+	_assert(first_counts[&"scavenge_point"] == _streamed_semantic_count(first_world, &"scavenge_points"), "production Main must materialize every generated scavenge point before restart")
+	_assert(first_counts[&"spawn_regions"] == _streamed_semantic_count(first_world, &"spawn_regions"), "production Main must materialize every generated spawn region before restart")
+	_assert(first_counts[&"storage_container"] == 4, "production Main must materialize all four safehouse storage roles before restart")
+	_assert(first._prepare_restart_state() == selected_seed, "production restart preparation must preserve the selected procedural seed")
+	_assert(WorldState.world_flags.get(&"city_seed", -1) == selected_seed, "production restart preparation must restore the seed after clearing runtime persistence")
+	first.free()
+	await get_tree().process_frame
+	await get_tree().physics_frame
+	_assert(get_tree().get_nodes_in_group("rooms").is_empty(), "restart teardown must remove every old generated room from global groups")
+	_assert(get_tree().get_nodes_in_group("doors").is_empty(), "restart teardown must remove every old generated door from global groups")
+	_assert(get_tree().get_nodes_in_group("spawn_regions").is_empty(), "restart teardown must remove every old generated spawn region")
+	_assert(get_tree().get_nodes_in_group("scavenge_point").is_empty(), "restart teardown must remove every old generated scavenge point")
+	for survivor_node in first_survivor_nodes:
+		_assert(not is_instance_valid(survivor_node), "restart teardown must free every survivor owned by the prior Main instance")
+	_assert(get_tree().get_nodes_in_group("storage_container").is_empty(), "restart teardown must remove every old safehouse storage node")
+
+	var second := main_scene.instantiate() as Main
+	var second_world := second.get_node("World") as StreamingWorld
+	second_world.city_seed = -1
+	var second_manager := second.get_node("SpawnManager") as SpawnManager
+	second_manager.initial_population = 0
+	second_manager.spawn_interval = 9999.0
+	add_child(second)
+	for _i in range(30):
+		if second_world.generation_complete:
+			break
+		await get_tree().physics_frame
+	await get_tree().process_frame
+	_assert(second_world.generation_succeeded, "production Main restart fixture must finish its regenerated world")
+	_assert(second_world.resolved_seed == selected_seed, "restart must reuse the selected city seed after clearing runtime state")
+	var second_origin := second_world.get_chunk(Vector2i.ZERO)
+	_assert(ProceduralCityGenerator.new().signature(second_origin.city_model) == first_signature, "restart must reconstruct the same generated origin chunk")
+	var second_ids: Array[String] = []
+	for building in second_origin.get_node("Buildings").get_children():
+		second_ids.append_array(_runtime_generated_id_snapshot(building))
+	second_ids.sort()
+	_assert_no_duplicate_runtime_ids(second_ids)
+	_assert(first_ids == second_ids, "restart must reconstruct the same generated runtime IDs without accumulation")
+	_assert(_main_runtime_group_counts(second) == first_counts, "restart must reconstruct identical generated/scoped runtime group counts without accumulation")
+	_assert(WorldState.survivors.size() == 4, "restart must rebuild four survivor records rather than accumulate the prior run")
+	WorldState.reset()
+	SimulationClock.reset()
+	NoiseManager.reset()
+	UrbanNavigationService.reset()
+	second.free()
+	await get_tree().process_frame
+
+func _main_runtime_group_counts(main_root: Main) -> Dictionary:
+	var result: Dictionary = {}
+	for group_name in [&"survivors", &"scavenge_point", &"spawn_regions", &"storage_container", &"rooms", &"doors"]:
+		var count := 0
+		for node in get_tree().get_nodes_in_group(group_name):
+			if main_root.is_ancestor_of(node):
+				count += 1
+		result[group_name] = count
+	return result
+
+func _streamed_semantic_count(world: StreamingWorld, field: StringName) -> int:
+	var total := 0
+	for chunk in world.get_children():
+		if chunk is ProceduralDistrict:
+			total += (chunk as ProceduralDistrict).city_model.get(field, []).size()
+	return total
+
+func _instantiate_procedural_district_fixture(seed_value: int) -> ProceduralDistrict:
+	var district := PROCEDURAL_DISTRICT_SCENE.instantiate() as ProceduralDistrict
+	district.city_seed = seed_value
+	add_child(district)
+	for _i in range(20):
+		if district.generation_complete:
+			break
+		await get_tree().physics_frame
+	_assert(district.generation_complete and district.generation_succeeded, "procedural district seed %d must finish successful runtime generation" % seed_value)
+	return district
+
+func _test_procedural_runtime_generation_profile() -> void:
+	var runtime_seeds: Array[int] = [0, 42, 8801, 20260821, 2147483646]
+	var durations: Array[int] = []
+	var maximum_tree_nodes := 0
+	for seed_value in runtime_seeds:
+		var district := await _instantiate_procedural_district_fixture(seed_value)
+		durations.append(district.generation_duration_ms)
+		maximum_tree_nodes = maxi(maximum_tree_nodes, get_tree().get_node_count())
+		_assert(UrbanNavigationService.is_built(), "runtime seed %d must build navigation after collision settles" % seed_value)
+		_assert(district.generation_duration_ms > 0 and district.generation_duration_ms < 5000, "runtime seed %d must finish inside the five-second generation ceiling" % seed_value)
+		_assert((district.get_node("Buildings").get_children() as Array).size() == (district.city_model["buildings"] as Array).size(), "runtime seed %d must materialize every semantic building" % seed_value)
+		await _assert_runtime_city_is_physically_connected(district, seed_value)
+		district.free()
+		await get_tree().process_frame
+		UrbanNavigationService.reset()
+		_assert(get_tree().get_nodes_in_group("doors").is_empty(), "runtime seed %d teardown must remove generated doors before the next seed" % seed_value)
+		_assert(get_tree().get_nodes_in_group("rooms").is_empty(), "runtime seed %d teardown must remove generated rooms before the next seed" % seed_value)
+	durations.sort()
+	var total_ms := 0
+	for duration in durations:
+		total_ms += duration
+	var p95_index := clampi(ceili(float(durations.size()) * 0.95) - 1, 0, durations.size() - 1)
+	print("PROCEDURAL_RUNTIME_PROFILE seeds=%d average_ms=%.3f p95_ms=%d max_ms=%d max_tree_nodes=%d" % [runtime_seeds.size(), float(total_ms) / float(runtime_seeds.size()), durations[p95_index], durations.back(), maximum_tree_nodes])
+
+func _assert_runtime_city_is_physically_connected(district: ProceduralDistrict, seed_value: int) -> void:
+	for door_node in get_tree().get_nodes_in_group("doors"):
+		var door := door_node as Door
+		if door and district.is_ancestor_of(door) and not door.is_open:
+			door.toggle()
+	await get_tree().physics_frame
+	var origin := Vector2.ZERO
+	_assert(UrbanNavigationService.is_position_free(origin), "runtime seed %d arterial anchor must be free" % seed_value)
+	for building_node in district.get_node("Buildings").get_children():
+		var building := building_node as ProceduralBuilding
+		var approach: Vector2 = building.specification["approach_position"]
+		_assert(UrbanNavigationService.is_position_free(approach), "runtime seed %d building %s approach must be clear" % [seed_value, String(building.building_id)])
+		_assert(UrbanNavigationService.are_positions_connected(origin, approach), "runtime seed %d building %s must connect to the exterior road component" % [seed_value, String(building.building_id)])
+		for room_node in building.get_node("Rooms").get_children():
+			var room := room_node as Room
+			var room_center := room.get_bounds_rect().get_center()
+			_assert(UrbanNavigationService.is_position_free(room_center), "runtime seed %d room %s center aisle must be clear" % [seed_value, String(room.room_id)])
+			_assert(UrbanNavigationService.are_positions_connected(approach, room_center), "runtime seed %d room %s must be reachable through opened generated portals" % [seed_value, String(room.room_id)])
+	for landmark in district.city_model["landmarks"]:
+		var landmark_position: Vector2 = landmark["position"]
+		_assert(UrbanNavigationService.is_position_free(landmark_position), "runtime seed %d landmark %s must occupy a free cell" % [seed_value, String(landmark["id"])])
+		_assert(UrbanNavigationService.are_positions_connected(origin, landmark_position), "runtime seed %d landmark %s must connect to the road component" % [seed_value, String(landmark["id"])])
+	for scavenge in district.city_model["scavenge_points"]:
+		var scavenge_position: Vector2 = scavenge["position"]
+		_assert(UrbanNavigationService.is_position_free(scavenge_position), "runtime seed %d scavenge site %s must occupy a free cell" % [seed_value, String(scavenge["id"])])
+		_assert(UrbanNavigationService.are_positions_connected(origin, scavenge_position), "runtime seed %d scavenge site %s must connect to the road component" % [seed_value, String(scavenge["id"])])
+	var manager := SpawnManager.new()
+	manager.set_world_seed(seed_value, origin)
+	add_child(manager)
+	await get_tree().process_frame
+	var scoped_regions: Array = get_tree().get_nodes_in_group("spawn_regions").filter(func(node: Node) -> bool: return district.is_ancestor_of(node))
+	for region_index in range(scoped_regions.size()):
+		var region := scoped_regions[region_index] as SpawnRegion
+		var candidate_rng := RandomNumberGenerator.new()
+		candidate_rng.seed = seed_value + (region_index + 1) * 7919
+		var found_valid_candidate := false
+		for _sample in range(96):
+			var candidate := region.random_point(candidate_rng)
+			if manager._is_valid_spawn_candidate(candidate, null, null, region):
+				found_valid_candidate = true
+				break
+		_assert(found_valid_candidate, "runtime seed %d spawn region %s must contain a full-footprint-valid candidate" % [seed_value, String(region.region_id)])
+	manager.free()
+	await get_tree().process_frame
+
+func _test_procedural_full_main_landmarks_rooms_and_safehouse_are_navigable() -> void:
+	var main_instance := load("res://scenes/main/Main.tscn").instantiate() as Main
+	var world := main_instance.get_node("World") as StreamingWorld
+	world.city_seed = 20260821
+	var manager := main_instance.get_node("SpawnManager") as SpawnManager
+	manager.initial_population = 0
+	manager.spawn_interval = 9999.0
+	add_child(main_instance)
+	for _i in range(30):
+		if world.generation_complete:
+			break
+		await get_tree().physics_frame
+	await get_tree().process_frame
+	_assert(world.generation_succeeded, "full Main runtime must complete procedural generation before actors and population")
+	_assert(world.generation_duration_ms < 15000, "full streamed runtime generation must remain below the initial-chunk activation ceiling")
+	var origin_chunk := world.get_chunk(Vector2i.ZERO)
+	var settlement := main_instance.get_node("Settlement") as Settlement
+	_assert(settlement.global_position.is_equal_approx(world.get_safehouse_position()), "safehouse must be positioned at the generated seed before navigation sampling")
+	for layer_name in ["Ground", "Roads", "Sidewalks", "RoadMarkings"]:
+		var tile_layer := origin_chunk.get_node("GroundLayers/%s" % layer_name) as TileMapLayer
+		_assert(tile_layer != null and not tile_layer.get_used_cells().is_empty(), "procedural renderer must rasterize the semantic %s layer" % layer_name)
+	var street_props: Array = get_tree().get_nodes_in_group("generated_street_prop").filter(func(node: Node) -> bool: return main_instance.is_ancestor_of(node))
+	_assert(street_props.size() == _streamed_semantic_count(world, &"props"), "runtime exterior dressing must materialize every active semantic prop")
+	var entity_container := main_instance.get_node("EntityContainer")
+	var prop_specs_by_id: Dictionary = {}
+	for chunk in world.get_children():
+		if chunk is ProceduralDistrict:
+			for prop_spec in (chunk as ProceduralDistrict).city_model["props"]:
+				prop_specs_by_id[prop_spec["id"]] = prop_spec
+	for prop_root in street_props:
+		_assert(entity_container.is_ancestor_of(prop_root), "generated exterior objects must share the actor y-sort container for correct top-down occlusion")
+		_assert(_first_descendant_of_type(prop_root, InteractableComponent) != null, "every generated exterior object must be player-interactable")
+		_assert(_first_descendant_of_type(prop_root, EnvironmentDamageComponent) != null, "every generated exterior object must carry class-filtered durability")
+		var prop_damage := _first_descendant_of_type(prop_root, EnvironmentDamageComponent) as EnvironmentDamageComponent
+		var prop_spec: Dictionary = prop_specs_by_id.get(prop_damage.object_id, {})
+		_assert(not prop_spec.is_empty(), "every generated exterior runtime object must resolve to its semantic stable ID")
+		if prop_spec.get("kind", &"") == &"car":
+			var car_loot := _first_descendant_of_type(prop_root, LootContainerComponent) as LootContainerComponent
+			_assert(car_loot != null and not car_loot.get_inventory().is_empty(), "generated intact cars must materialize searchable trunk inventory")
+			_assert(_first_descendant_of_type(prop_root, SalvageableComponent) == null, "generated intact cars must not be mapped to wreck salvage")
+			_assert(prop_damage.minimum_damage_class == EnvironmentDamage.DamageClass.HEAVY, "generated intact cars must preserve their heavy structural damage threshold when mapped to loot")
+		elif prop_spec.get("kind", &"") == &"wreck":
+			_assert(_first_descendant_of_type(prop_root, SalvageableComponent) != null, "generated wrecks must materialize salvage yield")
+			_assert(_first_descendant_of_type(prop_root, LootContainerComponent) == null, "generated wrecks must not materialize intact trunk loot")
+	var generated_scavenge_points := get_tree().get_nodes_in_group("scavenge_point").filter(func(node: Node) -> bool: return main_instance.is_ancestor_of(node))
+	_assert(generated_scavenge_points.size() == _streamed_semantic_count(world, &"scavenge_points"), "runtime must materialize every active generated scavenging site")
+	for point in generated_scavenge_points:
+		_assert(_first_descendant_of_type(point, InteractableComponent) != null, "generated scavenging sites must be directly usable by the player")
+	var safehouse_storages := get_tree().get_nodes_in_group("storage_container").filter(func(node: Node) -> bool: return settlement.is_ancestor_of(node))
+	_assert(safehouse_storages.size() == 4, "physical safehouse must retain all four functional storage roles")
+	var gatehouse_roof := settlement.get_node_or_null("Interior/GatehouseRoof") as TileMapLayer
+	_assert(gatehouse_roof != null and not gatehouse_roof.get_used_cells().is_empty(), "open safehouse courtyard must receive a projected entrance-lodge roof without covering the yard")
+	var gatehouse_facades := get_tree().get_nodes_in_group("projected_building_facade").filter(func(node: Node) -> bool: return node.name == "ProjectedGatehouseFacade" and entity_container.is_ancestor_of(node))
+	_assert(gatehouse_facades.size() == 1, "safehouse entrance facade must share the actor y-sort layer exactly once")
+	for storage in safehouse_storages:
+		_assert(_first_descendant_of_type(storage, InteractableComponent) != null, "safehouse storage must use the PlayerInteractor contract")
+		_assert(_first_descendant_of_type(storage, EnvironmentDamageComponent) != null, "safehouse storage must be heavy-class destructible")
+	for door_node in get_tree().get_nodes_in_group("doors"):
+		var door := door_node as Door
+		if world.is_ancestor_of(door) and not door.is_open:
+			door.toggle()
+	await get_tree().physics_frame
+	var origin := Vector2.ZERO
+	_assert(UrbanNavigationService.is_position_free(origin), "central arterial intersection must remain navigable")
+	_assert(UrbanNavigationService.is_position_free(origin_chunk.to_global(origin_chunk.city_model["player_spawn"])), "generated player spawn must be clear inside the physical safehouse")
+	_assert(UrbanNavigationService.is_position_free(origin_chunk.to_global(origin_chunk.city_model["safehouse_entrance"])), "physical safehouse entrance must remain open")
+	_assert(UrbanNavigationService.are_positions_connected(origin, origin_chunk.to_global(origin_chunk.city_model["safehouse_entrance"])), "safehouse entrance must connect to the exterior road component")
+	for building_node in origin_chunk.get_node("Buildings").get_children():
+		var building := building_node as ProceduralBuilding
+		var approach: Vector2 = building.specification["approach_position"]
+		_assert(UrbanNavigationService.is_position_free(approach), "building %s exterior approach must be free" % String(building.building_id))
+		_assert(UrbanNavigationService.are_positions_connected(origin, approach), "building %s approach must connect to the road network" % String(building.building_id))
+		for room_node in building.get_node("Rooms").get_children():
+			var room := room_node as Room
+			var room_center := room.get_bounds_rect().get_center()
+			_assert(UrbanNavigationService.is_position_free(room_center), "generated room %s center aisle must be clear" % String(room.room_id))
+			_assert(UrbanNavigationService.are_positions_connected(approach, room_center), "generated room %s must be physically reachable through opened portals" % String(room.room_id))
+	for landmark in origin_chunk.city_model["landmarks"]:
+		var position: Vector2 = origin_chunk.to_global(landmark["position"])
+		_assert(UrbanNavigationService.is_position_free(position), "generated landmark %s must stand on a free navigation cell" % String(landmark["id"]))
+		_assert(UrbanNavigationService.are_positions_connected(origin, position), "generated landmark %s must connect to the road network" % String(landmark["id"]))
+	WorldState.reset()
+	SimulationClock.reset()
+	UrbanNavigationService.reset()
+	main_instance.free()
+	await get_tree().process_frame
+
+func _test_population_profile_caps_are_exact() -> void:
+	var manager := SpawnManager.new()
+	var expected := {
+		SpawnManager.PopulationProfile.LOW: 50,
+		SpawnManager.PopulationProfile.MEDIUM: 100,
+		SpawnManager.PopulationProfile.HIGH: 150,
+		SpawnManager.PopulationProfile.STRESS: 250,
+	}
+	for profile in expected:
+		manager.apply_population_profile(profile)
+		_assert(manager.max_population == expected[profile], "population profile %d must cap at exactly %d" % [profile, expected[profile]])
+	manager.free()
+
+func _test_environment_walls_reject_bullets_and_accept_explosives() -> void:
+	var fixture := Node2D.new()
+	fixture.name = "DestructibleWallFixture"
+	add_child(fixture)
+	BuildingShellBuilder.build_perimeter_walls(fixture, Vector2(32, 32), load("res://assets/pixel/props/wall_concrete.png"))
+	var wall_ids: Dictionary = {}
+	for child in fixture.get_children():
+		var wall_body := child as StaticBody2D
+		var wall_damage := wall_body.get_node("EnvironmentDamageComponent") as EnvironmentDamageComponent
+		_assert(not wall_ids.has(wall_damage.object_id), "perimeter construction must not overlap corner bodies or duplicate destruction ids")
+		wall_ids[wall_damage.object_id] = true
+	var wall := fixture.get_child(0) as StaticBody2D
+	var component := wall.get_node("EnvironmentDamageComponent") as EnvironmentDamageComponent
+	var before := component.durability()
+	component.apply_damage(999.0, EnvironmentDamage.DamageClass.SMALL_ARMS)
+	_assert(is_equal_approx(component.durability(), before), "ordinary bullets must not reduce explosive-rated wall durability")
+	component.apply_damage(before, EnvironmentDamage.DamageClass.EXPLOSIVE)
+	await get_tree().process_frame
+	_assert(not is_instance_valid(wall), "explosive structural damage must breach the wall body")
+	fixture.queue_free()
+	await get_tree().process_frame
+
+func _test_doors_and_windows_enforce_damage_classes_and_persist() -> void:
+	var door := DOOR_SCENE.instantiate() as Door
+	door.door_id = &"damage_test/door"
+	add_child(door)
+	await get_tree().process_frame
+	var door_damage := door.get_node("CollisionBody/EnvironmentDamageComponent") as EnvironmentDamageComponent
+	_assert(not door_damage.apply_damage(999.0, EnvironmentDamage.DamageClass.SMALL_ARMS), "small arms must not damage an explosive-rated door")
+	_assert(door_damage.apply_damage(999.0, EnvironmentDamage.DamageClass.EXPLOSIVE), "explosives must breach a generated door")
+	await get_tree().process_frame
+	await get_tree().process_frame
+	_assert(not is_instance_valid(door), "breached door must remove its movement and vision collider")
+	_assert(WorldState.get_door_open(&"damage_test/door"), "breached door must persist as open")
+	_assert(WorldState.get_prop_state_flag(&"damage_test/door/structure", &"destroyed", false), "breached door structure must persist as destroyed")
+
+	var intact := WINDOW_SCENE.instantiate() as BuildingWindow
+	intact.window_id = &"damage_test/window_intact"
+	intact.is_boarded = false
+	add_child(intact)
+	await get_tree().process_frame
+	var intact_damage := intact.get_node("CollisionBody/EnvironmentDamageComponent") as EnvironmentDamageComponent
+	_assert(intact_damage.apply_damage(999.0, EnvironmentDamage.DamageClass.SMALL_ARMS), "small arms must shatter intact glass")
+	await get_tree().process_frame
+	await get_tree().process_frame
+	_assert(not is_instance_valid(intact), "shattered intact window must remove its collider")
+
+	var restored := WINDOW_SCENE.instantiate() as BuildingWindow
+	restored.window_id = &"damage_test/window_intact"
+	restored.is_boarded = false
+	add_child(restored)
+	await get_tree().process_frame
+	await get_tree().process_frame
+	_assert(not is_instance_valid(restored), "a persistently shattered generated window must not reappear")
+
+	var boarded := WINDOW_SCENE.instantiate() as BuildingWindow
+	boarded.window_id = &"damage_test/window_boarded"
+	boarded.is_boarded = true
+	add_child(boarded)
+	await get_tree().process_frame
+	var boarded_damage := boarded.get_node("CollisionBody/EnvironmentDamageComponent") as EnvironmentDamageComponent
+	_assert(not boarded_damage.apply_damage(999.0, EnvironmentDamage.DamageClass.SMALL_ARMS), "small arms must not breach a boarded window")
+	_assert(boarded_damage.apply_damage(999.0, EnvironmentDamage.DamageClass.HEAVY), "heavy damage must breach a boarded window")
+	await get_tree().process_frame
+	await get_tree().process_frame
+	_assert(not is_instance_valid(boarded), "breached boarded window must remove its collider")
+
+func _test_destroyed_safehouse_storage_does_not_duplicate_on_rebuild() -> void:
+	var first := StorageContainer.new()
+	first.storage_role = "medical"
+	first.physical_interaction_enabled = true
+	first.starting_items = {"medical_supplies": 4}
+	add_child(first)
+	await get_tree().process_frame
+	var damage := first.get_node("CollisionBody/EnvironmentDamageComponent") as EnvironmentDamageComponent
+	_assert(damage.apply_damage(999.0, EnvironmentDamage.DamageClass.HEAVY), "heavy damage must destroy physical safehouse storage")
+	await get_tree().process_frame
+	await get_tree().process_frame
+	_assert(not is_instance_valid(first), "destroyed safehouse storage must leave the runtime tree")
+	_assert(WorldState.drops.size() == 1, "destroying stocked safehouse storage must emit exactly one conserved drop")
+	var first_drop: WorldDrop = WorldState.drops.values()[0]
+	_assert(first_drop.inventory.get_count(&"medical_supplies") == 4, "safehouse storage destruction must conserve its exact stock")
+
+	var rebuilt := StorageContainer.new()
+	rebuilt.storage_role = "medical"
+	rebuilt.physical_interaction_enabled = true
+	rebuilt.starting_items = {"medical_supplies": 4}
+	add_child(rebuilt)
+	await get_tree().process_frame
+	await get_tree().process_frame
+	_assert(not is_instance_valid(rebuilt), "persistently destroyed safehouse storage must not reconstruct")
+	_assert(WorldState.drops.size() == 1, "reconstructing destroyed storage must not duplicate its starting inventory into another drop")
+	_assert(first_drop.inventory.get_count(&"medical_supplies") == 4, "reconstruction must not mutate the original conserved drop")
+
+func _test_environment_props_are_interactable_and_damageable() -> void:
+	var fixture := Node2D.new()
+	fixture.name = "EnvironmentPropFixture"
+	add_child(fixture)
+	BuildingShellBuilder.add_physical_prop(
+		fixture, Vector2.ZERO, load("res://assets/pixel/props/crate.png"), Vector2(24, 20),
+		&"test/environment_crate", 2, EnvironmentDamage.DamageClass.SMALL_ARMS
+	)
+	var root := fixture.get_child(0) as Node2D
+	var body: StaticBody2D = null
+	var interaction: InteractableComponent = null
+	for child in root.get_children():
+		if child is StaticBody2D:
+			body = child
+		elif child is Area2D:
+			interaction = child.get_node_or_null("InteractableComponent")
+	_assert(interaction != null and interaction.interact_label == "Salvage", "generated physical props must expose the existing PlayerInteractor contract")
+	_assert(body != null and body.get_node_or_null("EnvironmentDamageComponent") != null, "generated physical props must expose class-filtered durability")
+	fixture.queue_free()
+	await get_tree().process_frame
+
+func _test_environment_destroyed_loot_becomes_world_drop() -> void:
+	var fixture := Node2D.new()
+	fixture.name = "DestroyedLootFixture"
+	add_child(fixture)
+	BuildingShellBuilder.add_loot_furniture(
+		fixture, Vector2.ZERO, load("res://assets/pixel/props/crate.png"), Vector2(24, 20),
+		&"test/destroyed_loot", 40.0, {"food_ration": 2, "materials": 3}
+	)
+	var root := fixture.get_child(0) as Node2D
+	var body: StaticBody2D = null
+	var loot: LootContainerComponent = null
+	for child in root.get_children():
+		if child is StaticBody2D:
+			body = child
+		elif child is Area2D:
+			loot = child.get_node_or_null("LootContainerComponent")
+	_assert(loot != null and loot.get_inventory().get_count(&"food_ration") == 2, "loot fixture must begin with its configured persistent inventory")
+	var component := body.get_node("EnvironmentDamageComponent") as EnvironmentDamageComponent
+	component.apply_damage(999.0, EnvironmentDamage.DamageClass.SMALL_ARMS)
+	await get_tree().process_frame
+	_assert(WorldState.drops.size() == 1, "destroying a loot-bearing environment object must preserve its contents in one WorldDrop")
+	var drop: WorldDrop = WorldState.drops.values()[0]
+	_assert(drop.inventory.get_count(&"food_ration") == 2 and drop.inventory.get_count(&"materials") == 3, "environment destruction must conserve every stored item type exactly")
+	fixture.queue_free()
+	await get_tree().process_frame
+
+func _test_environment_destruction_state_restores() -> void:
+	WorldState.set_prop_state_flag(&"test/persistent_crate", &"destroyed", true)
+	var fixture := Node2D.new()
+	fixture.name = "PersistentDestructionFixture"
+	add_child(fixture)
+	BuildingShellBuilder.add_physical_prop(
+		fixture, Vector2.ZERO, load("res://assets/pixel/props/crate.png"), Vector2(24, 20),
+		&"test/persistent_crate", 2, EnvironmentDamage.DamageClass.SMALL_ARMS
+	)
+	await get_tree().process_frame
+	await get_tree().process_frame
+	_assert(fixture.get_child_count() == 0, "a destroyed stable object id must not reappear when its generated scene is reconstructed")
+	fixture.queue_free()
+	await get_tree().process_frame
+
+func _test_environment_destruction_resamples_live_navigation_with_overlaps() -> void:
+	var position := Vector2(16, 16)
+	var first := _make_navigation_destruction_body(&"test/nav_overlap_first", position)
+	var second := _make_navigation_destruction_body(&"test/nav_overlap_second", position)
+	add_child(first)
+	add_child(second)
+	await get_tree().physics_frame
+	UrbanNavigationService.build(Vector2(128, 128))
+	_assert(not UrbanNavigationService.is_position_free(position), "live navigation must initially sample an overlapping destructible collider as solid")
+	var first_revision := UrbanNavigationService.revision()
+	var first_damage := first.get_node("EnvironmentDamageComponent") as EnvironmentDamageComponent
+	_assert(first_damage.apply_damage(999.0, EnvironmentDamage.DamageClass.EXPLOSIVE), "explosive damage must destroy the first overlapping structure")
+	await get_tree().process_frame
+	await get_tree().physics_frame
+	_assert(not UrbanNavigationService.is_position_free(position), "destroying one overlapping structure must keep the cell solid while another collider remains")
+	_assert(UrbanNavigationService.revision() == first_revision, "navigation revision must not change when overlap re-sampling preserves the same solid cell")
+	var second_damage := second.get_node("EnvironmentDamageComponent") as EnvironmentDamageComponent
+	_assert(second_damage.apply_damage(999.0, EnvironmentDamage.DamageClass.EXPLOSIVE), "explosive damage must destroy the final overlapping structure")
+	await get_tree().process_frame
+	await get_tree().physics_frame
+	_assert(UrbanNavigationService.is_position_free(position), "destroying the final collider must reopen its navigation cell")
+	_assert(UrbanNavigationService.revision() > first_revision, "live structural destruction must increment navigation revision when walkability changes")
+	UrbanNavigationService.reset()
+
+func _make_navigation_destruction_body(object_id: StringName, position: Vector2) -> StaticBody2D:
+	var body := StaticBody2D.new()
+	body.position = position
+	body.collision_layer = 1
+	body.collision_mask = 0
+	var shape := RectangleShape2D.new()
+	shape.size = Vector2(32, 32)
+	var collider := CollisionShape2D.new()
+	collider.shape = shape
+	body.add_child(collider)
+	var damage := EnvironmentDamageComponent.new()
+	damage.name = "EnvironmentDamageComponent"
+	damage.object_id = object_id
+	damage.minimum_damage_class = EnvironmentDamage.DamageClass.EXPLOSIVE
+	damage.max_durability = 20.0
+	damage.affected_size = Vector2(32, 32)
+	damage.destroy_target = body
+	body.add_child(damage)
+	return body
+
+func _test_player_weapon_slots_preserve_independent_ammo() -> void:
+	var player: Player = PLAYER_SCENE.instantiate()
+	add_child(player)
+	await get_tree().process_frame
+	_assert(player.weapon_slots.size() == 2, "Player scene must expose the SMG and breaching charge as two real weapon slots")
+	_assert(player.weapon.data.weapon_name == "SMG-9", "Player must start with the existing SMG equipped")
+	player.weapon.ammo_in_magazine = 17
+	player.weapon.reserve_ammo = 91
+	_assert(player.equip_weapon_slot(1), "slot 2 must be selectable")
+	_assert(player.weapon.data.weapon_name == "Breaching Charge", "slot 2 must equip the explosive resource")
+	_assert(player.weapon.data.environment_damage_class == EnvironmentDamage.DamageClass.EXPLOSIVE, "breaching charge must retain explosive structural classification")
+	player.weapon.ammo_in_magazine = 0
+	player.weapon.reserve_ammo = 2
+	_assert(player.equip_weapon_slot(0), "slot 1 must be selectable after using slot 2")
+	_assert(player.weapon.ammo_in_magazine == 17 and player.weapon.reserve_ammo == 91, "switching back must preserve the SMG magazine and reserve")
+	_assert(player.equip_weapon_slot(1), "slot 2 must remain selectable repeatedly")
+	_assert(player.weapon.ammo_in_magazine == 0 and player.weapon.reserve_ammo == 2, "the breaching charge must preserve its own ammunition independently")
+	_assert(player.weapon.equipped and not player.weapon_slots[0].equipped, "exactly the selected Weapon node must be active")
+	var survivor: Survivor = SURVIVOR_SCENE.instantiate()
+	add_child(survivor)
+	await get_tree().process_frame
+	var ammo_reports := {"count": 0}
+	var report_callback: Callable = func(_magazine: int, _reserve: int) -> void: ammo_reports["count"] += 1
+	GameEvents.weapon_ammo_changed.connect(report_callback)
+	player.weapon._notify_ammo()
+	var player_report_count: int = ammo_reports["count"]
+	survivor.weapon._notify_ammo()
+	_assert(player_report_count == 1 and ammo_reports["count"] == player_report_count, "survivor weapon state must never overwrite the player ammo HUD")
+	GameEvents.weapon_ammo_changed.disconnect(report_callback)
+	survivor.queue_free()
+	player.queue_free()
+	await get_tree().process_frame
+
+func _test_explosion_separates_actor_and_structural_damage() -> void:
+	var origin := Vector2(320, 320)
+	var source := Node2D.new()
+	var fixture := Node2D.new()
+	var zombie: Zombie = ZOMBIE_SCENE.instantiate()
+	fixture.position = origin
+	zombie.position = origin
+	add_child(source)
+	add_child(fixture)
+	add_child(zombie)
+	BuildingShellBuilder.build_perimeter_walls(fixture, Vector2(32, 32), load("res://assets/pixel/props/wall_concrete.png"))
+	await get_tree().physics_frame
+	var wall_count_before := fixture.get_child_count()
+	EnvironmentDamage.apply_explosion(source, origin, 128.0, 180.0, 10.0, EnvironmentDamage.DamageClass.EXPLOSIVE)
+	_assert(is_equal_approx(zombie.health_component.current_health, zombie.health_component.max_health - 10.0), "blast actors must receive actor damage, not the larger structural value")
+	await get_tree().process_frame
+	_assert(fixture.get_child_count() < wall_count_before, "the same blast must destroy wall bodies using its structural damage")
+	zombie.queue_free()
+	fixture.queue_free()
+	source.queue_free()
+	await get_tree().process_frame
+
 ## --- Harness ---------------------------------------------------------
 
 func _run_test(test_name: String, fn: Callable) -> void:
@@ -995,8 +2151,13 @@ func _test_repeated_restart_lifecycle() -> void:
 	for run in range(3):
 		var main_instance: Node = main_scene.instantiate()
 		add_child(main_instance)
+		var streamed_world := main_instance.get_node("World") as StreamingWorld
+		for _frame in range(120):
+			if streamed_world.generation_complete:
+				break
+			await get_tree().physics_frame
 		await get_tree().process_frame
-		await get_tree().process_frame
+		_assert(streamed_world.generation_succeeded, "run %d: streamed world must finish generation before Main registers survivors" % run)
 
 		var survivor_count: int = WorldState.survivors.size()
 		_assert(survivor_count == 4, "run %d: Main.tscn should register exactly 4 survivors, not accumulate across restarts" % run)
@@ -1739,7 +2900,16 @@ func _test_detectable_indoor_target_blocked_by_wall_and_visible_through_open_doo
 	_assert(zombie.perception.state == ZombiePerceptionComponent.State.IDLE, "a closed door must block detection of an indoor target -- being indoors is never itself what hides it")
 
 	door.toggle() # open it
-	await get_tree().physics_frame
+	# CollisionShape2D.disabled reaches the physics server asynchronously.
+	# Poll the exact condition under test instead of assuming a particular
+	# flush frame after earlier large physics fixtures.
+	var open_line_of_sight := false
+	for i in range(6):
+		await get_tree().physics_frame
+		if zombie.perception._has_line_of_sight(zombie.global_position, target.global_position):
+			open_line_of_sight = true
+			break
+	_assert(open_line_of_sight, "the opened door must remove its vision collision within the bounded physics flush window")
 	zombie.perception._tick_perception()
 	_assert(zombie.perception.state == ZombiePerceptionComponent.State.SUSPICIOUS, "the same indoor target, now visible through the open door, must become detectable")
 
@@ -1902,7 +3072,9 @@ func _test_building_portal_outside_view_cone_stays_hidden() -> void:
 	# own _physics_process re-derives aim_direction from
 	# InputRouter.aim_vector (a fixed, meaningless value in this headless
 	# test context) every tick and would otherwise clobber this assignment.
-	player.aim_direction = Vector2.UP # facing AWAY from the back door (which is south/down)
+	# Aim AWAY from the back-room door so the open portal sits behind the
+	# player's back (direction derived, so the test survives relayouts).
+	player.aim_direction = (player.global_position - back_door.global_position).normalized()
 	building._apply_states()
 
 	var back_room: Room = building.get_node("Rooms/BackRoom")
@@ -1939,11 +3111,13 @@ func _test_building_portal_door_toggle_updates_reveal_immediately_while_stationa
 	# _physics_process re-derives aim_direction from InputRouter.aim_vector
 	# each tick (a fixed, meaningless value in this headless test context)
 	# and would otherwise clobber this assignment before it's ever read.
-	player.aim_direction = Vector2.DOWN
+	# Aim TOWARD the back-room door (direction derived, so the test survives
+	# relayouts).
+	player.aim_direction = (back_door.global_position - player.global_position).normalized()
 	back_door.toggle() # open, WITHOUT the player moving or any frame elapsing
 	_assert(back_room.modulate.a > 0.99, "opening a door must reveal its room immediately, even while the player is stationary (a=%f)" % back_room.modulate.a)
 
-	player.aim_direction = Vector2.DOWN
+	player.aim_direction = (back_door.global_position - player.global_position).normalized()
 	back_door.toggle() # close again
 	_assert(back_room.modulate.a < 0.01, "closing a door must hide its room immediately, even while the player is stationary")
 
@@ -2265,7 +3439,10 @@ func _make_vision_wall(local_position: Vector2) -> StaticBody2D:
 ## deliberate map change should update this literal alongside the edit.
 func _test_district_layout_checksum_matches_committed_baseline() -> void:
 	var checksum: String = DistrictLayoutChecksum.compute()
-	_assert(checksum == "6166fdb924030593248c418cc6c39e7eb51176777cc9d470cbd1d0ddb71aa389", "the fixed district's layout checksum drifted from the committed baseline (got %s) -- update the baseline deliberately if this was an intentional map change" % checksum)
+	# Baseline updated deliberately alongside the Phase-3B passability fix:
+	# every authored fixture was realigned to the wall-cell lattice with
+	# runtime-standard 64px door apertures (see docs/building_system.md).
+	_assert(checksum == "ed193adff7d19a15d9628e63f4d6be73e9f3e2859d6874ad94c4094f3bb80194", "the fixed district's layout checksum drifted from the committed baseline (got %s) -- update the baseline deliberately if this was an intentional map change" % checksum)
 	_assert(DistrictLayoutChecksum.compute() == checksum, "compute() must be perfectly deterministic across repeated calls")
 
 ## Section 1 ("the fixed-layout checksum must validate the baked scene
@@ -2313,16 +3490,17 @@ func _test_baked_district_scene_has_expected_structure() -> void:
 	for node in get_tree().get_nodes_in_group("spawn_regions"):
 		if district.is_ancestor_of(node):
 			spawn_regions.append(node)
-	_assert(spawn_regions.size() == 7, "the baked scene must contain exactly the 7 authored spawn regions (got %d)" % spawn_regions.size())
+	_assert(spawn_regions.size() == 12, "the baked scene must contain exactly the 12 authored spawn regions (got %d)" % spawn_regions.size())
 
 	# DynamicEntities holds every prop that needs Y-sorting against actors at
 	# runtime, not just ScavengePoint instances -- it also carries the
-	# abandoned/wrecked cars and the alley dumpster (see
-	# district_builder.gd's _build_street_props(), which places those
-	# specific props via the same "entity_container" group lookup as
-	# _build_scavenge_points()). Checking the "scavenge_point" group
-	# directly is what actually pins down "exactly 5 scavenge points",
-	# independent of that container also holding other entities.
+	# searchable street furniture (LOOT_PROPS: three alley dumpsters and two
+	# abandoned cars) and the salvageable wrecks (SALVAGE_PROPS), all placed
+	# by district_builder.gd's _build_street_props() via the same
+	# "entity_container" group lookup as _build_scavenge_points(). Checking
+	# the "scavenge_point" group directly is what actually pins down the
+	# scavenge-point count, independent of that container also holding those
+	# other entities.
 	var dynamic_entities: Node = district.get_node_or_null("DynamicEntities")
 	_assert(dynamic_entities != null, "the baked scene must contain a top-level DynamicEntities container")
 	if dynamic_entities != null:
@@ -2330,8 +3508,8 @@ func _test_baked_district_scene_has_expected_structure() -> void:
 		for node in get_tree().get_nodes_in_group("scavenge_point"):
 			if dynamic_entities.is_ancestor_of(node):
 				scavenge_points.append(node)
-		_assert(scavenge_points.size() == 5, "the baked scene must contain exactly the 5 authored scavenge points (got %d)" % scavenge_points.size())
-		_assert(dynamic_entities.get_child_count() == 8, "the baked scene's DynamicEntities container must hold exactly the 5 scavenge points plus the 3 Y-sorted street props (car_1, car_wreck_1, dumpster_alley) (got %d)" % dynamic_entities.get_child_count())
+		_assert(scavenge_points.size() == 8, "the baked scene must contain exactly the 8 authored scavenge points (got %d)" % scavenge_points.size())
+		_assert(dynamic_entities.get_child_count() == 18, "the baked scene's DynamicEntities container must hold exactly the 8 scavenge points plus the 5 searchable and 5 salvageable Y-sorted street props (got %d)" % dynamic_entities.get_child_count())
 
 	var ground: TileMapLayer = district.get_node_or_null("GroundLayers/Ground")
 	_assert(ground != null, "the baked scene must contain a GroundLayers/Ground TileMapLayer")
@@ -2340,6 +3518,106 @@ func _test_baked_district_scene_has_expected_structure() -> void:
 
 	district.queue_free()
 	await get_tree().process_frame
+
+## The city plan itself has to hold together, and "it looked right in a
+## screenshot" is not a regression test. Every building footprint -- the 5
+## enterable ones (whose half-extents are read from their OWN scripts, not
+## restated here) and every shell -- must sit fully inside some block's
+## buildable area, never overlap another building, never sit in a
+## carriageway, and never encroach on the safehouse compound. This is what
+## catches the classic authored-map mistake: nudging one building a hundred
+## pixels and silently pushing it through a neighbour or out into the road.
+func _test_district_buildings_fit_their_blocks_without_overlapping() -> void:
+	var footprints: Array = []
+	for shell in DistrictBuilder.SHELL_BUILDINGS:
+		footprints.append({"name": String(shell["name"]), "rect": DistrictBuilder.shell_rect(shell)})
+	for building_id in DistrictBuilder.BUILDING_POSITIONS:
+		footprints.append({"name": String(building_id), "rect": DistrictBuilder.enterable_rect(building_id)})
+
+	for i in range(footprints.size()):
+		var rect: Rect2 = footprints[i]["rect"]
+		var name: String = footprints[i]["name"]
+		_assert(rect.size.x > 0.0 and rect.size.y > 0.0, "%s has an empty footprint -- enterable_half_extent() is probably missing a case for it" % name)
+
+		var block_name := ""
+		for block in DistrictBuilder.BLOCKS:
+			if DistrictBuilder.buildable_rect(block).encloses(rect):
+				block_name = String(block["name"])
+				break
+		_assert(block_name != "", "%s (%s) does not fit inside any city block's buildable area -- it would spill onto the sidewalk or the street" % [name, rect])
+
+		for road in DistrictBuilder.ROADS:
+			_assert(not DistrictBuilder.road_rect(road).intersects(rect), "%s overlaps the carriageway of %s" % [name, road["name"]])
+
+		for j in range(i + 1, footprints.size()):
+			_assert(not rect.intersects(footprints[j]["rect"]), "%s and %s overlap each other" % [name, footprints[j]["name"]])
+
+	# Main.tscn seats the Settlement at (-976, -976); SafehouseInteriorBuilder
+	# paints its floor out to half_extent 170 plus a one-tile wall ring, i.e.
+	# 224px in every direction. That whole compound owns its block.
+	var safehouse_compound := Rect2(-1200, -1200, 448, 448)
+	for entry in footprints:
+		_assert(not safehouse_compound.intersects(entry["rect"]), "%s encroaches on the safehouse compound, which owns its block outright" % entry["name"])
+
+	# Spawn regions and scavenge points are authored as world positions, so
+	# nothing structurally stops one being dropped inside a wall.
+	for spec in DistrictBuilder.SPAWN_REGIONS:
+		for entry in footprints:
+			_assert(not (entry["rect"] as Rect2).has_point(spec["position"]), "spawn region %s sits inside %s" % [spec["id"], entry["name"]])
+	for spec in DistrictBuilder.SCAVENGE_POINTS:
+		for entry in footprints:
+			_assert(not (entry["rect"] as Rect2).has_point(spec["position"]), "scavenge point %s sits inside %s" % [spec["name"], entry["name"]])
+
+## A designed city is only a city if you can walk it. Instantiates the real
+## baked scene, lets AuthoredDistrict build the navigation grid from its
+## live static collision, and asserts every landmark the player is meant to
+## reach -- each building's front door approach, each mid-block alley, the
+## park, the plaza, the yards, the safehouse street -- is both a free
+## navigation cell and actually path-connected to the middle of the street
+## grid. A block accidentally walled shut by its own building row fails
+## here rather than during play.
+func _test_baked_district_landmarks_are_reachable() -> void:
+	UrbanNavigationService.reset()
+	var district: Node2D = load("res://scenes/world/maps/UrbanDistrict01.tscn").instantiate()
+	add_child(district)
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+
+	# Middle of Market Street, south of the Grand Avenue junction: open
+	# carriageway on the district's central spine.
+	var origin := Vector2(0, 300)
+	_assert(UrbanNavigationService.is_position_free(origin), "the middle of Market Street must be a free navigation cell")
+
+	var landmarks: Array = [
+		{"name": "safehouse street frontage", "position": Vector2(-976, -700)},
+		{"name": "restaurant_01 front door", "position": Vector2(-352, 570)},
+		{"name": "restaurant_01 service alley", "position": Vector2(-292, 326)},
+		{"name": "convenience_store_01 front door", "position": Vector2(270, -130)},
+		{"name": "clinic_01 front door", "position": Vector2(-1052, -130)},
+		{"name": "apartment_01 lobby door", "position": Vector2(-472, -770)},
+		{"name": "workshop_01 loading yard", "position": Vector2(920, -900)},
+		{"name": "Market Plaza", "position": Vector2(240, 200)},
+		{"name": "Willow Green park", "position": Vector2(-976, 350)},
+		{"name": "Derelict Lot", "position": Vector2(240, 900)},
+		{"name": "downtown back alley", "position": Vector2(-352, -352)},
+		{"name": "Ash Terrace alley", "position": Vector2(352, -976)},
+		{"name": "Kiln Row back alley", "position": Vector2(-976, 976)},
+		{"name": "Storage Yard", "position": Vector2(1040, 470)},
+	]
+	for landmark in landmarks:
+		# One request per physics frame: find_path() is deliberately budgeted
+		# (MAX_REQUESTS_PER_FRAME) and silently returns an empty path once
+		# that budget is spent, which would read here as "unreachable".
+		await get_tree().physics_frame
+		var target: Vector2 = landmark["position"]
+		_assert(UrbanNavigationService.is_position_free(target), "%s must stand on a free navigation cell, not inside collision" % landmark["name"])
+		var path: PackedVector2Array = UrbanNavigationService.find_path(origin, target)
+		_assert(path.size() >= 2, "%s must be reachable on foot from Market Street (got a %d-point path)" % [landmark["name"], path.size()])
+
+	district.queue_free()
+	await get_tree().process_frame
+	UrbanNavigationService.reset()
 
 ## A closed door's own CollisionShape2D must block a straight World|Vision
 ## raycast through it (movement AND vision, the same shape for both);
@@ -2559,6 +3837,7 @@ func _test_building_roof_hides_and_room_reveals_on_enter_restores_on_exit() -> v
 	await get_tree().physics_frame
 	await get_tree().physics_frame
 	_assert(building.is_roof_visible(), "the roof must be visible while nobody is inside")
+	_assert(building.is_projected_exterior_visible(), "the projected facade must be visible while the player is outside")
 
 	var player: Player = PLAYER_SCENE.instantiate()
 	add_child(player)
@@ -2569,6 +3848,7 @@ func _test_building_roof_hides_and_room_reveals_on_enter_restores_on_exit() -> v
 	await get_tree().physics_frame
 
 	_assert(not building.is_roof_visible(), "the roof must hide once the player is inside")
+	_assert(not building.is_projected_exterior_visible(), "the projected facade must hide with the roof so the existing interior remains readable")
 	_assert(building.current_room_id() == &"retail_floor", "the player's current room must be reported correctly")
 	var back_room: Room = building.get_node("Rooms/BackRoom")
 	_assert(back_room.modulate.a < 0.01, "an adjacent room behind a CLOSED door must stay fully hidden, not merely dimmed")
@@ -2579,6 +3859,7 @@ func _test_building_roof_hides_and_room_reveals_on_enter_restores_on_exit() -> v
 	await get_tree().physics_frame
 
 	_assert(building.is_roof_visible(), "the roof must restore once the player fully leaves the building")
+	_assert(building.is_projected_exterior_visible(), "the projected facade must restore when the player exits")
 	_assert(building.current_room_id() == &"", "no current room once outside")
 
 	player.queue_free()
@@ -2612,7 +3893,10 @@ func _test_building_adjacent_room_reveals_through_open_door() -> void:
 	# from InputRouter.aim_vector (a fixed, meaningless value in this
 	# headless test context) every tick and would otherwise clobber this
 	# assignment before the controller ever reads it.
-	player.aim_direction = Vector2.DOWN # facing toward the back door -- the portal graph only reveals through a portal inside the player's view cone
+	# Aim TOWARD the back door -- the portal graph only reveals through a
+	# portal inside the player's view cone (direction derived, so the test
+	# survives relayouts).
+	player.aim_direction = (back_door.global_position - player.global_position).normalized()
 	building._apply_states()
 
 	_assert(building.current_room_id() == &"retail_floor", "sanity: the player is in the retail floor")

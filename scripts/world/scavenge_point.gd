@@ -12,6 +12,7 @@ extends Node2D
 ## Rough danger rating (0..100) folded into utility risk scoring -- higher
 ## for points further from the settlement or historically zombie-heavy.
 @export var danger: float = 20.0
+@export var point_id: StringName = &""
 
 ## item_id -> scavenge-visual texture path, keyed on the item categories
 ## actually used by ScavengePoint instances in Main.tscn. Falls back to the
@@ -30,6 +31,33 @@ func _ready() -> void:
 	add_to_group("scavenge_point")
 	var path: String = VISUAL_TEXTURE_PATHS.get(item_id, "res://assets/pixel/props/loot_materials.png")
 	_visual.texture = load(path)
+	if not point_id.is_empty():
+		remaining_stock = int(WorldState.get_prop_state_flag(point_id, &"remaining_stock", remaining_stock))
+	if remaining_stock <= 0:
+		call_deferred("queue_free")
+		return
+	_build_player_interaction()
+
+func _build_player_interaction() -> void:
+	var area := Area2D.new()
+	area.name = "InteractArea"
+	area.collision_layer = 64
+	area.collision_mask = 0
+	var reach_shape := RectangleShape2D.new()
+	reach_shape.size = Vector2(76, 76)
+	var reach_collider := CollisionShape2D.new()
+	reach_collider.shape = reach_shape
+	area.add_child(reach_collider)
+	var interactable := InteractableComponent.new()
+	interactable.name = "InteractableComponent"
+	interactable.interact_label = "Scavenge %s" % String(item_id).replace("_", " ").capitalize()
+	interactable.interacted.connect(_on_player_interacted)
+	area.add_child(interactable)
+	add_child(area)
+
+func _on_player_interacted(actor: Node) -> void:
+	if "carried_inventory" in actor:
+		harvest_into(actor.carried_inventory)
 
 func is_depleted() -> bool:
 	return remaining_stock <= 0
@@ -45,6 +73,8 @@ func harvest(max_amount: int) -> int:
 	if amount <= 0:
 		return 0
 	remaining_stock -= amount
+	if not point_id.is_empty():
+		WorldState.set_prop_state_flag(point_id, &"remaining_stock", remaining_stock)
 	if remaining_stock <= 0:
 		call_deferred("queue_free")
 	return amount

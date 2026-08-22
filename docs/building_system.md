@@ -1,21 +1,98 @@
-# Building system (Phase 3B, updated for Phase 3B.1)
+# Building system (seeded procedural runtime and authored fixtures)
 
-How an enterable building is authored, how roof/interior visibility works,
-and the door/window/room identity rules everything else (persistence,
-navigation, perception) depends on.
+How the runtime generates enterable buildings, how roof/interior visibility
+works, and the door/window/room identity rules that persistence, navigation,
+perception and environmental damage depend on.
 
-## Archetypes implemented
+`ProceduralCityGenerator` assigns an archetype and footprint to each generated
+parcel. `ProceduralBuildingGenerator` then produces a renderer-independent
+room graph, partitions, exterior/interior doors, windows, clearance corridors
+and functional furniture from the city seed. Its validator rejects missing or
+unreachable required rooms, invalid portal ownership, duplicate IDs and
+furniture that blocks an aisle. `ProceduralBuilding.configure()` constructs the
+complete runtime subtree with final seed-derived IDs before the node enters the
+tree. The five older complete building scenes remain regression fixtures; the
+normal `ProceduralDistrict` does not instance them.
 
-Ground floor only. All 5 of the spec's requested archetypes now exist
-(Apartment/Workshop added in Phase 3B.1):
+## Projected Prague exterior contract
 
-| Archetype | Scene | Rooms |
-|---|---|---|
-| Restaurant/café | `scenes/world/buildings/Restaurant01.tscn` | Dining Room, Kitchen, Pantry (+ an outdoor patio, not a Room) |
-| Convenience store | `scenes/world/buildings/ConvenienceStore01.tscn` | Retail Floor, Back Room |
-| Clinic/pharmacy | `scenes/world/buildings/Clinic01.tscn` | Waiting Area, Exam Room, Medical Storage |
-| Apartment/residential | `scenes/world/buildings/Apartment01.tscn` | Lobby, Living Room, Kitchen, Bedroom, Bathroom (shotgun layout -- see below) |
-| Workshop/warehouse | `scenes/world/buildings/Workshop01.tscn` | Loading Bay (service entrance), Work Floor (main entrance), Storage, Office |
+The production presentation is now a fixed-camera projected 2D elevation
+rather than a roof-only footprint. Gameplay geometry remains top-down.
+`BuildingExteriorRenderer` extracts each exposed south boundary run from the
+validated compound footprint, shifts the roof artwork north by two to four
+32-pixel modules, and fills the distance back to the unchanged ground-contact
+wall with a `BuildingFacadeVisual`.
+
+Every generated building carries an `exterior` dictionary containing bounded
+visual storeys, projection height, facade/roof styles, deterministic decoration
+seed, and the real south-facing door/window coordinates copied from its
+semantic interior. `BuildingExteriorRenderer.validate()` rejects a missing
+exterior, unsupported frontage direction, unbounded height, missing south
+outline, or a visible entrance that does not map to a semantic door. The
+exterior creates no collision and never moves rooms, portals, spawn regions,
+furniture clearance or navigation cells.
+
+The projected facade registers as an exterior cover beside `Roof`, so entering
+a room hides both while the existing top-down interior and physical perimeter
+wall remain visible. Leaving restores both. Runtime facades are reparented,
+without changing global transform, into Main's shared `EntityContainer`; their
+origin is the south wall baseline for correct actor behind/in-front sorting.
+The owning streamed chunk tracks and frees each proxy on unload.
+
+The visual grammar is Prague-specific: continuous party-wall massing,
+painted-plaster and exposed-brick residences, active shopfronts, industrial
+masonry, compressed storeys, sash windows, flower boxes, cornices, striped
+awnings, vertical signs, drainpipes, plaster wear and masonry courses. Visual
+storeys do not add accessible upper floors.
+
+The safehouse remains an open fortified courtyard and therefore does not use a
+building-wide roof toggle. `SafehouseInteriorBuilder` projects only a two-storey
+entrance lodge with its own displaced roof and Y-sorted facade. The yard,
+storage, beds and guard posts remain visible and retain their existing physical
+wall contract.
+
+In streamed Prague chunks, each buildable quarter is module-aligned and divided
+into one or two attached lots that consume the available frontage and depth.
+Ordinary quarters have a continuous party wall and at least 88 percent building
+coverage. A deterministic six-percent courtyard event instead reserves rear
+depth plus a 64-pixel street passage; the courtyard and access corridor are
+validated against every building footprint. Buildings retain the existing rectangle/rear-wing/side-wing physical
+forms and fully generated interiors, while their streamed facade metadata
+selects painted plaster, active shopfront or masonry-industrial walls. Roofs use
+district-weighted clay/slate/patina materials and a deterministic horizontal or
+vertical ridge tile run over every occupied wing.
+
+## Runtime archetypes implemented
+
+Ground floor only. Each generated instance receives the listed required roles.
+Two-room stores use seeded `strip_x` or `strip_y` layouts with at least two
+64-pixel modules per room. Three-room restaurants/clinics and four-room
+apartments/workshops use mirrored `grid_2x2` layouts so every required room
+retains a traversable actor-and-spawn aisle around the 32-pixel perimeter and
+partition walls. Window state and furniture placement remain seeded per
+building.
+
+| Archetype | Generated required rooms |
+|---|---|
+| Restaurant/café | Dining Room, Kitchen, Pantry |
+| Convenience store | Retail Floor, Stock Room |
+| Clinic/pharmacy | Waiting Area, Exam Room, Medical Storage |
+| Apartment/residential | Living Room, Kitchen, Bedroom, Bathroom |
+| Workshop/warehouse | Work Floor, Loading Bay, Storage, Office |
+
+The restaurant and workshop may receive a second rear service entrance. Every
+other required room is connected to the public entrance through generated
+interior doors. Functional rules place role-specific objects such as beds,
+fridges, retail shelves, medical cabinets, dining furniture, pallets and work
+benches without intersecting the reserved door-to-door circulation corridor.
+
+## Retained authored regression fixtures
+
+`Restaurant01.tscn`, `ConvenienceStore01.tscn`, `Clinic01.tscn`,
+`Apartment01.tscn` and `Workshop01.tscn` preserve the Phase 3B authored
+implementations for unit/regression coverage and as visual references. Their
+scripts still use the pattern below, but they are not runtime templates for the
+procedural district.
 
 Apartment01 and Workshop01 both use a **row layout**: rooms in a straight
 line, divided by simple full-height/full-width vertical partitions (the
@@ -29,7 +106,7 @@ the Phase 3A safehouse sleep-spot art) for its bedroom and
 reuses `crate.png`/`pallet.png` (from the safehouse's own storage art) for
 its loading bay and storage room.
 
-## Authoring pattern
+## Authored-fixture pattern
 
 Every building script (`scripts/world/buildings/*.gd`) extends
 `BuildingVisibilityController` and follows the same shape:
@@ -37,9 +114,9 @@ Every building script (`scripts/world/buildings/*.gd`) extends
 1. Set `building_id`, `roof_node_path`, `rooms_container_path` in
    `_ready()`, before calling `super._ready()`.
 2. `_build_shell()` — perimeter walls (with door-sized gaps),
-   interior partition walls (with their own door gaps), a painted roof
-   (`BuildingShellBuilder.paint_roof`, a 9-slice reusing the district's
-   own roof-material tiles under a building-specific letter), and floor
+   interior partition walls (with their own door gaps), a projected facade and
+   displaced roof (`BuildingExteriorRenderer.build_authored`, reusing the
+   shared roof-material tiles under a building-specific letter), and floor
    fill per room (`BuildingShellBuilder.fill_floor`, tiled from the
    shared environment atlas — not a standalone texture file). Then
    furniture: `add_loot_furniture` (searchable, Inventory-backed),
@@ -52,10 +129,10 @@ Every building script (`scripts/world/buildings/*.gd`) extends
    roof node and every `Room` child, wires each room's
    `body_entered`/`body_exited`, and applies the initial (outside) state.
 
-Rooms, doors, and windows are **hand-authored directly in the `.tscn`**
-(not built by the shell-builder), since their identity, exact position,
-and door-adjacency graph are meaningful authored data a script shouldn't
-silently redecide on every load.
+In those retained fixtures, rooms, doors and windows are hand-authored directly
+in the `.tscn`. Runtime procedural buildings instead receive the complete
+semantic specification from `ProceduralBuildingGenerator` and construct the
+same node contracts in `ProceduralBuilding`.
 
 `BuildingShellBuilder` (`scripts/world/building_shell_builder.gd`, a
 `RefCounted` of static helpers) is the shared plumbing every building
@@ -66,13 +143,15 @@ children bottom-up (before their parent), so setting a child component's
 `@export` var *after* `add_child()` from the parent's own `_ready()`
 races that child's own `_ready()` if it reads the var synchronously.
 Building the whole configured subtree first sidesteps that entirely.
+Projected exterior composition is deliberately separate in
+`BuildingExteriorRenderer`; `BuildingShellBuilder` remains authoritative for
+physical and interior construction.
 
 ## Room/door/prop id convention
 
 Stable, human-readable `StringName` ids, never node references or
-auto-incrementing ints: `"<building_id>/<local_name>"` — e.g.
-`"convenience_store_01/shelf_0"`, `"restaurant_01/door_entrance"`,
-`"clinic_01/cabinet_1"`. These are what `WorldState`'s persistent
+auto-incrementing ints: `"<building_id>/<domain>/<local_name>"` — e.g.
+`"city_20260821/block_04/clinic_0/door/entrance"`. These are what `WorldState`'s persistent
 dictionaries key on (see `docs/interaction_system.md`) and what
 `UrbanNavigationService.register_door()` keys its door-cell map on. A
 building's rooms additionally carry `room_id` (unique within that
@@ -95,7 +174,7 @@ never observes a collision change across enter/exit).
 - The room currently containing the player → always fully revealed
   (`Color(1,1,1,1)`).
 - A `Door` (open) or `BuildingWindow` (intact, not boarded) connects two
-  `Room`s (`Room.doors`/`Room.windows`, hand-authored per building — see
+  `Room`s (`Room.doors`/`Room.windows`, generated at runtime or authored in fixtures — see
   "Room/door/prop id convention" above). Starting from the player's
   current room, a neighboring room reveals only if its connecting portal
   is currently open/intact, **inside the player's current view cone**
@@ -185,9 +264,7 @@ and `Vision` (32); doors' larger `InteractReachArea` uses `Interactable`
    walls/floor/roof/furniture, matching an existing building script for
    the exact call shape.
 4. `_link_doors_to_rooms()` assigning each `Room.doors` array.
-5. Add its `BUILDING_SCENES`/`BUILDING_POSITIONS` entry in
-   `scripts/world/district_builder.gd`, re-run
-   `godot --headless --path . --script tools/bake_district.gd` to bake it
-   into the committed `UrbanDistrict01.tscn` (Phase 3B.1 — see
-   `docs/urban_map_design.md` "Baked, not runtime-built"), and update the
-   `DistrictLayoutChecksum` baseline test to match.
+5. Add its scene path and nominal footprint to
+   `ProceduralCityGenerator.BUILDING_ARCHETYPES`, then assign it from
+   `_archetype_for_zone()`. If the retained authored map also needs it,
+   separately update `DistrictBuilder` and rebake `UrbanDistrict01.tscn`.

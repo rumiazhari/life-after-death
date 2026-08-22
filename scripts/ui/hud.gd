@@ -5,6 +5,7 @@ extends CanvasLayer
 
 @onready var health_label: Label = $Root/SafeArea/TopLeftPanel/TopLeft/HealthRow/HealthLabel
 @onready var health_bar: ProgressBar = $Root/SafeArea/TopLeftPanel/TopLeft/HealthBar
+@onready var weapon_label: Label = $Root/SafeArea/TopLeftPanel/TopLeft/WeaponLabel
 @onready var ammo_label: Label = $Root/SafeArea/TopLeftPanel/TopLeft/AmmoRow/AmmoLabel
 @onready var ammo_bar: ProgressBar = $Root/SafeArea/TopLeftPanel/TopLeft/AmmoBar
 @onready var reload_label: Label = $Root/SafeArea/TopLeftPanel/TopLeft/ReloadLabel
@@ -19,6 +20,7 @@ var _known_magazine_size: int = 1
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	GameEvents.player_health_changed.connect(_on_health_changed)
+	GameEvents.weapon_equipped.connect(_on_weapon_equipped)
 	GameEvents.weapon_ammo_changed.connect(_on_ammo_changed)
 	GameEvents.weapon_reload_started.connect(_on_reload_started)
 	GameEvents.weapon_reload_finished.connect(_on_reload_finished)
@@ -48,6 +50,14 @@ func _on_ammo_changed(ammo_in_magazine: int, reserve_ammo: int) -> void:
 	_known_magazine_size = maxi(_known_magazine_size, ammo_in_magazine)
 	ammo_bar.max_value = _known_magazine_size
 	ammo_bar.value = ammo_in_magazine
+
+func _on_weapon_equipped(weapon_name: String, slot_index: int, slot_count: int, ammo_in_magazine: int, reserve_ammo: int, magazine_size: int) -> void:
+	weapon_label.text = "Weapon %d/%d: %s" % [slot_index + 1, slot_count, weapon_name]
+	_known_magazine_size = maxi(magazine_size, 1)
+	ammo_label.text = "Ammo: %d / %d" % [ammo_in_magazine, reserve_ammo]
+	ammo_bar.max_value = _known_magazine_size
+	ammo_bar.value = ammo_in_magazine
+	reload_label.visible = false
 
 func _on_reload_started(_duration: float) -> void:
 	reload_label.visible = true
