@@ -9,12 +9,13 @@ const TILE_SIZE := 32.0
 static func make_prague_spec(building: Dictionary) -> Dictionary:
 	var interior: Dictionary = building.get("interior", {})
 	var requested_storeys := int(building.get("storeys", 3))
-	var visual_storeys := clampi(requested_storeys, 2, 4)
+	var visual_storeys := clampi(requested_storeys, 2, 6)
 	return {
 		"projection_height_tiles": visual_storeys,
 		"visual_storeys": visual_storeys,
 		"facade_style": building.get("facade_style", &"painted_plaster"),
 		"roof_profile": building.get("roof_shape", &"pitched_ridge"),
+		"apocalypse_level": int(building.get("apocalypse_level", 0)),
 		"frontage_edge": &"south",
 		"street_wall": bool(building.get("street_wall", false)),
 		"decoration_seed": int((String(building.get("id", &"building")).hash() ^ 0x50A6E) & 0x7fffffff),
@@ -26,7 +27,7 @@ static func build(parent: BuildingVisibilityController, building: Dictionary, in
 	var exterior: Dictionary = building.get("exterior", make_prague_spec(building))
 	var perimeter_rects: Array = interior.get("perimeter_rects", [Rect2(-interior["half_extent"], interior["half_extent"] * 2.0)])
 	var spans := south_facade_spans(perimeter_rects)
-	var projection_height := float(clampi(int(exterior.get("projection_height_tiles", 3)), 2, 4)) * TILE_SIZE
+	var projection_height := float(clampi(int(exterior.get("projection_height_tiles", 3)), 2, 6)) * TILE_SIZE
 	var anchor_y := _southern_anchor(spans)
 
 	var roof := TileMapLayer.new()
@@ -54,7 +55,13 @@ static func build(parent: BuildingVisibilityController, building: Dictionary, in
 		"entrance_positions": exterior.get("entrance_positions", _south_entrances(interior)),
 		"window_positions": exterior.get("window_positions", _south_windows(interior)),
 		"decoration_seed": int(exterior.get("decoration_seed", String(building.get("id", &"building")).hash())),
+		"occluder_footprints": perimeter_rects,
+		"apocalypse_level": int(exterior.get("apocalypse_level", building.get("apocalypse_level", 0))),
+		"roof_profile": StringName(exterior.get("roof_profile", &"pitched_ridge")),
 	})
+	# Roof and facade occlude together: one shared world-space fade material
+	# (see BuildingFacadeVisual) so a single uniform update drives both.
+	roof.material = facade.occlusion_material()
 	parent.register_exterior_cover(facade)
 	return {"roof": roof, "facade": facade, "spans": spans, "projection_height": projection_height}
 
@@ -80,8 +87,8 @@ static func build_authored(
 		"archetype": archetype_name,
 		"facade_style": style,
 		"exterior": {
-			"projection_height_tiles": clampi(visual_storeys, 2, 4),
-			"visual_storeys": clampi(visual_storeys, 2, 4),
+			"projection_height_tiles": clampi(visual_storeys, 2, 6),
+			"visual_storeys": clampi(visual_storeys, 2, 6),
 			"facade_style": style,
 			"roof_profile": &"pitched_ridge",
 			"frontage_edge": &"south",
@@ -135,8 +142,8 @@ static func validate(building: Dictionary) -> Array[String]:
 		errors.append("missing projected exterior specification")
 		return errors
 	var projection_tiles := int(exterior.get("projection_height_tiles", 0))
-	if projection_tiles < 2 or projection_tiles > 4:
-		errors.append("projection height must remain between two and four tiles")
+	if projection_tiles < 2 or projection_tiles > 6:
+		errors.append("projection height must remain between two and six tiles")
 	if exterior.get("frontage_edge", &"") != &"south":
 		errors.append("Prague fixed-camera frontage must face south")
 	var spans := south_facade_spans(interior.get("perimeter_rects", []))

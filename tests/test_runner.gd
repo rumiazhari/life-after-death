@@ -87,6 +87,7 @@ func _run_all() -> void:
 	await _run_test("projected_prague_exteriors_are_deterministic_and_portal_aligned", _test_projected_prague_exteriors_are_deterministic_and_portal_aligned)
 	await _run_test("compound_footprints_extract_only_exposed_south_facades", _test_compound_footprints_extract_only_exposed_south_facades)
 	await _run_test("projected_exterior_runtime_is_visual_only_and_sortable", _test_projected_exterior_runtime_is_visual_only_and_sortable)
+	await _run_test("local_occlusion_fade_engages_and_releases", _test_local_occlusion_fade_engages_and_releases)
 	await _run_test("streamed_prague_quarters_are_dense_and_open_spaces_are_rare", _test_streamed_prague_quarters_are_dense_and_open_spaces_are_rare)
 	await _run_test("procedural_seed_corpus_is_deterministic_valid_and_bounded", _test_procedural_seed_corpus_is_deterministic_valid_and_bounded)
 	await _run_test("procedural_generation_retries_and_fails_explicitly", _test_procedural_generation_retries_and_fails_explicitly)
@@ -451,6 +452,12 @@ func _test_streamed_prague_courtyards_have_clear_passages() -> void:
 	_assert(courtyard_count > 0, "the deterministic 9x9 chunk corpus must still exercise the rare courtyard path")
 
 func _test_streamed_prague_theme_has_transit_roofs_and_active_frontages() -> void:
+	var morphology_storey_bands := {
+		&"historic_core": Vector2i(4, 6),
+		&"inner_city": Vector2i(4, 6),
+		&"hillside_residential": Vector2i(2, 5),
+		&"industrial_transition": Vector2i(2, 4),
+	}
 	var city := ProceduralCityGenerator.new().generate_streamed_chunk(20260821, Vector2i.ZERO)
 	var surfaces: Dictionary = {}
 	var has_tram := false
@@ -463,7 +470,10 @@ func _test_streamed_prague_theme_has_transit_roofs_and_active_frontages() -> voi
 	for building in city["buildings"]:
 		facade_styles[building["facade_style"]] = true
 		_assert(building["roof_shape"] == &"pitched_ridge", "Prague frontage buildings must use the ridge-painted roof contract")
-		_assert(int(building["storeys"]) in [3, 4, 5], "Prague facade massing must record a bounded three-to-five-storey presentation")
+		_assert(int(building["storeys"]) >= 2 and int(building["storeys"]) <= 6, "Prague facade massing must stay inside the two-to-six-storey presentation band")
+		var district_storey_band: Vector2i = morphology_storey_bands[building["district_profile"]]
+		_assert(int(building["storeys"]) >= district_storey_band.x and int(building["storeys"]) <= district_storey_band.y,
+			"building %s storeys must honor its district profile band" % String(building["id"]))
 		_assert(BuildingExteriorRenderer.validate(building).is_empty(), "every Prague building must expose a valid projected exterior contract")
 	_assert(facade_styles.size() >= 2, "one streamed quarter must exercise more than one facade treatment")
 
@@ -476,7 +486,7 @@ func _test_projected_prague_exteriors_are_deterministic_and_portal_aligned() -> 
 		var repeated: Dictionary = second["buildings"][index]
 		_assert(building["exterior"] == repeated["exterior"], "projected exterior metadata must regenerate identically for %s" % String(building["id"]))
 		var exterior: Dictionary = building["exterior"]
-		_assert(int(exterior["projection_height_tiles"]) in [2, 3, 4], "projected facade height must remain bounded")
+		_assert(int(exterior["projection_height_tiles"]) in range(2, 7), "projected facade height must remain bounded")
 		var semantic_entrance: Vector2 = building["entrance_position"] - building["position"]
 		var entrance_positions: Array = exterior["entrance_positions"]
 		_assert(not entrance_positions.is_empty() and (entrance_positions[0] as Vector2).is_equal_approx(semantic_entrance), "projected entrance must use the real semantic door coordinate")
@@ -521,6 +531,64 @@ func _test_projected_exterior_runtime_is_visual_only_and_sortable() -> void:
 	sort_parent.queue_free()
 	await get_tree().process_frame
 
+## Part A regression: a player OUTSIDE but visually behind a projected
+## elevation gets a soft local transparency hole; it follows them, releases
+## when clear, and never touches gameplay geometry. Entering the building
+## still routes through the existing full exterior-hide system.
+func _test_local_occlusion_fade_engages_and_releases() -> void:
+	var city := ProceduralCityGenerator.new().generate_streamed_chunk(20260821, Vector2i.ZERO)
+	var spec: Dictionary = city["buildings"][0]
+	var building := ProceduralBuilding.new()
+	building.configure(spec)
+	building.position = spec["position"]
+	add_child(building)
+	await get_tree().process_frame
+	await get_tree().physics_frame
+
+	var facade = building.projected_facade()
+	_assert(facade != null and facade.occlusion_material() != null, "every projected facade must own an occlusion-fade material")
+	var roof := building.get_node("Roof") as TileMapLayer
+	_assert(roof.material == facade.occlusion_material(), "roof and facade must share one occlusion material instance")
+
+	var player: Player = PLAYER_SCENE.instantiate()
+	add_child(player)
+	var interior: Dictionary = spec["interior"]
+	var bounds: Rect2 = interior["footprint_bounds"]
+	# North of the building: covered by the displaced roof band while fully
+	# outside every room.
+	player.global_position = building.global_position + Vector2(bounds.get_center().x, bounds.position.y - 48.0)
+	for _i in range(45):
+		await get_tree().process_frame
+	_assert(facade._fade_strength > 0.9, "walking behind a projected elevation must engage the local occlusion fade (strength=%.2f)" % facade._fade_strength)
+	_assert(building.is_projected_exterior_visible() or not facade.visible, "occlusion fade only applies to visible covers")
+
+	# Gameplay geometry is untouched: the south perimeter wall still blocks.
+	var space := get_viewport().get_world_2d().direct_space_state
+	var params := PhysicsPointQueryParameters2D.new()
+	params.position = building.global_position + Vector2(bounds.get_center().x, bounds.end.y - 16.0)
+	params.collision_mask = 1
+	params.collide_with_areas = false
+	_assert(not space.intersect_point(params, 4).is_empty(), "occlusion fade must never alter gameplay collision")
+
+	player.global_position += Vector2(2500.0, 0.0)
+	for _i in range(45):
+		await get_tree().process_frame
+	_assert(facade._fade_strength < 0.05, "the local fade must release once the player is clear of the building")
+
+	# Entering still uses the existing full roof/interior visibility system.
+	var rooms_container: Node = building.get_node_or_null("Rooms")
+	if rooms_container != null and rooms_container.get_child_count() > 0:
+		var first_room: Node2D = rooms_container.get_children()[0]
+		player.global_position = first_room.global_position
+		for _i in range(6):
+			await get_tree().physics_frame
+		_assert(not facade.visible, "entering a building must keep using the full exterior hide")
+		_assert(not building.is_roof_visible(), "entering a building must hide the displaced roof as before")
+
+	player.queue_free()
+	building.queue_free()
+	await get_tree().process_frame
+
 func _test_streamed_prague_quarters_are_dense_and_open_spaces_are_rare() -> void:
 	var generator := ProceduralCityGenerator.new()
 	var plaza_chunk_count := 0
@@ -540,13 +608,19 @@ func _test_streamed_prague_quarters_are_dense_and_open_spaces_are_rare() -> void
 				if block["zone"] in [&"safehouse", &"park"]:
 					continue
 				var buildable: Rect2 = (block["rect"] as Rect2).grow(-ProceduralCityGenerator.SIDEWALK_DEPTH)
+				# Profile street widths leave sub-module margins around the
+				# parcel grid; density is measured against the module-snapped
+				# buildable envelope (the area frontage lots can occupy).
+				var module_width := floorf(buildable.size.x / 64.0) * 64.0
+				var module_height := floorf(buildable.size.y / 64.0) * 64.0
+				var module_area := module_width * module_height
 				var occupied_area := 0.0
 				for building in city["buildings"]:
 					if building["block_id"] != block["id"]:
 						continue
 					for local_rect in building["interior"]["perimeter_rects"]:
 						occupied_area += (local_rect as Rect2).get_area()
-				var density := occupied_area / buildable.get_area()
+				var density := occupied_area / module_area
 				var minimum_density := 0.60 if bool(block.get("courtyard_reserved", false)) else 0.88
 				_assert(density >= minimum_density, "chunk %s quarter %s size=%s buildings=%d occupied=%.0f coverage %.3f must meet dense threshold %.2f" % [str(coordinate), String(block["id"]), str(buildable.size), (city["buildings"] as Array).filter(func(item: Dictionary) -> bool: return item["block_id"] == block["id"]).size(), occupied_area, density, minimum_density])
 	_assert(plaza_chunk_count > 0 and plaza_chunk_count <= int(ceil(sampled_chunks * 0.12)), "plazas must occur in the deterministic corpus but remain below twelve percent of chunks")

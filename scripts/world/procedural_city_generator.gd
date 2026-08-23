@@ -1,4 +1,4 @@
-class_name ProceduralCityGenerator
+﻿class_name ProceduralCityGenerator
 extends RefCounted
 ## Deterministic semantic city generator. It owns gameplay geometry and IDs;
 ## ProceduralDistrict only rasterizes and instantiates this validated model.
@@ -42,6 +42,14 @@ const PROP_TEXTURES := {
 	&"medical_cache": "res://assets/pixel/props/loot_medical.png",
 	&"hydrant": "res://assets/pixel/props/hydrant.png",
 	&"cone": "res://assets/pixel/props/cone.png",
+	&"bollard": "res://assets/pixel/props/cone.png",
+	&"sign_post": "res://assets/pixel/props/street_sign.png",
+	&"tram_stop": "res://assets/pixel/props/street_sign.png",
+	&"utility_box": "res://assets/pixel/props/utility_box.png",
+	&"planter": "res://assets/pixel/props/planter.png",
+	&"rubble": "res://assets/pixel/props/debris_small.png",
+	&"sandbags": "res://assets/pixel/props/sandbags.png",
+	&"pallet": "res://assets/pixel/props/pallet.png",
 }
 
 var _rng := RandomNumberGenerator.new()
@@ -130,7 +138,7 @@ func _generate_prague_attempt(seed_value: int, attempt: int, attempt_seed: int, 
 			"id": courtyard["id"], "block_id": courtyard["block_id"],
 			"kind": &"courtyard", "zone": courtyard["zone"], "rect": courtyard["rect"],
 		})
-	var props := _make_exterior_props(seed_value, blocks, buildings, exterior_zones)
+	var props := _make_exterior_props(seed_value, blocks, buildings, exterior_zones, morphology)
 	props = _filter_prague_frontage_props(props, buildings)
 	var spawn_regions := _make_spawn_regions(seed_value, blocks, roads, exterior_zones, buildings, props)
 	for region in spawn_regions:
@@ -173,10 +181,11 @@ func _generate_prague_attempt(seed_value: int, attempt: int, attempt_seed: int, 
 
 func _prague_street_axes(morphology: Dictionary) -> Array[Dictionary]:
 	var inner: Array = morphology["inner_axes"]
+	var widths: Dictionary = morphology.get("street_widths", {"local": 128.0, "arterial": 192.0})
 	return [
 		{"center": -RING_CENTER, "width": 128.0, "kind": &"ring"},
-		{"center": float(inner[0]), "width": 128.0, "kind": &"local"},
-		{"center": float(inner[1]), "width": 192.0, "kind": &"arterial"},
+		{"center": float(inner[0]), "width": float(widths["local"]), "kind": &"local"},
+		{"center": float(inner[1]), "width": float(widths["arterial"]), "kind": &"arterial"},
 		{"center": RING_CENTER, "width": 128.0, "kind": &"ring"},
 	]
 
@@ -189,6 +198,10 @@ func _make_prague_blocks(axes: Array[Dictionary], park_index: int, morphology: D
 			var right := float(axes[col + 1]["center"]) - float(axes[col + 1]["width"]) * 0.5
 			var top := float(axes[row]["center"]) + float(axes[row]["width"]) * 0.5
 			var bottom := float(axes[row + 1]["center"]) - float(axes[row + 1]["width"]) * 0.5
+			# NOTE: profile street widths deliberately leave block sizes off
+			# the 64 px module grid; sub-module margins become wider sidewalk,
+			# and the branch appenders below always reach across that band so
+			# the semantic road graph stays fully connected.
 			var index := row * dimension + col
 			var zone := _prague_zone_for(index, row, col, park_index, dimension, include_safehouse)
 			var surface: StringName = &"grass" if zone == &"park" else (&"dirt" if zone == &"industrial" else &"concrete")
@@ -262,15 +275,26 @@ func _make_prague_parcels(blocks: Array[Dictionary]) -> Array[Dictionary]:
 
 func _apply_prague_building_style(buildings: Array[Dictionary], morphology: Dictionary) -> void:
 	var palette: Array = morphology["roof_palette"]
+	var profile: StringName = morphology["profile"]
+	var storey_range: Vector2i = morphology.get("storey_range", Vector2i(3, 5))
+	var apocalypse_level := int(morphology.get("apocalypse_level", 1))
 	for building in buildings:
 		var index := posmod(String(building["id"]).hash(), palette.size())
 		building["interior"]["roof_material"] = palette[index]
-		building["district_profile"] = morphology["profile"]
+		building["district_profile"] = profile
 		building["street_wall"] = true
 		building["roof_shape"] = &"pitched_ridge"
-		building["storeys"] = 3 + posmod(String(building["id"]).hash() >> 3, 3)
-		var profile: StringName = morphology["profile"]
 		var archetype: StringName = building["archetype"]
+		# Profile massing bands keep dense Prague cores at a genuinely urban
+		# 4-6 storey read while hillside/industrial quarters stay lower and
+		# more varied. Workshops never grow past four floors anywhere.
+		var storey_lo := storey_range.x
+		var storey_hi := storey_range.y
+		if archetype == &"workshop":
+			storey_hi = mini(storey_hi, 4)
+			storey_lo = mini(storey_lo, storey_hi)
+		building["storeys"] = storey_lo + posmod(String(building["id"]).hash() >> 3, storey_hi - storey_lo + 1)
+		building["apocalypse_level"] = apocalypse_level
 		var facade_style: StringName = &"painted_plaster"
 		var wall_texture := "res://assets/pixel/props/wall_plaster.png"
 		if profile == &"industrial_transition" or archetype == &"workshop":
@@ -280,6 +304,9 @@ func _apply_prague_building_style(buildings: Array[Dictionary], morphology: Dict
 			facade_style = &"active_shopfront"
 			wall_texture = "res://assets/pixel/props/wall_shopfront.png"
 		elif profile == &"inner_city" and index % 3 == 0:
+			facade_style = &"exposed_brick_infill"
+			wall_texture = "res://assets/pixel/props/wall_brick.png"
+		elif profile == &"historic_core" and index % 4 == 0:
 			facade_style = &"exposed_brick_infill"
 			wall_texture = "res://assets/pixel/props/wall_brick.png"
 		building["facade_style"] = facade_style
@@ -349,7 +376,13 @@ func _generate_attempt(seed_value: int, attempt: int, attempt_seed: int) -> Dict
 	var parcels := _make_parcels(blocks)
 	var buildings := _make_buildings(seed_value, parcels, blocks)
 	var exterior_zones := _make_exterior_zones(seed_value, blocks, parcels, buildings)
-	var props := _make_exterior_props(seed_value, blocks, buildings, exterior_zones)
+	# The compact regression district keeps legacy fixed axes; give its
+	# dressing pass a matching default morphology.
+	var props := _make_exterior_props(seed_value, blocks, buildings, exterior_zones, {
+		"profile": &"inner_city",
+		"tram_axis": &"horizontal",
+		"apocalypse_level": 1,
+	})
 	var spawn_regions := _make_spawn_regions(seed_value, blocks, roads, exterior_zones, buildings, props)
 	var scavenging := _make_scavenge_points(seed_value, blocks, exterior_zones, props)
 	var landmarks := _make_landmarks(seed_value, blocks, buildings, exterior_zones, props, scavenging)
@@ -434,15 +467,16 @@ func _append_park_branch(roads: Array[Dictionary], blocks: Array[Dictionary], se
 	if rng.randi_range(0, 1) == 0:
 		orientation = &"vertical"
 		var x := rect.position.x + 96.0 + float(rng.randi_range(0, maxi(int((rect.size.x - 192.0) / TILE_SIZE), 0)) * TILE_SIZE)
-		# Extend one road half-width into the bordering collector so the graph
-		# records a genuine T-junction rather than two rectangles merely touching.
-		branch_rect = Rect2(x - width * 0.5, rect.position.y - width * 0.5, width, rect.size.y * 0.58 + width * 0.5)
+		# Reach 128 px past the block edge so the branch always crosses the
+		# sidewalk band into the bordering collector even when profile street
+		# widths leave that band wider than one tile.
+		branch_rect = Rect2(x - width * 0.5, rect.position.y - 128.0, width, rect.size.y * 0.58 + 128.0)
 		var cross_y := branch_rect.end.y - width
 		cross_rect = Rect2(rect.position.x + 64.0, cross_y, rect.size.x - 128.0, width)
 	else:
 		orientation = &"horizontal"
 		var y := rect.position.y + 96.0 + float(rng.randi_range(0, maxi(int((rect.size.y - 192.0) / TILE_SIZE), 0)) * TILE_SIZE)
-		branch_rect = Rect2(rect.position.x - width * 0.5, y - width * 0.5, rect.size.x * 0.58 + width * 0.5, width)
+		branch_rect = Rect2(rect.position.x - 128.0, y - width * 0.5, rect.size.x * 0.58 + 128.0, width)
 		var cross_x := branch_rect.end.x - width
 		cross_rect = Rect2(cross_x, rect.position.y + 64.0, width, rect.size.y - 128.0)
 	roads.append({
@@ -475,7 +509,10 @@ func _append_building_access_branches(roads: Array[Dictionary], buildings: Array
 		if corridor.size.y < TILE_SIZE * 2.0:
 			continue
 		var width := maxf(corridor.size.x, TILE_SIZE * 2.0)
-		var rect := Rect2(corridor.get_center().x - width * 0.5, corridor.position.y, width, corridor.size.y)
+		var rect := Rect2(corridor.get_center().x - width * 0.5, corridor.position.y, width, corridor.size.y + 128.0)
+		# The extra 128 px drives the branch through the sidewalk band into
+		# its collector carriageway even when profile street widths leave
+		# that band wider than one tile past the block edge.
 		roads.append({
 			"id": StringName("road_branch_%s" % String(building["id"]).replace("/", "_")),
 			"orientation": &"vertical",
@@ -716,7 +753,7 @@ func _make_exterior_zones(seed_value: int, blocks: Array[Dictionary], parcels: A
 			})
 	return result
 
-func _make_exterior_props(seed_value: int, blocks: Array[Dictionary], buildings: Array[Dictionary], exterior_zones: Array[Dictionary]) -> Array[Dictionary]:
+func _make_exterior_props(seed_value: int, blocks: Array[Dictionary], buildings: Array[Dictionary], exterior_zones: Array[Dictionary], morphology: Dictionary) -> Array[Dictionary]:
 	var result: Array[Dictionary] = []
 	var serial_by_block: Dictionary = {}
 	var zones_by_block: Dictionary = {}
@@ -763,7 +800,69 @@ func _make_exterior_props(seed_value: int, blocks: Array[Dictionary], buildings:
 			_append_prop(result, serial_by_block, seed_value, block, &"tree", &"front_yard", position)
 		elif block["zone"] == &"industrial":
 			_append_prop(result, serial_by_block, seed_value, block, &"cone", &"service", Vector2(rect.end.x - 48.0, rect.end.y - 48.0))
+		_make_profile_street_dressing(result, serial_by_block, seed_value, block, rect, morphology)
 	return result
+
+## Profile-driven sidewalk dressing: tram furniture on the transit axis,
+## bollards/planters in the historic core, avenue trees in the inner city,
+## sparse hillside clutter and industrial yard fragments -- plus a
+## deterministic apocalypse scatter (rubble, trash, sandbag barricades,
+## abandoned vehicles) whose density scales with the regional level.
+func _make_profile_street_dressing(output: Array[Dictionary], serials: Dictionary, seed_value: int, block: Dictionary, rect: Rect2, morphology: Dictionary) -> void:
+	var profile: StringName = morphology["profile"]
+	var apocalypse := int(morphology.get("apocalypse_level", 1))
+	var tram_axis: StringName = morphology["tram_axis"]
+	var slots := clampi(int(rect.size.x / 192.0), 2, 8)
+	for i in range(slots):
+		var x := rect.position.x + 96.0 + float(i) * ((rect.size.x - 192.0) / float(maxi(slots - 1, 1)))
+		var y := rect.end.y - 16.0 # south sidewalk band, matching lamp placement
+		match profile:
+			&"historic_core":
+				var historic_kind: StringName = [&"bollard", &"planter", &"trash", &"bollard"][i % 4]
+				_append_prop(output, serials, seed_value, block, historic_kind, &"sidewalk", Vector2(x, y))
+				if i % 3 == 0:
+					_append_prop(output, serials, seed_value, block, &"sign_post", &"frontage", Vector2(x + 32.0, y))
+			&"inner_city":
+				var inner_kind: StringName = &"tree"
+				if i % 3 == 2:
+					inner_kind = &"bench"
+				elif i % 3 == 1:
+					inner_kind = &"bollard"
+				_append_prop(output, serials, seed_value, block, inner_kind, &"avenue", Vector2(x, y))
+				if i % 4 == 0:
+					_append_prop(output, serials, seed_value, block, &"utility_box", &"service", Vector2(x, rect.position.y + 16.0))
+			&"hillside_residential":
+				if i % 2 == 0:
+					_append_prop(output, serials, seed_value, block, &"trash", &"sidewalk", Vector2(x, y))
+				else:
+					_append_prop(output, serials, seed_value, block, &"planter", &"sidewalk", Vector2(x, y))
+			&"industrial_transition":
+				var industrial_kind: StringName = [&"pallet", &"utility_box", &"rubble", &"crate"][i % 4]
+				_append_prop(output, serials, seed_value, block, industrial_kind, &"yard_edge", Vector2(x, y))
+	# Tram stop pair beside whichever block edge the tram axis runs along.
+	if profile in [&"historic_core", &"inner_city"] and _rng.randf() < 0.6:
+		var stop_position: Vector2 = rect.get_center()
+		if tram_axis == &"horizontal":
+			stop_position = Vector2(rect.position.x + 128.0, rect.end.y - 16.0)
+		else:
+			stop_position = Vector2(rect.end.x - 16.0, rect.position.y + 128.0)
+		_append_prop(output, serials, seed_value, block, &"tram_stop", &"transit", stop_position)
+		_append_prop(output, serials, seed_value, block, &"bench", &"transit", stop_position + Vector2(48.0, 8.0))
+	# Apocalypse scatter: rubble/trash everywhere it is earned, sandbag
+	# barricades from level 1, wrecked vehicles crowding curbs at level 2.
+	if apocalypse >= 1:
+		var scatter_count := apocalypse * 2
+		for i in range(scatter_count):
+			var x := rect.position.x + 64.0 + float(int(_hash_scatter(seed_value, block, i)) % maxi(int(rect.size.x - 128.0), 1))
+			var y := rect.position.y + 64.0 + float(int(_hash_scatter(seed_value, block, i + 97)) % maxi(int(rect.size.y - 128.0), 1))
+			var scatter_kind: StringName = &"rubble" if i % 2 == 0 else &"trash"
+			_append_prop(output, serials, seed_value, block, scatter_kind, &"debris", Vector2(x, y))
+		if _rng.randf() < 0.5:
+			var corner: Vector2 = Vector2(rect.position.x + 40.0, rect.end.y - 40.0)
+			_append_prop(output, serials, seed_value, block, &"sandbags", &"barricade", corner)
+
+func _hash_scatter(seed_value: int, block: Dictionary, index: int) -> int:
+	return abs(int((seed_value ^ String(block["id"]).hash() ^ (index + 1) * 2654435761) & 0x7FFFFFFF))
 
 func _append_prop(output: Array[Dictionary], serials: Dictionary, seed_value: int, block: Dictionary, kind: StringName, placement_role: StringName, position: Vector2) -> void:
 	var block_id: StringName = block["id"]
@@ -798,8 +897,15 @@ func _prop_size(kind: StringName) -> Vector2:
 		&"dumpster": return Vector2(36, 24)
 		&"crate": return Vector2(24, 20)
 		&"car", &"wreck": return Vector2(58, 28)
-		&"lamp", &"hydrant", &"cone": return Vector2(10, 10)
+		&"lamp", &"hydrant", &"cone", &"bollard": return Vector2(10, 10)
 		&"medical_cache": return Vector2(20, 20)
+		&"tram_stop": return Vector2(16, 24)
+		&"sign_post": return Vector2(12, 22)
+		&"utility_box": return Vector2(28, 20)
+		&"planter": return Vector2(24, 16)
+		&"rubble": return Vector2(28, 18)
+		&"sandbags": return Vector2(36, 16)
+		&"pallet": return Vector2(32, 24)
 	return Vector2(16, 16)
 
 func _make_spawn_regions(seed_value: int, blocks: Array[Dictionary], _roads: Array[Dictionary], exterior_zones: Array[Dictionary], buildings: Array[Dictionary], props: Array[Dictionary]) -> Array[Dictionary]:

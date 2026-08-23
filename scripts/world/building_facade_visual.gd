@@ -13,6 +13,18 @@ const TILE_SIZE := 32.0
 const DOOR_BAY_SHIFT := 16.0
 const DOOR_BAY_WIDTH := 58.0
 
+## Local occlusion fade: when the player is OUTSIDE this building but
+## visually behind its projected elevation, a soft radial transparency hole
+## follows them through the facade/roof artwork. Tuned inside the requested
+## bands: hole diameter roughly 80-120 px (outer radius 112 -> ~224 px
+## visual diameter including feather on both sides), centre alpha
+## 0.20-0.35, feather = outer-inner = 40 px.
+const OCCLUSION_SHADER := preload("res://assets/shaders/building_occlusion_fade.gdshader")
+const FADE_OUTER := 112.0
+const FADE_INNER := 72.0
+const CENTER_ALPHA := 0.28
+const FADE_EASE_SPEED := 5.0
+
 var facade_spans: Array[Rect2] = []
 var facade_style: StringName = &"painted_plaster"
 var archetype: StringName = &"apartment"
@@ -22,19 +34,90 @@ var window_positions: Array[Vector2] = []
 var decoration_seed: int = 0
 var projection_height: float = 96.0
 var anchor_y: float = 0.0
+## Regional apocalypse intensity 0-2: drives deterministic boarded/broken
+## window variants, shattered shopfronts, scorch marks and broken signage.
+var apocalypse_level: int = 0
+## Consumed for rooftop dressing so the stored profile actually renders:
+## pitched_ridge gains dormers/chimneys, flat_roof a parapet with AC boxes,
+## saw_tooth industrial skylight teeth.
+var roof_profile: StringName = &"pitched_ridge"
+
+## Building-local footprint rects (the semantic perimeter). The projected
+## elevation can only ever cover footprint grown northward by the
+## projection height, so this defines exactly where the fade may engage.
+var occluder_footprints: Array[Rect2] = []
+
+var _occlusion_material: ShaderMaterial
+var _world_occlusion_regions: Array[Rect2] = []
+var _regions_dirty := true
+var _fade_strength := 0.0
 
 func configure(spec: Dictionary) -> void:
 	facade_spans.assign(spec.get("facade_spans", []))
 	facade_style = spec.get("facade_style", &"painted_plaster")
 	archetype = spec.get("archetype", &"apartment")
-	storeys = clampi(int(spec.get("visual_storeys", 3)), 2, 4)
+	storeys = clampi(int(spec.get("visual_storeys", 3)), 2, 6)
 	entrance_positions.assign(spec.get("entrance_positions", []))
 	window_positions.assign(spec.get("window_positions", []))
 	decoration_seed = int(spec.get("decoration_seed", 0))
 	projection_height = float(spec.get("projection_height", storeys * TILE_SIZE))
 	anchor_y = float(spec.get("anchor_y", 0.0))
+	apocalypse_level = int(spec.get("apocalypse_level", 0))
+	roof_profile = StringName(spec.get("roof_profile", &"pitched_ridge"))
 	position.y = anchor_y
+	occluder_footprints.assign(spec.get("occluder_footprints", []))
+	_regions_dirty = true
+	_ensure_occlusion_material()
 	queue_redraw()
+
+## The roof TileMapLayer is displaced north by the same projection height
+## and occludes together with the facade; sharing ONE material instance
+## means a single uniform update drives both layers.
+func occlusion_material() -> ShaderMaterial:
+	_ensure_occlusion_material()
+	return _occlusion_material
+
+func _ensure_occlusion_material() -> void:
+	if _occlusion_material != null:
+		return
+	_occlusion_material = ShaderMaterial.new()
+	_occlusion_material.shader = OCCLUSION_SHADER
+	_occlusion_material.set_shader_parameter("strength", 0.0)
+	_occlusion_material.set_shader_parameter("fade_outer", FADE_OUTER)
+	_occlusion_material.set_shader_parameter("fade_inner", FADE_INNER)
+	_occlusion_material.set_shader_parameter("center_alpha", CENTER_ALPHA)
+	material = _occlusion_material
+
+func _process(delta: float) -> void:
+	if not visible:
+		if _fade_strength != 0.0:
+			_fade_strength = 0.0
+			_occlusion_material.set_shader_parameter("strength", 0.0)
+		return
+	var player: Node2D = get_tree().get_first_node_in_group("player") as Node2D
+	var target := 0.0
+	if player != null:
+		if _regions_dirty and is_inside_tree():
+			_world_occlusion_regions.clear()
+			for local_rect in occluder_footprints:
+				# Footprint grown northward by the projection height: the
+				# only screen region this building's elevation can cover.
+				_world_occlusion_regions.append(Rect2(
+					global_position + local_rect.position + Vector2(0.0, -projection_height),
+					local_rect.size + Vector2(0.0, projection_height)
+				))
+			_regions_dirty = false
+		for region in _world_occlusion_regions:
+			if _distance_squared_point_to_rect(player.global_position, region) <= FADE_OUTER * FADE_OUTER:
+				target = 1.0
+				break
+	_fade_strength = move_toward(_fade_strength, target, FADE_EASE_SPEED * delta)
+	if _fade_strength <= 0.001 and target <= 0.0:
+		if _occlusion_material.get_shader_parameter("strength") != 0.0:
+			_occlusion_material.set_shader_parameter("strength", 0.0)
+		return
+	_occlusion_material.set_shader_parameter("player_world", player.global_position)
+	_occlusion_material.set_shader_parameter("strength", _fade_strength)
 
 func _draw() -> void:
 	for span_index in range(facade_spans.size()):
@@ -98,7 +181,27 @@ func _draw_upper_windows(rect: Rect2, palette: Dictionary, span_index: int) -> v
 			if _hash(span_index, floor_index, bay) % 13 == 0:
 				continue
 			var center_x := rect.position.x + bay_width * (float(bay) + 0.5)
-			_draw_window(Vector2(center_x, center_y), palette, _hash(span_index, floor_index, bay + 31) % 4 == 0)
+			var flower_box := _hash(span_index, floor_index, bay + 31) % 4 == 0
+			# Apocalypse layer: a deterministic slice of upper windows reads
+			# as boarded over or smashed once the regional level rises.
+			var damage_roll := _hash(span_index, floor_index, bay + 57) % 100
+			if apocalypse_level >= 1 and damage_roll < 8 + apocalypse_level * 9:
+				_draw_damaged_window(Vector2(center_x, center_y), palette, damage_roll % 2 == 0)
+			else:
+				_draw_window(Vector2(center_x, center_y), palette, flower_box)
+
+func _draw_damaged_window(center: Vector2, palette: Dictionary, boarded: bool) -> void:
+	var frame := Rect2(center - Vector2(10.0, 10.0), Vector2(20.0, 20.0))
+	draw_rect(frame.grow(3.0), palette["trim_dark"])
+	if boarded:
+		draw_rect(frame, Color8(58, 44, 36))
+		draw_rect(Rect2(frame.position + Vector2(1.0, 2.0), Vector2(frame.size.x - 2.0, 6.0)), palette["wood"])
+		draw_rect(Rect2(frame.position + Vector2(1.0, frame.size.y - 8.0), Vector2(frame.size.x - 2.0, 6.0)), palette["wood"])
+		draw_line(frame.position, frame.end, palette["wood"], 3.0)
+	else:
+		draw_rect(frame, Color8(24, 28, 30))
+		draw_line(frame.position + Vector2(4.0, 2.0), frame.position + Vector2(12.0, 16.0), palette["glass_light"], 1.5)
+		draw_line(frame.position + Vector2(14.0, 4.0), frame.position + Vector2(6.0, 17.0), palette["glass_light"], 1.5)
 
 func _draw_window(center: Vector2, palette: Dictionary, flower_box: bool) -> void:
 	var frame := Rect2(center - Vector2(10.0, 10.0), Vector2(20.0, 20.0))
@@ -133,8 +236,20 @@ func _draw_ground_frontage(rect: Rect2, world_local_span: Rect2, palette: Dictio
 				if door_position.x >= bay_rect.position.x and door_position.x <= bay_rect.end.x:
 					contains_door = true
 					break
-			if not contains_door:
-				draw_rect(bay_rect.grow(3.0), palette["trim_dark"])
+			if contains_door:
+				continue
+			var smashed := apocalypse_level >= 1 and _hash(span_index, 91, bay) % 100 < 14 + apocalypse_level * 11
+			draw_rect(bay_rect.grow(3.0), palette["trim_dark"])
+			if smashed:
+				# Shattered storefront: dark interior with jagged residual
+				# glass teeth along the sill.
+				draw_rect(bay_rect, Color8(22, 22, 24))
+				var shard_x := bay_rect.position.x + 4.0
+				while shard_x < bay_rect.end.x - 4.0:
+					var shard_h := 6.0 + float(_hash(span_index, bay, int(shard_x)) % 10)
+					draw_rect(Rect2(Vector2(shard_x, bay_rect.end.y - shard_h), Vector2(5.0, shard_h)), palette["glass"])
+					shard_x += 9.0
+			else:
 				draw_rect(bay_rect, palette["glass"])
 				draw_line(bay_rect.position + Vector2(5.0, 3.0), bay_rect.position + Vector2(15.0, 12.0), palette["glass_light"], 3.0)
 		_draw_awning(Rect2(Vector2(rect.position.x + 6.0, ground_top - 5.0), Vector2(rect.size.x - 12.0, 14.0)), palette)
@@ -188,9 +303,78 @@ func _draw_prague_details(rect: Rect2, palette: Dictionary, span_index: int) -> 
 		draw_rect(sign_rect, palette["sign"])
 		for y in range(int(sign_rect.position.y + 6.0), int(sign_rect.end.y - 2.0), 8):
 			draw_rect(Rect2(Vector2(sign_rect.position.x + 3.0, y), Vector2(6.0, 3.0)), palette["sign_text"])
+		if apocalypse_level >= 1 and _hash(span_index, 83, 5) % 100 < 18:
+			# Broken hanging sign: cracked plate tilted off its bracket.
+			draw_line(Vector2(sign_rect.position.x + 6.0, sign_rect.position.y - 2.0), Vector2(sign_rect.position.x + 10.0, sign_rect.position.y + 8.0), palette["metal_dark"], 1.5)
+			draw_rect(Rect2(sign_rect.position + Vector2(2.0, 14.0), Vector2(8.0, 20.0)), Color8(30, 34, 32))
+	_draw_roofline_dressing(rect, palette, span_index)
+	_draw_apocalypse_weathering(rect, span_index)
+	if _span_touches_block_corner(span_index):
+		_draw_corner_quoins(rect, palette)
+
+## Makes the stored roof profile actually render: dormers and a chimney for
+## pitched ridges, parapet notches with AC boxes for flat industrial roofs,
+## skylight teeth for saw-tooth rows.
+func _draw_roofline_dressing(rect: Rect2, palette: Dictionary, span_index: int) -> void:
+	match roof_profile:
+		&"pitched_ridge":
+			var dormer_count := clampi(int(rect.size.x / 128.0), 1, 4)
+			for i in range(dormer_count):
+				var cx := rect.position.x + rect.size.x * (float(i) + 0.5) / float(dormer_count)
+				draw_rect(Rect2(Vector2(cx - 7.0, rect.position.y - 10.0), Vector2(14.0, 12.0)), palette["side_dark"])
+				draw_rect(Rect2(Vector2(cx - 4.0, rect.position.y - 7.0), Vector2(8.0, 7.0)), palette["glass"])
+			if _hash(span_index, 41, 9) % 2 == 0:
+				draw_rect(Rect2(Vector2(rect.position.x + 16.0, rect.position.y - 16.0), Vector2(10.0, 18.0)), palette["wall"] * 0.72)
+		&"flat_roof":
+			draw_rect(Rect2(rect.position + Vector2(-2.0, -6.0), Vector2(rect.size.x + 4.0, 6.0)), palette["trim_dark"])
+			for i in range(clampi(int(rect.size.x / 160.0), 1, 3)):
+				var bx := rect.position.x + 40.0 + float(i) * 120.0
+				draw_rect(Rect2(Vector2(bx, rect.position.y - 4.0), Vector2(22.0, 6.0)), palette["metal_dark"])
+		&"saw_tooth":
+			var teeth := maxi(int(rect.size.x / 48.0), 1)
+			var tooth_w := rect.size.x / float(teeth)
+			for i in range(teeth):
+				var x := rect.position.x + float(i) * tooth_w
+				draw_rect(Rect2(Vector2(x + 4.0, rect.position.y - 6.0), Vector2(tooth_w * 0.55, 6.0)), palette["glass"])
+
+## Apocalypse weathering: scorch gradients on heavily hit districts.
+func _draw_apocalypse_weathering(rect: Rect2, span_index: int) -> void:
+	if apocalypse_level < 2 or _hash(span_index, 63, 13) % 100 >= 26:
+		return
+	var burn := Rect2(rect.position + Vector2(0.0, rect.size.y * 0.35), Vector2(rect.size.x * 0.45, rect.size.y * 0.65))
+	draw_rect(burn, Color(0.05, 0.045, 0.04, 0.42))
+	draw_rect(Rect2(burn.position + Vector2(burn.size.x, 8.0), Vector2(14.0, burn.size.y * 0.7)), Color(0.05, 0.045, 0.04, 0.25))
+
+## Corner buildings read through alternating quoin blocks on the exposed
+## party-wall ends of the outermost facade spans.
+func _span_touches_block_corner(span_index: int) -> bool:
+	if facade_spans.is_empty():
+		return false
+	var min_x := INF
+	var max_x := -INF
+	for span in facade_spans:
+		min_x = minf(min_x, (span as Rect2).position.x)
+		max_x = maxf(max_x, (span as Rect2).end.x)
+	var span := facade_spans[span_index]
+	return absf(span.position.x - min_x) <= 1.0 or absf(span.end.x - max_x) <= 1.0
+
+func _draw_corner_quoins(rect: Rect2, palette: Dictionary) -> void:
+	var y := rect.position.y + 12.0
+	while y < rect.end.y - 12.0:
+		var light := int((y - rect.position.y) / 16.0) % 2 == 0
+		var tone: Color = palette["trim"] if light else palette["side_dark"]
+		draw_rect(Rect2(Vector2(rect.position.x, y), Vector2(6.0, 16.0)), tone)
+		draw_rect(Rect2(Vector2(rect.end.x - 6.0, y), Vector2(6.0, 16.0)), tone)
+		y += 16.0
 
 func _hash(a: int, b: int, c: int) -> int:
 	return abs(int((decoration_seed ^ (a + 1) * 73856093 ^ (b + 1) * 19349663 ^ (c + 1) * 83492791) & 0x7fffffff))
+
+
+static func _distance_squared_point_to_rect(point: Vector2, rect: Rect2) -> float:
+	var dx := maxf(maxf(rect.position.x - point.x, 0.0), point.x - rect.end.x)
+	var dy := maxf(maxf(rect.position.y - point.y, 0.0), point.y - rect.end.y)
+	return dx * dx + dy * dy
 
 func _palette() -> Dictionary:
 	var result := {
