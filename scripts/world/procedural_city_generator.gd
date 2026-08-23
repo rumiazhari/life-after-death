@@ -135,7 +135,7 @@ func _generate_prague_attempt(seed_value: int, attempt: int, attempt_seed: int, 
 	var include_safehouse := coordinate == Vector2i.ZERO
 	var blocks := _make_prague_blocks(axes, park_index, morphology, seed_value, include_safehouse)
 	var parcels := _make_prague_parcels(blocks)
-	var buildings := _make_buildings(seed_value, parcels, blocks)
+	var buildings := _make_buildings(seed_value, parcels, blocks, int(morphology.get("apocalypse_level", 1)))
 	_apply_prague_building_style(buildings, morphology)
 	var exterior_zones := _make_exterior_zones(seed_value, blocks, parcels, buildings)
 	var courtyards := _make_prague_courtyards(seed_value, blocks, buildings)
@@ -708,7 +708,7 @@ func _make_parcels(blocks: Array[Dictionary]) -> Array[Dictionary]:
 		})
 	return parcels
 
-func _make_buildings(seed_value: int, parcels: Array[Dictionary], blocks: Array[Dictionary]) -> Array[Dictionary]:
+func _make_buildings(seed_value: int, parcels: Array[Dictionary], blocks: Array[Dictionary], apocalypse_level: int = 1) -> Array[Dictionary]:
 	var result: Array[Dictionary] = []
 	var block_by_id := _index_by_id(blocks)
 	for parcel_index in range(parcels.size()):
@@ -731,7 +731,7 @@ func _make_buildings(seed_value: int, parcels: Array[Dictionary], blocks: Array[
 		else:
 			layout_seed = int((seed_value ^ (int(block["index"]) + 1) * 0x45D9F3B ^ String(archetype).hash()) & 0x7FFFFFFF)
 		var building_generator := ProceduralBuildingGenerator.new()
-		var interior: Dictionary = building_generator.generate(stable_id, archetype, size, layout_seed)
+		var interior: Dictionary = building_generator.generate(stable_id, archetype, size, layout_seed, true, apocalypse_level)
 		var local_bounds: Rect2 = interior["footprint_bounds"]
 		var footprint_y := parcel_rect.end.y - local_bounds.size.y if attached_frontage else parcel_rect.position.y
 		var footprint := Rect2(parcel_rect.get_center().x - local_bounds.size.x * 0.5, footprint_y, local_bounds.size.x, local_bounds.size.y)
@@ -739,7 +739,7 @@ func _make_buildings(seed_value: int, parcels: Array[Dictionary], blocks: Array[
 		# fits the parcel. Falling back to the same seed's rectangular plan keeps
 		# invalid wings from becoming a generation retry or a blocked entrance.
 		if not parcel_rect.encloses(footprint):
-			interior = building_generator.generate(stable_id, archetype, size, layout_seed, false)
+			interior = building_generator.generate(stable_id, archetype, size, layout_seed, false, apocalypse_level)
 			local_bounds = interior["footprint_bounds"]
 			footprint_y = parcel_rect.end.y - local_bounds.size.y if attached_frontage else parcel_rect.position.y
 			footprint = Rect2(parcel_rect.get_center().x - local_bounds.size.x * 0.5, footprint_y, local_bounds.size.x, local_bounds.size.y)

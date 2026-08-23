@@ -30,6 +30,10 @@ extends CharacterBody2D
 var _contact_targets: Array[Node] = []
 var _damage_tick_remaining: float = 0.0
 var _swarm_manager: Node = null
+## External physical pushes (explosions, heavy impacts) layered onto steering
+## and decaying quickly -- the actor stays a CharacterBody2D; no ragdoll.
+var _knockback := Vector2.ZERO
+var _last_hit_source: Node = null
 
 ## Path-around-walls fallback (Phase 3B): only consulted when direct
 ## steering toward the current goal is actually blocked, and only
@@ -92,11 +96,27 @@ func _physics_process(delta: float) -> void:
 		velocity = steering.normalized() * move_speed
 	else:
 		velocity = Vector2.ZERO
+	velocity += _consume_knockback(delta)
 	move_and_slide()
 	body_visual.update_from_velocity(velocity)
 
+## Physical impulse state: added on top of steering this frame, then decays.
+func apply_knockback(push: Vector2) -> void:
+	_knockback = (_knockback + push).limit_length(420.0)
+
+func _consume_knockback(delta: float) -> Vector2:
+	var applied := _knockback
+	_knockback = _knockback.lerp(Vector2.ZERO, minf(9.0 * delta, 1.0))
+	return applied
+
 func take_damage(amount: float, source: Node = null) -> void:
+	_last_hit_source = source
 	health_component.take_damage(amount, source)
+	# A hit shoves the zombie along the impact direction even if it survives.
+	if source is Node2D:
+		var direction: Vector2 = global_position - (source as Node2D).global_position
+		if direction.length_squared() > 1.0:
+			apply_knockback(direction.normalized() * amount * 6.0)
 
 ## Off by default (ZombiePerceptionComponent.debug_draw_enabled) -- see
 ## docs/perception_system.md "Debug visualization".
@@ -277,4 +297,15 @@ func _on_died() -> void:
 	GameEvents.zombie_killed_by_player.emit(global_position)
 	if _swarm_manager:
 		_swarm_manager.call("unregister_zombie", self)
+	# The zombie stops being an actor and leaves a physical corpse behind
+	# that receives the killing blow's impulse; later blasts can move it.
+	var death_direction := Vector2.RIGHT
+	if _last_hit_source is Node2D:
+		var direction: Vector2 = global_position - (_last_hit_source as Node2D).global_position
+		if direction.length_squared() > 1.0:
+			death_direction = direction.normalized()
+	var container := get_tree().get_first_node_in_group("entity_container")
+	if container == null:
+		container = get_parent()
+	Corpse.spawn(container, body_visual, global_position, death_direction * 140.0 + Vector2(0, 0))
 	queue_free()

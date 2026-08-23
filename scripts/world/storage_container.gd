@@ -26,6 +26,9 @@ extends Node2D
 ## item_id (string) -> starting count, authored per-instance in the scene.
 @export var starting_items: Dictionary = {}
 @export var physical_interaction_enabled: bool = false
+## Explicit persistent-structure id override; when empty, the legacy
+## "safehouse/storage_<role>" id is used.
+@export var structure_id: StringName = &""
 
 var container_id: int = 0
 var _inventory: Inventory
@@ -86,6 +89,8 @@ func _build_player_interaction_and_durability() -> void:
 	add_child(area)
 
 func _structure_object_id() -> StringName:
+	if structure_id != &"":
+		return structure_id
 	return StringName("safehouse/storage_%s" % storage_role)
 
 ## Without an inventory UI, one action remains deterministic: carrying any

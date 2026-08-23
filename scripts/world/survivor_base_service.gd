@@ -79,15 +79,18 @@ static func select_building(city_model: Dictionary, world_seed: int) -> Dictiona
 			return candidates[i]
 	return candidates[0]
 
-## Deterministically claims the best eligible generated building for one
-## survivor group. Registers a SettlementData through the existing WorldState
-## persistence architecture and returns it. Returns null when nothing in this
-## city model is eligible.
+## Deterministically claims an eligible generated building for one survivor
+## group. Buildings already claimed by another group are skipped and the
+## ranked list continues, so multiple groups settle into different ordinary
+## buildings instead of contending for one. Returns null only when nothing
+## eligible remains at all.
 func claim_best_base(city_model: Dictionary, world_seed: int, settlement_name: String = "Survivor Base") -> SettlementData:
-	var building := select_building(city_model, world_seed)
-	if building.is_empty() or building_already_claimed(building["id"]):
-		return null
-	return claim_building(building, settlement_name)
+	for building_variant in rank_buildings(city_model, world_seed):
+		var building: Dictionary = building_variant
+		if building_already_claimed(building["id"]):
+			continue
+		return claim_building(building, settlement_name)
+	return null
 
 func claim_building(building: Dictionary, settlement_name: String = "Survivor Base") -> SettlementData:
 	var data := SettlementData.new()

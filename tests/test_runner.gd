@@ -92,6 +92,19 @@ func _run_all() -> void:
 	await _run_test("street_objects_separate_visual_collision_and_light", _test_street_objects_separate_visual_collision_and_light)
 	await _run_test("generic_generated_buildings_can_be_claimed_as_bases", _test_generic_generated_buildings_can_be_claimed_as_bases)
 	await _run_test("abandoning_base_preserves_building_and_clears_state", _test_abandoning_base_preserves_building_and_clears_state)
+	await _run_test("generated_interiors_are_furnished_compositions", _test_generated_interiors_are_furnished_compositions)
+	await _run_test("furniture_dimensions_leave_the_one_tile_era", _test_furniture_dimensions_leave_the_one_tile_era)
+	await _run_test("furniture_never_blocks_door_routes", _test_furniture_never_blocks_door_routes)
+	await _run_test("generated_loot_furniture_is_interactive_persistent_and_destructible", _test_generated_loot_furniture_is_interactive_persistent_and_destructible)
+	await _run_test("settlement_uses_no_special_safehouse_geometry", _test_settlement_uses_no_special_safehouse_geometry)
+	await _run_test("multiple_groups_claim_different_buildings", _test_multiple_groups_claim_different_buildings)
+	await _run_test("base_structures_remain_destructible", _test_base_structures_remain_destructible)
+	await _run_test("light_furniture_receives_physical_impulse", _test_light_furniture_receives_physical_impulse)
+	await _run_test("heavy_furniture_becomes_dynamic_only_under_force", _test_heavy_furniture_becomes_dynamic_only_under_force)
+	await _run_test("destroyed_wall_spawns_bounded_debris", _test_destroyed_wall_spawns_bounded_debris)
+	await _run_test("zombie_death_leaves_a_physical_corpse", _test_zombie_death_leaves_a_physical_corpse)
+	await _run_test("explosion_pushes_world_with_radial_falloff", _test_explosion_pushes_world_with_radial_falloff)
+	await _run_test("physics_debris_and_corpses_are_capped", _test_physics_debris_and_corpses_are_capped)
 	await _run_test("streamed_prague_quarters_are_dense_and_open_spaces_are_rare", _test_streamed_prague_quarters_are_dense_and_open_spaces_are_rare)
 	await _run_test("procedural_seed_corpus_is_deterministic_valid_and_bounded", _test_procedural_seed_corpus_is_deterministic_valid_and_bounded)
 	await _run_test("procedural_generation_retries_and_fails_explicitly", _test_procedural_generation_retries_and_fails_explicitly)
@@ -746,6 +759,337 @@ func _test_abandoning_base_preserves_building_and_clears_state() -> void:
 	_assert(signature_before == signature_after, "claim/abandon cycles must never alter generated building geometry")
 	WorldState.reset()
 	settlement.free()
+
+## --- generated interiors ---
+
+func _test_generated_interiors_are_furnished_compositions() -> void:
+	var generator := ProceduralCityGenerator.new()
+	var kinds_seen := {}
+	var pieces_by_archetype := {}
+	for world_seed in [7, 1024, 8801, 20260821]:
+		for coordinate in [Vector2i.ZERO, Vector2i(2, 1)]:
+			var city := generator.generate_streamed_chunk(world_seed, coordinate)
+			for building_variant in city["buildings"]:
+				var building: Dictionary = building_variant
+				var interior: Dictionary = building["interior"]
+				pieces_by_archetype[building["archetype"]] = int(pieces_by_archetype.get(building["archetype"], 0)) + (interior["furniture"] as Array).size()
+				for furniture_variant in interior["furniture"]:
+					var furniture: Dictionary = furniture_variant
+					if String(furniture["mode"]) == "decal":
+						continue
+					kinds_seen[furniture["kind"]] = true
+	for expected_kind in [&"bed_single", &"fridge", &"sofa", &"shelf_row", &"workbench", &"exam_bed", &"dining_table", &"counter", &"wardrobe", &"desk"]:
+		_assert(kinds_seen.has(expected_kind), "generated interiors must compose role-appropriate real furniture; missing %s (seen %s)" % [String(expected_kind), str(kinds_seen.keys())])
+	for archetype in pieces_by_archetype:
+		_assert(int(pieces_by_archetype[archetype]) >= 24, "archetype %s interiors must furnish several pieces per room (%d total)" % [String(archetype), int(pieces_by_archetype[archetype])])
+
+func _test_furniture_dimensions_leave_the_one_tile_era() -> void:
+	var generator := ProceduralCityGenerator.new()
+	var largest_span := 0.0
+	var bed_found := false
+	var shelf_found := false
+	for world_seed in [7, 20260821]:
+		var city := generator.generate_streamed_chunk(world_seed, Vector2i.ZERO)
+		for building_variant in city["buildings"]:
+			var interior: Dictionary = (building_variant as Dictionary)["interior"]
+			for furniture_variant in interior["furniture"]:
+				var furniture: Dictionary = furniture_variant
+				if String(furniture["mode"]) == "decal":
+					continue
+				var collision_size: Vector2 = furniture["size"]
+				largest_span = maxf(largest_span, maxf(collision_size.x, collision_size.y))
+				if furniture["kind"] in [&"bed_single", &"bed_double"]:
+					bed_found = true
+					_assert(collision_size.y >= 56.0, "beds must be full-length, not one-tile markers")
+				if furniture["kind"] in [&"shelf_row", &"industrial_shelf"]:
+					shelf_found = true
+					_assert(collision_size.x >= 64.0, "shelving must span multiple tiles")
+	_assert(bed_found and shelf_found, "corpus must exercise beds and long shelving")
+	_assert(largest_span >= 80.0, "at least some furniture must exceed one tile by far (max %.0f)" % largest_span)
+
+func _test_furniture_never_blocks_door_routes() -> void:
+	var generator := ProceduralCityGenerator.new()
+	for world_seed in [3, 42, 1024, 8801, 65535]:
+		var city := generator.generate_streamed_chunk(world_seed, Vector2i(-2, 3))
+		for building_variant in city["buildings"]:
+			var building: Dictionary = building_variant
+			var interior: Dictionary = building["interior"]
+			_assert(generator_validate(interior), "interior %s must satisfy clearance validation" % String(building["id"]))
+			var origin: Vector2 = building["position"]
+			for door_variant in interior["doors"]:
+				var door: Dictionary = door_variant
+				var bay := ProceduralBuildingGenerator.door_bay_rect(door["position"], door["aperture_size"])
+				bay.position += origin
+				for furniture_variant in interior["furniture"]:
+					var furniture: Dictionary = furniture_variant
+					if String(furniture["mode"]) == "decal":
+						continue
+					var collision: Rect2 = furniture["collision_rect"]
+					collision.position += origin
+					_assert(not bay.intersects(collision), "%s furniture blocks the landing of door %s" % [String(furniture["id"]), String(door["id"])])
+
+func generator_validate(interior: Dictionary) -> bool:
+	return ProceduralBuildingGenerator.new().validate(interior).is_empty()
+
+func _test_generated_loot_furniture_is_interactive_persistent_and_destructible() -> void:
+	WorldState.reset()
+	var city := ProceduralCityGenerator.new().generate_streamed_chunk(20260821, Vector2i.ZERO)
+	var loot_spec: Dictionary = {}
+	for building_variant in city["buildings"]:
+		for furniture_variant in (building_variant as Dictionary)["interior"]["furniture"]:
+			var furniture: Dictionary = furniture_variant
+			if String(furniture["mode"]) == "loot" and not (furniture["items"] as Dictionary).is_empty():
+				loot_spec = furniture
+				break
+		if not loot_spec.is_empty():
+			break
+	_assert(not loot_spec.is_empty(), "the streamed corpus must contain loot-bearing furniture with starting items")
+	var fixture := Node2D.new()
+	add_child(fixture)
+	BuildingShellBuilder.add_loot_furniture(
+		fixture, Vector2(60000, 60000), load(loot_spec["texture"]), loot_spec["size"], loot_spec["id"],
+		float(loot_spec["capacity"]), loot_spec["items"], "Search", int(loot_spec["minimum_damage_class"])
+	)
+	var built := fixture.get_child(fixture.get_child_count() - 1) as Node
+	var loot_component := _first_descendant_of_type(built, LootContainerComponent) as LootContainerComponent
+	_assert(loot_component != null and not loot_component.get_inventory().is_empty(), "loot furniture must expose a searchable persistent inventory")
+	_assert(_first_descendant_of_type(built, InteractableComponent) != null, "loot furniture must be interactable")
+	var damage_component := _first_descendant_of_type(built, EnvironmentDamageComponent) as EnvironmentDamageComponent
+	damage_component.apply_damage(9999.0, EnvironmentDamage.DamageClass.EXPLOSIVE)
+	await get_tree().process_frame
+	var matching_drops: Array = WorldState.drops.values().filter(func(drop_variant) -> bool:
+		var drop: WorldDrop = drop_variant
+		return drop.reason == &"environment_destroyed" and not drop.inventory.is_empty())
+	_assert(not matching_drops.is_empty(), "destroying generated loot furniture must preserve its inventory as one world drop")
+	PhysicsDebris.active_count = 0
+	Corpse.active_count = 0
+	fixture.queue_free()
+	await get_tree().process_frame
+
+func _test_settlement_uses_no_special_safehouse_geometry() -> void:
+	var main_instance: Node = (load("res://scenes/main/Main.tscn") as PackedScene).instantiate()
+	var settlement_node := main_instance.get_node_or_null("Settlement")
+	_assert(settlement_node != null, "Main must still carry a lightweight Settlement controller")
+	var found := [false]
+	_walk_for_safehouse_geometry(main_instance, found)
+	_assert(not found[0], "no node in Main may instantiate special safehouse geometry any more")
+	var has_job_board := false
+	for child in settlement_node.get_children():
+		var script := child.get_script() as Script
+		if script != null and String(script.resource_path).ends_with("settlement_job_board.gd"):
+			has_job_board = true
+	_assert(has_job_board, "the Settlement controller must keep its job board")
+	main_instance.free()
+
+func _walk_for_safehouse_geometry(node: Node, found: Array) -> void:
+	if found[0]:
+		return
+	if node is SafehouseInteriorBuilder or String(node.name).begins_with("Safehouse") or String(node.name) == "Interior":
+		found[0] = true
+		return
+	for child in node.get_children():
+		_walk_for_safehouse_geometry(child, found)
+
+func _test_multiple_groups_claim_different_buildings() -> void:
+	WorldState.reset()
+	var city := ProceduralCityGenerator.new().generate_streamed_chunk(20260821, Vector2i.ZERO)
+	var first := SurvivorBaseService.new().claim_best_base(city, 20260821, "Group A")
+	var second := SurvivorBaseService.new().claim_best_base(city, 20260821, "Group B")
+	_assert(first != null and second != null, "two groups must both find eligible ordinary buildings")
+	_assert(first.building_id != second.building_id, "a second group must claim a different building than the first")
+	var third := SurvivorBaseService.new().claim_best_base(city, 20260821, "Group C")
+	_assert(third == null or (third.building_id != first.building_id and third.building_id != second.building_id), "every group occupies its own building")
+	WorldState.reset()
+
+func _test_base_structures_remain_destructible() -> void:
+	WorldState.reset()
+	UrbanNavigationService.reset()
+	var city := ProceduralCityGenerator.new().generate_streamed_chunk(20260821, Vector2i.ZERO)
+	var claimed := SurvivorBaseService.new().claim_best_base(city, 20260821)
+	_assert(claimed != null, "fixture must claim a base before destructibility checks")
+	var claimed_spec: Dictionary = {}
+	for building_variant in city["buildings"]:
+		var candidate: Dictionary = building_variant
+		if candidate["id"] == claimed.building_id:
+			claimed_spec = candidate
+			break
+	var building := ProceduralBuilding.new()
+	building.configure(claimed_spec)
+	add_child(building)
+	await get_tree().physics_frame
+	var wall_damage: EnvironmentDamageComponent = null
+	for wall_node in building.get_children():
+		if wall_node is StaticBody2D:
+			var component := wall_node.get_node_or_null("EnvironmentDamageComponent") as EnvironmentDamageComponent
+			if component != null and String(component.object_id).contains("/wall"):
+				wall_damage = component
+				break
+	_assert(wall_damage != null, "the claimed base must expose real generated walls with damage components")
+	var source := Node2D.new()
+	add_child(source)
+	source.global_position = building.global_position + Vector2(48.0, 0.0)
+	wall_damage.apply_damage(9999.0, EnvironmentDamage.DamageClass.EXPLOSIVE, source)
+	_assert(WorldState.get_prop_state_flag(wall_damage.object_id, &"destroyed", false), "base walls must be destructible like any generated building's walls")
+	var furniture_piece := _first_descendant_of_type(building, EnvironmentDamageComponent)
+	_assert(furniture_piece != null, "claimed base furniture must carry damage components too")
+	source.queue_free()
+	building.queue_free()
+	await get_tree().process_frame
+	PhysicsDebris.active_count = 0
+	WorldState.reset()
+
+## --- hybrid physics ---
+
+func _make_reactive_fixture(kind: StringName, target_mass_class: int, position: Vector2) -> Array:
+	var fixture := Node2D.new()
+	fixture.name = "ReactiveFixture"
+	add_child(fixture)
+	var spec := {
+		"id": StringName("test/reactive_%s_%d" % [String(kind), randi()]),
+		"kind": kind,
+		"texture": "res://assets/pixel/props/crate.png",
+		"size": Vector2(26, 22),
+		"visual_size": Vector2(28, 24),
+		"interaction": &"",
+		"yield": 1,
+		"minimum_damage_class": EnvironmentDamage.DamageClass.SMALL_ARMS,
+	}
+	BuildingShellBuilder.add_street_object(fixture, position, spec)
+	var root := fixture.get_child(fixture.get_child_count() - 1) as Node2D
+	var reaction := root.get_node_or_null("PhysicsReactionComponent") as PhysicsReactionComponent
+	reaction.mass_class = target_mass_class
+	reaction.impulse_threshold = PhysicsReactionComponent.HEAVY_THRESHOLD if target_mass_class == PhysicsReactionComponent.MassClass.HEAVY else PhysicsReactionComponent.LIGHT_THRESHOLD
+	return [fixture, root, reaction]
+
+func _test_light_furniture_receives_physical_impulse() -> void:
+	var parts := _make_reactive_fixture(&"chair", PhysicsReactionComponent.MassClass.LIGHT, Vector2(70000, 70000))
+	var reaction := parts[2] as PhysicsReactionComponent
+	_assert(not reaction.is_dynamic(), "light furniture starts static for performance")
+	var moved: bool = reaction.apply_impulse(Vector2(120.0, 0.0))
+	_assert(moved and reaction.is_dynamic(), "a sufficient impulse must convert light furniture into a live rigid body")
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	var dynamic_body := (parts[1] as Node2D).get_node_or_null("DynamicBody") as RigidBody2D
+	_assert(dynamic_body != null and dynamic_body.linear_velocity.length() > 0.0, "converted furniture must actually move under physics")
+	parts[0].queue_free()
+	await get_tree().process_frame
+
+func _test_heavy_furniture_becomes_dynamic_only_under_force() -> void:
+	var parts := _make_reactive_fixture(&"wardrobe", PhysicsReactionComponent.MassClass.HEAVY, Vector2(70200, 70000))
+	var reaction := parts[2] as PhysicsReactionComponent
+	var ignored: bool = reaction.apply_impulse(Vector2(80.0, 0.0))
+	_assert(not ignored and not reaction.is_dynamic(), "weak shoves must not move heavy static furniture")
+	var moved: bool = reaction.apply_impulse(Vector2(400.0, 0.0))
+	_assert(moved and reaction.is_dynamic(), "strong force (explosions) must convert heavy furniture to dynamics")
+	parts[0].queue_free()
+	await get_tree().process_frame
+
+func _test_destroyed_wall_spawns_bounded_debris() -> void:
+	WorldState.reset()
+	var fixture := Node2D.new()
+	fixture.name = "WallFixture"
+	add_child(fixture)
+	BuildingShellBuilder._maybe_wall(fixture, Vector2(71000, 71000), load("res://assets/pixel/props/wall_concrete.png"), [])
+	var wall := fixture.get_child(fixture.get_child_count() - 1) as StaticBody2D
+	var damage_component := wall.get_node("EnvironmentDamageComponent") as EnvironmentDamageComponent
+	var source := Node2D.new()
+	add_child(source)
+	source.global_position = wall.global_position + Vector2(-64.0, 0.0)
+	var debris_before := get_tree().get_nodes_in_group("physics_debris").size()
+	damage_component.apply_damage(9999.0, EnvironmentDamage.DamageClass.EXPLOSIVE, source)
+	await get_tree().process_frame
+	await get_tree().physics_frame
+	var debris_nodes := get_tree().get_nodes_in_group("physics_debris")
+	var new_debris := debris_nodes.size() - debris_before
+	_assert(new_debris >= 1 and new_debris <= 5, "destroyed walls must spawn a small bounded debris burst (%d)" % new_debris)
+	_assert(not is_instance_valid(wall) or wall.is_queued_for_deletion(), "the destroyed wall body must leave the tree after breaking")
+	for node in debris_nodes:
+		if is_instance_valid(node):
+			node.queue_free()
+	PhysicsDebris.active_count = 0
+	source.queue_free()
+	fixture.queue_free()
+	WorldState.reset()
+	await get_tree().process_frame
+
+func _test_zombie_death_leaves_a_physical_corpse() -> void:
+	WorldState.reset()
+	var zombie := (load("res://scenes/actors/Zombie.tscn") as PackedScene).instantiate() as Zombie
+	add_child(zombie)
+	zombie.global_position = Vector2(72000, 72000)
+	await get_tree().physics_frame
+	var killer := Node2D.new()
+	add_child(killer)
+	killer.global_position = zombie.global_position + Vector2(-40.0, 0.0)
+	zombie.take_damage(99999.0, killer)
+	await get_tree().process_frame
+	var corpses := get_tree().get_nodes_in_group("corpses")
+	_assert(not corpses.is_empty(), "a dead zombie must leave a physical corpse behind")
+	var corpse := corpses.back() as RigidBody2D
+	_assert(corpse != null, "corpses must be physical rigid bodies receiving the killing impulse")
+	for node in corpses:
+		if is_instance_valid(node):
+			node.queue_free()
+	Corpse.active_count = 0
+	if is_instance_valid(killer):
+		killer.queue_free()
+	# The zombie freed itself on death (that is the new corpse contract).
+	WorldState.reset()
+	await get_tree().process_frame
+
+func _test_explosion_pushes_world_with_radial_falloff() -> void:
+	WorldState.reset()
+	var blast_origin := Vector2(73000, 73000)
+	var near_parts := _make_reactive_fixture(&"chair", PhysicsReactionComponent.MassClass.LIGHT, blast_origin + Vector2(50.0, 0.0))
+	var far_parts := _make_reactive_fixture(&"crate", PhysicsReactionComponent.MassClass.LIGHT, blast_origin + Vector2(200.0, 0.0))
+	var blaster := Node2D.new()
+	add_child(blaster)
+	blaster.global_position = blast_origin
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	# Low structural value: the blast must MOVE both props without wrecking
+	# them, isolating the impulse/falloff behavior under test.
+	EnvironmentDamage.apply_explosion(blaster, blast_origin, 260.0, 4.0, 30.0, EnvironmentDamage.DamageClass.EXPLOSIVE)
+	var near_reaction := near_parts[2] as PhysicsReactionComponent
+	var far_reaction := far_parts[2] as PhysicsReactionComponent
+	await get_tree().physics_frame
+	_assert(is_instance_valid(near_reaction) and near_reaction.is_dynamic() and is_instance_valid(far_reaction) and far_reaction.is_dynamic(), "both reactive props must receive the blast impulse")
+	var near_body := (near_parts[1] as Node2D).get_node_or_null("DynamicBody") as RigidBody2D
+	var far_body := (far_parts[1] as Node2D).get_node_or_null("DynamicBody") as RigidBody2D
+	_assert(near_body != null and far_body != null, "blast-converted props must expose their dynamic bodies")
+	if near_body != null and far_body != null:
+		_assert(near_body.linear_velocity.length() > far_body.linear_velocity.length(),
+			"closer objects must be pushed harder than distant ones (radial falloff: %.1f vs %.1f)" % [near_body.linear_velocity.length(), far_body.linear_velocity.length()])
+	near_parts[0].queue_free()
+	far_parts[0].queue_free()
+	blaster.queue_free()
+	await get_tree().process_frame
+
+func _test_physics_debris_and_corpses_are_capped() -> void:
+	WorldState.reset()
+	var fixture := Node2D.new()
+	add_child(fixture)
+	for i in range(PhysicsDebris.MAX_DEBRIS + 8):
+		PhysicsDebris.spawn(fixture, Vector2(74000 + i * 4.0, 74000), load("res://assets/pixel/props/debris_small.png"), Vector2(9, 7), Vector2.ZERO)
+	var live_debris: Array = get_tree().get_nodes_in_group("physics_debris").filter(func(node: Node) -> bool:
+		return is_instance_valid(node) and not node.is_queued_for_deletion())
+	_assert(live_debris.size() <= PhysicsDebris.MAX_DEBRIS, "debris population must stay under its global cap (%d > %d)" % [live_debris.size(), PhysicsDebris.MAX_DEBRIS])
+	for node in live_debris:
+		if is_instance_valid(node):
+			node.free()
+	PhysicsDebris.active_count = 0
+	for i in range(Corpse.MAX_CORPSES + 5):
+		Corpse.spawn(fixture, null, Vector2(75000 + i * 6.0, 75000), Vector2.ZERO)
+	var live_corpses: Array = get_tree().get_nodes_in_group("corpses").filter(func(node: Node) -> bool:
+		return is_instance_valid(node) and not node.is_queued_for_deletion())
+	_assert(live_corpses.size() <= Corpse.MAX_CORPSES, "corpse population must stay under its global cap (%d > %d)" % [live_corpses.size(), Corpse.MAX_CORPSES])
+	for node in live_corpses:
+		if is_instance_valid(node):
+			node.free()
+	Corpse.active_count = 0
+	fixture.queue_free()
+	WorldState.reset()
+	await get_tree().process_frame
 
 func _test_streamed_prague_quarters_are_dense_and_open_spaces_are_rare() -> void:
 	var generator := ProceduralCityGenerator.new()
@@ -1421,15 +1765,14 @@ func _test_procedural_full_main_landmarks_rooms_and_safehouse_are_navigable() ->
 	_assert(generated_scavenge_points.size() == _streamed_semantic_count(world, &"scavenge_points"), "runtime must materialize every active generated scavenging site")
 	for point in generated_scavenge_points:
 		_assert(_first_descendant_of_type(point, InteractableComponent) != null, "generated scavenging sites must be directly usable by the player")
-	var safehouse_storages := get_tree().get_nodes_in_group("storage_container").filter(func(node: Node) -> bool: return settlement.is_ancestor_of(node))
-	_assert(safehouse_storages.size() == 4, "physical safehouse must retain all four functional storage roles")
-	var gatehouse_roof := settlement.get_node_or_null("Interior/GatehouseRoof") as TileMapLayer
-	_assert(gatehouse_roof != null and not gatehouse_roof.get_used_cells().is_empty(), "open safehouse courtyard must receive a projected entrance-lodge roof without covering the yard")
-	var gatehouse_facades := get_tree().get_nodes_in_group("projected_building_facade").filter(func(node: Node) -> bool: return node.name == "ProjectedGatehouseFacade" and entity_container.is_ancestor_of(node))
-	_assert(gatehouse_facades.size() == 1, "safehouse entrance facade must share the actor y-sort layer exactly once")
-	for storage in safehouse_storages:
-		_assert(_first_descendant_of_type(storage, InteractableComponent) != null, "safehouse storage must use the PlayerInteractor contract")
-		_assert(_first_descendant_of_type(storage, EnvironmentDamageComponent) != null, "safehouse storage must be heavy-class destructible")
+	var base_storages := get_tree().get_nodes_in_group("storage_container").filter(func(node: Node) -> bool: return settlement.is_ancestor_of(node))
+	_assert(base_storages.size() == 4, "a claimed survivor base must locate all four functional storage roles inside its generated building")
+	for storage in base_storages:
+		_assert(_first_descendant_of_type(storage, InteractableComponent) != null, "base storage must use the PlayerInteractor contract")
+	var sleep_spots := get_tree().get_nodes_in_group("sleep_spots").filter(func(node: Node) -> bool: return settlement.is_ancestor_of(node))
+	_assert(sleep_spots.size() >= 4, "the claimed generated building must provide survivor sleep spots inside its rooms")
+	for storage in base_storages:
+		_assert(_first_descendant_of_type(storage, EnvironmentDamageComponent) != null, "base storage must remain destructible")
 	for door_node in get_tree().get_nodes_in_group("doors"):
 		var door := door_node as Door
 		if world.is_ancestor_of(door) and not door.is_open:
@@ -2646,7 +2989,11 @@ func _test_restart_teardown_creates_no_destruction_drops() -> void:
 	var main_scene: PackedScene = load("res://scenes/main/Main.tscn")
 	var main_instance: Node = main_scene.instantiate()
 	add_child(main_instance)
-	await get_tree().process_frame
+	# Base storage containers register only after the world generation
+	# contract completes and the settlement claims its generated building.
+	var world_node := main_instance.get_node_or_null("World")
+	if world_node != null and "generation_complete" in world_node and not bool(world_node.get("generation_complete")):
+		await (world_node as Node).get("generation_completed")
 	await get_tree().process_frame
 
 	_assert(WorldState.containers.size() > 0, "sanity check: the fresh scene should have registered its storage containers")

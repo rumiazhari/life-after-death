@@ -123,21 +123,46 @@ func _build_furniture(interior: Dictionary, rooms_by_id: Dictionary) -> void:
 		var local_position: Vector2 = (furniture["position"] as Vector2) - room.position
 		var texture: Texture2D = load(furniture["texture"])
 		var mode: StringName = furniture["mode"]
+		var visual_size: Vector2 = furniture.get("visual_size", Vector2.ZERO)
+		var sprite_rotation: float = (PI * 0.5) if bool(furniture.get("overturned", false)) else 0.0
+		var tint := Color.WHITE
+		if bool(furniture.get("damaged", false)):
+			tint = Color(0.72, 0.68, 0.62)
+		if furniture.has("tint"):
+			tint = furniture["tint"]
 		match mode:
+			&"decal":
+				# Ground detail with no collision and no interaction.
+				var sprite := Sprite2D.new()
+				sprite.texture = texture
+				if visual_size != Vector2.ZERO and texture != null and texture.get_size().x > 0.0:
+					sprite.scale = visual_size / texture.get_size()
+				sprite.position = local_position
+				sprite.z_index = -6
+				if tint != Color.WHITE:
+					sprite.modulate = tint
+				room.add_child(sprite)
+				continue
 			&"loot":
 				BuildingShellBuilder.add_loot_furniture(
 					room, local_position, texture, furniture["size"], furniture["id"],
-					float(furniture["capacity"]), furniture["items"], "Search", int(furniture["minimum_damage_class"])
+					float(furniture["capacity"]), furniture["items"], "Search", int(furniture["minimum_damage_class"]),
+					visual_size, sprite_rotation, tint
 				)
 			&"salvage":
 				BuildingShellBuilder.add_salvage_prop(
-					room, local_position, texture, furniture["size"], furniture["id"], int(furniture["yield"])
+					room, local_position, texture, furniture["size"], furniture["id"], int(furniture["yield"]),
+					visual_size, sprite_rotation, tint
 				)
 			_:
 				BuildingShellBuilder.add_physical_prop(
 					room, local_position, texture, furniture["size"], furniture["id"],
-					int(furniture["yield"]), int(furniture["minimum_damage_class"])
+					int(furniture["yield"]), int(furniture["minimum_damage_class"]),
+					visual_size, sprite_rotation, tint
 				)
+		var built := room.get_child(room.get_child_count() - 1) as Node2D
+		if built != null:
+			PhysicsReactionComponent.attach(built, PhysicsReactionComponent.mass_class_for_kind(furniture["kind"]))
 
 func _node_name(stable_id: StringName) -> String:
 	return String(stable_id).get_file().to_pascal_case()

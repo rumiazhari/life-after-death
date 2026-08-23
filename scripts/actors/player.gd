@@ -25,6 +25,11 @@ var weapon_slots: Array[Weapon] = []
 var carried_inventory: Inventory
 
 var _fire_was_held: bool = false
+## External physical pushes (explosions) layered onto input movement.
+var _knockback := Vector2.ZERO
+
+func apply_knockback(push: Vector2) -> void:
+	_knockback = (_knockback + push).limit_length(420.0)
 
 func _ready() -> void:
 	add_to_group("player")
@@ -59,6 +64,9 @@ func _update_movement(delta: float) -> void:
 		velocity = velocity.move_toward(input_dir * max_speed, acceleration * delta)
 	else:
 		velocity = velocity.move_toward(Vector2.ZERO, friction * delta)
+	# External physical pushes ride on top of input movement, decaying fast.
+	velocity += _knockback
+	_knockback = _knockback.lerp(Vector2.ZERO, minf(9.0 * delta, 1.0))
 	move_and_slide()
 
 func _update_firing() -> void:

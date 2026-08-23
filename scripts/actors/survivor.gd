@@ -85,6 +85,18 @@ func _physics_process(_delta: float) -> void:
 	body_visual.update_from_velocity(velocity)
 	detectable.report_movement_speed(velocity.length())
 
+## External physical pushes (explosions, heavy impacts) layered onto AI
+## steering; decays quickly so pathing resumes cleanly afterwards.
+var _knockback := Vector2.ZERO
+
+func apply_knockback(push: Vector2) -> void:
+	_knockback = (_knockback + push).limit_length(420.0)
+
+func _consume_knockback(delta: float) -> Vector2:
+	var applied := _knockback
+	_knockback = _knockback.lerp(Vector2.ZERO, minf(9.0 * delta, 1.0))
+	return applied
+
 ## Path-around-walls fallback (Phase 3B.1): only consulted when direct
 ## steering toward the current goal is actually blocked, re-evaluated on
 ## `_nav_recheck_timer` rather than every physics frame -- the same
@@ -125,11 +137,13 @@ func move_toward_point(point: Vector2, delta: float) -> bool:
 	if distance <= arrive_threshold:
 		_clear_nav_path()
 		velocity = velocity.move_toward(Vector2.ZERO, steer_acceleration * delta)
+		velocity += _consume_knockback(delta)
 		move_and_slide()
 		return true
 	var dir: Vector2 = _seek_direction(point, to_point, distance)
 	_face(dir)
 	velocity = velocity.move_toward(dir * speed, steer_acceleration * delta)
+	velocity += _consume_knockback(delta)
 	move_and_slide()
 	return false
 

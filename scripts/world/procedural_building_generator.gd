@@ -51,8 +51,9 @@ const INTERIOR_WALL_TEXTURE := "res://assets/pixel/props/wall_interior.png"
 
 var _rng := RandomNumberGenerator.new()
 
-func generate(building_id: StringName, archetype: StringName, size: Vector2, seed_value: int, allow_annex: bool = true) -> Dictionary:
+func generate(building_id: StringName, archetype: StringName, size: Vector2, seed_value: int, allow_annex: bool = true, apocalypse_level: int = 1) -> Dictionary:
 	_rng.seed = seed_value
+	_disturbance = _disturbance_level(building_id, apocalypse_level)
 	var roles: Array = ARCHETYPE_ROOMS.get(archetype, [&"public_room", &"utility_room"])
 	var orientation: StringName = _choose_orientation(archetype, roles.size(), size)
 	var mirrored := orientation in [&"x", &"grid"] and _rng.randi_range(0, 1) == 1
@@ -64,6 +65,7 @@ func generate(building_id: StringName, archetype: StringName, size: Vector2, see
 	var windows := _make_windows(building_id, rooms, doors, size, orientation)
 	var clearance_rects := _make_clearance_rects(rooms, doors, orientation)
 	var furniture := _make_furniture(building_id, rooms, doors, clearance_rects)
+	_apply_apocalypse_disturbance(building_id, rooms, clearance_rects, furniture)
 	var style: Dictionary = ARCHETYPE_STYLE.get(archetype, ARCHETYPE_STYLE[&"apartment"])
 	return {
 		"layout": &"grid_2x2" if orientation == &"grid" else StringName("strip_%s" % String(orientation)),
@@ -76,6 +78,7 @@ func generate(building_id: StringName, archetype: StringName, size: Vector2, see
 		"wall_texture": style["wall_texture"],
 		"interior_wall_texture": INTERIOR_WALL_TEXTURE,
 		"roof_material": style["roof_material"],
+		"disturbance": _disturbance,
 		"rooms": rooms,
 		"doors": doors,
 		"partitions": partitions,
@@ -83,6 +86,21 @@ func generate(building_id: StringName, archetype: StringName, size: Vector2, see
 		"clearance_rects": clearance_rects,
 		"furniture": furniture,
 	}
+
+## Deterministic per-building collapse state: some interiors remain mostly
+## intact while others are heavily disturbed. Derived from the stable
+## building id plus the regional apocalypse level, never from wall-clock RNG.
+var _disturbance := 0
+
+func _disturbance_level(building_id: StringName, apocalypse_level: int) -> int:
+	if apocalypse_level <= 0:
+		return 0
+	var roll := posmod(int(String(building_id).hash() ^ (apocalypse_level * 0x9E3779B9)), 100)
+	if roll < 50:
+		return clampi(apocalypse_level, 0, 2)
+	if roll < 85:
+		return clampi(apocalypse_level - 1, 0, 2)
+	return clampi(apocalypse_level + 1, 0, 2)
 
 ## A building keeps its generated room graph, but may add one fully-enterable
 ## service wing onto the graph's terminal room.  The wing is deliberately
@@ -510,6 +528,9 @@ func _window_candidate(rect: Rect2, size: Vector2, doors: Array[Dictionary]) -> 
 
 func _make_clearance_rects(rooms: Array[Dictionary], doors: Array[Dictionary], orientation: StringName) -> Array[Dictionary]:
 	var output: Array[Dictionary] = []
+	var room_by_id: Dictionary = {}
+	for room in rooms:
+		room_by_id[room["id"]] = room
 	for room in rooms:
 		var room_rect: Rect2 = room["rect"]
 		var center := room_rect.get_center()
@@ -527,6 +548,11 @@ func _make_clearance_rects(rooms: Array[Dictionary], doors: Array[Dictionary], o
 			)
 			output.append({"room_id": room["id"], "rect": horizontal.intersection(room_rect)})
 			output.append({"room_id": room["id"], "rect": vertical.intersection(room_rect)})
+			# The carved doorway itself is sacred ground on BOTH sides: no
+			# furniture may ever overlap the wall bay or its immediate
+			# landing, whatever else the aisle geometry allows.
+			var bay := door_bay_rect(door["position"], door.get("aperture_size", PORTAL_SIZE)).grow(6.0)
+			output.append({"room_id": room["id"], "rect": bay.intersection(room_rect)})
 		# A continuous strip through the graph makes door-to-door passage
 		# explicit even when two randomized portal slots do not share a line.
 		if orientation != &"grid":
@@ -536,33 +562,48 @@ func _make_clearance_rects(rooms: Array[Dictionary], doors: Array[Dictionary], o
 			else:
 				aisle = Rect2(center.x - AISLE_WIDTH * 0.5, room_rect.position.y, AISLE_WIDTH, room_rect.size.y)
 			output.append({"room_id": room["id"], "rect": aisle})
+		# Room centers host semantic anchors (spawn sampling, AI goals); keep
+		# a small standing square clear of furniture at every room's heart.
+		output.append({"room_id": room["id"], "rect": Rect2(center - Vector2(16, 16), Vector2(32, 32))})
 	return output
 
 func _make_furniture(building_id: StringName, rooms: Array[Dictionary], _doors: Array[Dictionary], clearance_rects: Array[Dictionary]) -> Array[Dictionary]:
 	var output: Array[Dictionary] = []
 	for room in rooms:
 		var accepted: Array[Rect2] = []
+		var accepted_by_kind: Dictionary = {}
 		var room_reserves: Array[Rect2] = []
 		for reserve in clearance_rects:
 			if reserve["room_id"] == room["id"]:
 				room_reserves.append(reserve["rect"])
 		for rule in _rules_for_role(room["role"]):
-			var placed := _place_furniture_rule(building_id, room, rule, room_reserves, accepted, output.size())
+			var placed := _place_furniture_rule(building_id, room, rule, room_reserves, accepted, accepted_by_kind, output.size())
 			if not placed.is_empty():
 				accepted.append(placed["clearance_rect"])
+				if not accepted_by_kind.has(rule["kind"]):
+					accepted_by_kind[rule["kind"]] = []
+				(accepted_by_kind[rule["kind"]] as Array).append(placed["collision_rect"])
 				output.append(placed)
 		if accepted.is_empty():
 			var fallback := _furniture_rule(&"crate", &"salvage", {}, 2)
-			var placed := _place_furniture_rule(building_id, room, fallback, room_reserves, accepted, output.size())
+			var placed := _place_furniture_rule(building_id, room, fallback, room_reserves, accepted, {}, output.size())
 			if not placed.is_empty():
 				accepted.append(placed["clearance_rect"])
 				output.append(placed)
 	return output
 
-func _place_furniture_rule(building_id: StringName, room: Dictionary, rule: Dictionary, reserves: Array[Rect2], accepted: Array[Rect2], serial: int) -> Dictionary:
+func _place_furniture_rule(building_id: StringName, room: Dictionary, rule: Dictionary, reserves: Array[Rect2], accepted: Array[Rect2], accepted_by_kind: Dictionary, serial: int) -> Dictionary:
 	var room_rect: Rect2 = room["rect"]
 	var size: Vector2 = rule["size"]
 	var candidates := _candidate_positions(room_rect, size)
+	# Multi-segment runs (kitchen counters, shelf rows) first try to continue
+	# directly adjacent to an already-accepted piece of the same kind so
+	# composed rooms read as continuous furniture runs rather than scattered
+	# single items.
+	for run_anchor_variant in accepted_by_kind.get(rule["kind"], []):
+		var anchor: Rect2 = run_anchor_variant
+		candidates.push_front(anchor.get_center() + Vector2(anchor.size.x * 0.5 + size.x * 0.5 + FURNITURE_CLEARANCE * 2.0, 0.0))
+		candidates.push_front(anchor.get_center() - Vector2(anchor.size.x * 0.5 + size.x * 0.5 + FURNITURE_CLEARANCE * 2.0, 0.0))
 	for position in candidates:
 		var collision_rect := Rect2(position - size * 0.5, size)
 		var clearance := collision_rect.grow(FURNITURE_CLEARANCE)
@@ -591,6 +632,7 @@ func _place_furniture_rule(building_id: StringName, room: Dictionary, rule: Dict
 			"mode": rule["mode"],
 			"position": position,
 			"size": size,
+			"visual_size": rule.get("visual_size", size),
 			"collision_rect": collision_rect,
 			"clearance_rect": clearance,
 			"texture": rule["texture"],
@@ -609,47 +651,157 @@ func _candidate_positions(rect: Rect2, size: Vector2) -> Array[Vector2]:
 	var bottom := rect.end.y - pad - size.y * 0.5
 	var cx := rect.get_center().x
 	var cy := rect.get_center().y
+	var qx_left := rect.position.x + pad + (rect.size.x - pad * 2.0) * 0.25
+	var qx_right := rect.position.x + pad + (rect.size.x - pad * 2.0) * 0.75
+	var qy_top := rect.position.y + pad + (rect.size.y - pad * 2.0) * 0.25
+	var qy_bottom := rect.position.y + pad + (rect.size.y - pad * 2.0) * 0.75
 	var candidates: Array[Vector2] = [
 		Vector2(left, top), Vector2(right, top), Vector2(cx, top),
 		Vector2(left, bottom), Vector2(right, bottom), Vector2(cx, bottom),
 		Vector2(left, cy), Vector2(right, cy),
+		Vector2(qx_left, top), Vector2(qx_right, top),
+		Vector2(qx_left, bottom), Vector2(qx_right, bottom),
+		Vector2(left, qy_top), Vector2(left, qy_bottom),
+		Vector2(right, qy_top), Vector2(right, qy_bottom),
 	]
 	if _rng.randi_range(0, 1) == 1:
 		candidates.reverse()
 	return candidates
 
+## Role-driven furniture compositions. Rules are tried in order; each piece
+## is placed only where it keeps door aisles and earlier pieces clear, so a
+## composition degrades gracefully in small rooms instead of blocking paths.
 func _rules_for_role(role: StringName) -> Array[Dictionary]:
 	match role:
 		&"living_room":
-			return [_furniture_rule(&"table", &"physical"), _furniture_rule(&"chair", &"physical")]
+			return [
+				_furniture_rule(&"sofa", &"physical"),
+				_furniture_rule(&"dining_table", &"physical"),
+				_furniture_rule(&"chair", &"physical"),
+				_furniture_rule(&"chair", &"physical"),
+				_furniture_rule(&"cabinet", &"loot", {"materials": 2, "water_bottle": 1}),
+			]
 		&"kitchen":
-			return [_furniture_rule(&"counter", &"physical"), _furniture_rule(&"fridge", &"loot", {"food_ration": 3, "water_bottle": 2})]
+			return [
+				_furniture_rule(&"counter", &"physical"),
+				_furniture_rule(&"counter", &"physical"),
+				_furniture_rule(&"counter", &"physical"),
+				_furniture_rule(&"fridge", &"loot", {"food_ration": 3, "water_bottle": 2}),
+				_furniture_rule(&"dining_table", &"physical"),
+				_furniture_rule(&"chair", &"physical"),
+				_furniture_rule(&"chair", &"physical"),
+				_furniture_rule(&"shelf_row", &"loot", {"materials": 2, "food_ration": 2}),
+			]
 		&"bedroom":
-			return [_furniture_rule(&"bed", &"physical"), _furniture_rule(&"cabinet", &"loot", {"materials": 2, "medical_supplies": 1})]
+			var bedroom: Array[Dictionary] = [_furniture_rule(&"bed_single", &"physical")]
+			if _rng.randi_range(0, 2) == 0:
+				bedroom[0] = _furniture_rule(&"bed_double", &"physical")
+			bedroom.append_array([
+				_furniture_rule(&"wardrobe", &"loot", {"materials": 2, "medical_supplies": 1}),
+				_furniture_rule(&"nightstand", &"loot", {"food_ration": 1}),
+				_furniture_rule(&"desk", &"physical"),
+				_furniture_rule(&"chair", &"physical"),
+			])
+			return bedroom
 		&"bathroom":
-			return [_furniture_rule(&"cabinet", &"loot", {"medical_supplies": 1})]
+			return [
+				_furniture_rule(&"cabinet", &"loot", {"medical_supplies": 1, "water_bottle": 1}),
+				_furniture_rule(&"counter", &"physical"),
+			]
 		&"retail_floor":
-			return [_furniture_rule(&"shelf", &"loot", {"food_ration": 3, "materials": 2}), _furniture_rule(&"shelf", &"loot", {"water_bottle": 2}), _furniture_rule(&"counter", &"physical")]
+			return [
+				_furniture_rule(&"shelf_row", &"loot", {"food_ration": 3, "materials": 2}),
+				_furniture_rule(&"shelf_row", &"loot", {"water_bottle": 3}),
+				_furniture_rule(&"shelf_row", &"loot", {}),
+				_furniture_rule(&"shelf_row", &"loot", {"materials": 4}),
+				_furniture_rule(&"counter", &"physical"),
+				_furniture_rule(&"crate", &"salvage", {}, 2),
+			]
 		&"stock_room":
-			return [_furniture_rule(&"fridge", &"loot", {"food_ration": 2, "water_bottle": 3}), _furniture_rule(&"crate", &"salvage", {}, 3)]
+			return [
+				_furniture_rule(&"industrial_shelf", &"loot", {"food_ration": 2, "water_bottle": 3, "materials": 2}),
+				_furniture_rule(&"industrial_shelf", &"loot", {"materials": 5}),
+				_furniture_rule(&"fridge", &"loot", {"food_ration": 2, "water_bottle": 3}),
+				_furniture_rule(&"crate", &"salvage", {}, 3),
+				_furniture_rule(&"pallet", &"physical"),
+			]
 		&"dining_room":
-			return [_furniture_rule(&"table", &"physical"), _furniture_rule(&"chair", &"physical"), _furniture_rule(&"chair", &"physical")]
+			return [
+				_furniture_rule(&"dining_table", &"physical"),
+				_furniture_rule(&"chair", &"physical"),
+				_furniture_rule(&"chair", &"physical"),
+				_furniture_rule(&"dining_table", &"physical"),
+				_furniture_rule(&"chair", &"physical"),
+				_furniture_rule(&"chair", &"physical"),
+				_furniture_rule(&"dining_table", &"physical"),
+				_furniture_rule(&"chair", &"physical"),
+				_furniture_rule(&"cabinet", &"loot", {"food_ration": 2, "water_bottle": 2}),
+			]
 		&"pantry":
-			return [_furniture_rule(&"shelf", &"loot", {"food_ration": 4, "water_bottle": 2}), _furniture_rule(&"crate", &"salvage", {}, 2)]
+			return [
+				_furniture_rule(&"shelf_row", &"loot", {"food_ration": 4, "water_bottle": 2}),
+				_furniture_rule(&"shelf_row", &"loot", {"food_ration": 3}),
+				_furniture_rule(&"crate", &"salvage", {}, 2),
+				_furniture_rule(&"counter", &"physical"),
+			]
 		&"waiting_area":
-			return [_furniture_rule(&"chair", &"physical"), _furniture_rule(&"chair", &"physical"), _furniture_rule(&"counter", &"physical")]
+			return [
+				_furniture_rule(&"chair", &"physical"),
+				_furniture_rule(&"chair", &"physical"),
+				_furniture_rule(&"chair", &"physical"),
+				_furniture_rule(&"counter", &"physical"),
+				_furniture_rule(&"cabinet", &"loot", {"medical_supplies": 1, "materials": 1}),
+			]
 		&"exam_room":
-			return [_furniture_rule(&"table", &"physical"), _furniture_rule(&"cabinet", &"loot", {"medical_supplies": 2})]
+			return [
+				_furniture_rule(&"exam_bed", &"physical"),
+				_furniture_rule(&"exam_table", &"physical"),
+				_furniture_rule(&"cabinet", &"loot", {"medical_supplies": 2}),
+				_furniture_rule(&"chair", &"physical"),
+			]
 		&"medical_storage":
-			return [_furniture_rule(&"cabinet", &"loot", {"medical_supplies": 5}), _furniture_rule(&"cabinet", &"loot", {"medical_supplies": 3, "materials": 2})]
+			return [
+				_furniture_rule(&"cabinet", &"loot", {"medical_supplies": 5}),
+				_furniture_rule(&"cabinet", &"loot", {"medical_supplies": 3, "materials": 2}),
+				_furniture_rule(&"shelf_row", &"loot", {"medical_supplies": 2, "materials": 2}),
+				_furniture_rule(&"crate", &"salvage", {}, 2),
+			]
 		&"work_floor":
-			return [_furniture_rule(&"counter", &"physical"), _furniture_rule(&"table", &"physical"), _furniture_rule(&"chair", &"physical")]
+			return [
+				_furniture_rule(&"workbench", &"physical"),
+				_furniture_rule(&"workbench", &"physical"),
+				_furniture_rule(&"industrial_shelf", &"loot", {"materials": 4, "ammunition": 2}),
+				_furniture_rule(&"crate", &"salvage", {}, 2),
+				_furniture_rule(&"desk", &"physical"),
+				_furniture_rule(&"chair", &"physical"),
+			]
 		&"loading_bay":
-			return [_furniture_rule(&"pallet", &"physical"), _furniture_rule(&"crate", &"salvage", {}, 3)]
+			return [
+				_furniture_rule(&"pallet", &"physical"),
+				_furniture_rule(&"pallet", &"physical"),
+				_furniture_rule(&"crate", &"salvage", {}, 3),
+				_furniture_rule(&"industrial_shelf", &"loot", {"materials": 4}),
+			]
 		&"storage":
-			return [_furniture_rule(&"shelf", &"loot", {"materials": 5, "ammunition": 3}), _furniture_rule(&"crate", &"salvage", {}, 4)]
+			return [
+				_furniture_rule(&"industrial_shelf", &"loot", {"materials": 5, "ammunition": 3}),
+				_furniture_rule(&"shelf_row", &"loot", {"materials": 3}),
+				_furniture_rule(&"crate", &"salvage", {}, 4),
+				_furniture_rule(&"pallet", &"physical"),
+			]
 		&"office":
-			return [_furniture_rule(&"table", &"physical"), _furniture_rule(&"chair", &"physical"), _furniture_rule(&"cabinet", &"loot", {"materials": 2, "ammunition": 2})]
+			return [
+				_furniture_rule(&"desk", &"physical"),
+				_furniture_rule(&"chair", &"physical"),
+				_furniture_rule(&"wardrobe", &"loot", {"materials": 2, "ammunition": 2}),
+				_furniture_rule(&"nightstand", &"loot", {"food_ration": 1}),
+			]
+		&"service_annex":
+			return [
+				_furniture_rule(&"workbench", &"physical"),
+				_furniture_rule(&"crate", &"salvage", {}, 2),
+				_furniture_rule(&"shelf_row", &"loot", {"materials": 2}),
+			]
 	return [_furniture_rule(&"crate", &"salvage", {}, 2)]
 
 func _furniture_rule(kind: StringName, mode: StringName, items: Dictionary = {}, material_yield: int = 1) -> Dictionary:
@@ -659,23 +811,34 @@ func _furniture_rule(kind: StringName, mode: StringName, items: Dictionary = {},
 		"mode": mode,
 		"texture": data["texture"],
 		"size": data["size"],
+		"visual_size": data["visual_size"],
 		"items": items,
 		"yield": material_yield,
-		"capacity": 80.0 if kind in [&"shelf", &"cabinet"] else 60.0,
+		"capacity": 80.0 if kind in [&"shelf_row", &"industrial_shelf", &"cabinet", &"wardrobe"] else 60.0,
 		"minimum_damage_class": EnvironmentDamage.DamageClass.SMALL_ARMS,
 	}
 
 func _furniture_data(kind: StringName) -> Dictionary:
 	match kind:
-		&"table": return {"texture": "res://assets/pixel/props/table.png", "size": Vector2(32, 20)}
-		&"chair": return {"texture": "res://assets/pixel/props/chair.png", "size": Vector2(14, 16)}
-		&"counter": return {"texture": "res://assets/pixel/props/counter.png", "size": Vector2(48, 20)}
-		&"fridge": return {"texture": "res://assets/pixel/props/fridge.png", "size": Vector2(20, 24)}
-		&"bed": return {"texture": "res://assets/pixel/props/bed.png", "size": Vector2(28, 40)}
-		&"cabinet": return {"texture": "res://assets/pixel/props/medical_cabinet.png", "size": Vector2(20, 24)}
-		&"shelf": return {"texture": "res://assets/pixel/props/shelf.png", "size": Vector2(28, 12)}
-		&"pallet": return {"texture": "res://assets/pixel/props/pallet.png", "size": Vector2(28, 20)}
-	return {"texture": "res://assets/pixel/props/crate.png", "size": Vector2(24, 20)}
+		&"bed_single": return {"texture": "res://assets/pixel/props/bed.png", "size": Vector2(32, 64), "visual_size": Vector2(36, 68)}
+		&"bed_double": return {"texture": "res://assets/pixel/props/bed.png", "size": Vector2(56, 64), "visual_size": Vector2(60, 68)}
+		&"exam_bed": return {"texture": "res://assets/pixel/props/bed.png", "size": Vector2(32, 64), "visual_size": Vector2(36, 68)}
+		&"exam_table": return {"texture": "res://assets/pixel/props/table.png", "size": Vector2(32, 64), "visual_size": Vector2(34, 66)}
+		&"dining_table": return {"texture": "res://assets/pixel/props/table.png", "size": Vector2(64, 40), "visual_size": Vector2(68, 44)}
+		&"desk": return {"texture": "res://assets/pixel/props/table.png", "size": Vector2(48, 24), "visual_size": Vector2(52, 28)}
+		&"sofa": return {"texture": "res://assets/pixel/props/bench.png", "size": Vector2(64, 28), "visual_size": Vector2(68, 32)}
+		&"wardrobe": return {"texture": "res://assets/pixel/props/medical_cabinet.png", "size": Vector2(32, 48), "visual_size": Vector2(36, 52)}
+		&"nightstand": return {"texture": "res://assets/pixel/props/crate.png", "size": Vector2(20, 20), "visual_size": Vector2(24, 24)}
+		&"chair": return {"texture": "res://assets/pixel/props/chair.png", "size": Vector2(16, 18), "visual_size": Vector2(18, 20)}
+		&"counter": return {"texture": "res://assets/pixel/props/counter.png", "size": Vector2(48, 24), "visual_size": Vector2(52, 26)}
+		&"fridge": return {"texture": "res://assets/pixel/props/fridge.png", "size": Vector2(28, 32), "visual_size": Vector2(30, 34)}
+		&"shelf_row": return {"texture": "res://assets/pixel/props/shelf.png", "size": Vector2(80, 20), "visual_size": Vector2(84, 22)}
+		&"industrial_shelf": return {"texture": "res://assets/pixel/props/shelf.png", "size": Vector2(96, 24), "visual_size": Vector2(100, 26)}
+		&"workbench": return {"texture": "res://assets/pixel/props/table.png", "size": Vector2(80, 28), "visual_size": Vector2(84, 30)}
+		&"cabinet": return {"texture": "res://assets/pixel/props/medical_cabinet.png", "size": Vector2(22, 30), "visual_size": Vector2(26, 34)}
+		&"pallet": return {"texture": "res://assets/pixel/props/pallet.png", "size": Vector2(28, 20), "visual_size": Vector2(32, 22)}
+		&"crate": return {"texture": "res://assets/pixel/props/crate.png", "size": Vector2(26, 22), "visual_size": Vector2(28, 24)}
+	return {"texture": "res://assets/pixel/props/crate.png", "size": Vector2(26, 22), "visual_size": Vector2(28, 24)}
 
 func _floor_for(archetype: StringName, role: StringName) -> StringName:
 	if archetype == &"clinic":
@@ -685,6 +848,107 @@ func _floor_for(archetype: StringName, role: StringName) -> StringName:
 	if archetype == &"restaurant":
 		return &"floor_kitchen" if role in [&"kitchen", &"pantry"] else &"floor_restaurant"
 	return &"floor_interior_plain"
+
+## Deterministic post-collapse dressing of an interior: overturned seating,
+## emptied/damaged storage, scattered debris and occasional old stains.
+## Intensity comes from the building's own disturbance level, so a street can
+## mix untouched apartments with gutted ones instead of trashing everything.
+func _apply_apocalypse_disturbance(building_id: StringName, rooms: Array[Dictionary], clearance_rects: Array[Dictionary], furniture: Array[Dictionary]) -> void:
+	if _disturbance <= 0:
+		return
+	var overturn_chance := 20 + _disturbance * 20
+	var empty_chance := 12 * _disturbance
+	var damage_chance := 10 * _disturbance
+	for furn in furniture:
+		var roll := posmod(int(String(furn["id"]).hash()), 100)
+		match String(furn["mode"]):
+			"physical":
+				if furn["kind"] in [&"chair", &"dining_table", &"desk"] and roll < overturn_chance:
+					furn["overturned"] = true
+			"loot":
+				if roll < empty_chance and not (furn["items"] as Dictionary).is_empty():
+					furn["items"] = {}
+					furn["overturned"] = roll % 2 == 0
+				elif roll % 100 < damage_chance:
+					furn["damaged"] = true
+			_:
+				pass
+	# Scattered debris decals: cheap non-collision ground detail. They still
+	# respect door aisles and existing furniture like everything else.
+	var reserves_by_room: Dictionary = {}
+	for reserve in clearance_rects:
+		if not reserves_by_room.has(reserve["room_id"]):
+			reserves_by_room[reserve["room_id"]] = []
+		(reserves_by_room[reserve["room_id"]] as Array).append(reserve["rect"])
+	var occupied_by_room: Dictionary = {}
+	for furn in furniture:
+		if not occupied_by_room.has(furn["room_id"]):
+			occupied_by_room[furn["room_id"]] = []
+		(occupied_by_room[furn["room_id"]] as Array).append(furn["clearance_rect"])
+	var debris_per_room := _disturbance
+	for room_variant in rooms:
+		var room: Dictionary = room_variant
+		var room_rect: Rect2 = room["rect"]
+		var room_reserves: Array = reserves_by_room.get(room["id"], [])
+		var occupied: Array = occupied_by_room.get(room["id"], [])
+		for debris_index in range(debris_per_room):
+			var seed_hash := posmod(int((String(building_id) + String(room["id"]) + str(debris_index)).hash()), 1000)
+			var kind: StringName = &"rubble" if seed_hash % 3 != 2 else &"stain"
+			var size := Vector2(14, 10)
+			var spot := _find_free_debris_spot(room_rect, room_reserves, occupied, size, seed_hash)
+			if spot == Vector2.INF:
+				continue
+			var collision := Rect2(spot - size * 0.5, size)
+			furniture.append({
+				"id": StringName("%s/prop/%s_debris_%02d_%02d" % [String(building_id), String(room["id"]), debris_index, seed_hash % 100]),
+				"room_id": room["id"],
+				"role": room["role"],
+				"kind": kind,
+				"mode": &"decal",
+				"position": spot,
+				"size": size,
+				"visual_size": size * 1.4,
+				"collision_rect": collision,
+				"clearance_rect": collision.grow(1.0),
+				"texture": "res://assets/pixel/props/debris_small.png",
+				"capacity": 60.0,
+				"items": {},
+				"yield": 1,
+				"minimum_damage_class": EnvironmentDamage.DamageClass.SMALL_ARMS,
+				"tint": Color(0.35, 0.08, 0.08) if kind == &"stain" else Color.WHITE,
+			})
+			occupied.append(collision.grow(1.0))
+
+func _find_free_debris_spot(room_rect: Rect2, reserves: Array, occupied: Array, size: Vector2, seed_hash: int) -> Vector2:
+	var candidates: Array[Vector2] = [
+		room_rect.get_center() + Vector2(-40.0 + float(seed_hash % 80), -40.0 + float((seed_hash / 7) % 80)),
+		Vector2(room_rect.position.x + 28.0, room_rect.end.y - 28.0),
+		Vector2(room_rect.end.x - 28.0, room_rect.position.y + 28.0),
+		room_rect.get_center() + Vector2(float(seed_hash % 40) - 20.0, 24.0),
+		room_rect.get_center() + Vector2(24.0, float(seed_hash % 40) - 20.0),
+	]
+	for candidate in candidates:
+		# Test the exact footprint the record will store (grown by the same
+		# 1px margin) so validator arithmetic matches placement arithmetic.
+		var collision := Rect2(candidate - size * 0.5, size)
+		var clearance := collision.grow(1.0)
+		if not room_rect.encloses(clearance):
+			continue
+		var blocked := false
+		for reserve in reserves:
+			if clearance.intersects(reserve):
+				blocked = true
+				break
+		if blocked:
+			continue
+		for other in occupied:
+			if clearance.intersects(other):
+				blocked = true
+				break
+		if blocked:
+			continue
+		return candidate
+	return Vector2.INF
 
 func _nearest_wall_slot(value: float, minimum: float, maximum: float) -> float:
 	var first_center := minimum + TILE_SIZE * 0.5

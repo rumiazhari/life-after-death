@@ -99,6 +99,9 @@ static func _maybe_wall(parent: Node2D, center: Vector2, wall_texture: Texture2D
 	damage.max_durability = 120.0
 	damage.affected_size = Vector2(TS, TS)
 	damage.destroy_target = body
+	# A breached wall cell breaks into a few physical chunks along the hit.
+	damage.debris_count = 3
+	damage.debris_texture = wall_texture
 	body.add_child(damage)
 	parent.add_child(body)
 
@@ -274,9 +277,9 @@ static func fill_floor(parent: Node2D, half_extent: Vector2, floor_tile_name: St
 ## component's prop_id only after add_child() would race its own _ready()
 ## reading a stale default. Building this whole subtree first and adding
 ## it in one shot sidesteps that entirely.
-static func add_loot_furniture(parent: Node2D, local_position: Vector2, texture: Texture2D, collision_size: Vector2, prop_id: StringName, capacity_weight: float, starting_items: Dictionary, interact_label: String = "Search", minimum_damage_class: int = EnvironmentDamage.DamageClass.SMALL_ARMS) -> void:
+static func add_loot_furniture(parent: Node2D, local_position: Vector2, texture: Texture2D, collision_size: Vector2, prop_id: StringName, capacity_weight: float, starting_items: Dictionary, interact_label: String = "Search", minimum_damage_class: int = EnvironmentDamage.DamageClass.SMALL_ARMS, visual_size: Vector2 = Vector2.ZERO, sprite_rotation: float = 0.0, tint: Color = Color.WHITE) -> void:
 	var stable_id := _scoped_prop_id(parent, prop_id)
-	var root := _make_physical_prop(local_position, texture, collision_size, stable_id, minimum_damage_class)
+	var root := _make_physical_prop(local_position, texture, collision_size, stable_id, minimum_damage_class, visual_size, sprite_rotation, tint)
 	root.name = String(stable_id).get_file() # e.g. "restaurant_01/shelf_0" -> "shelf_0", so a baked/saved scene shows a readable name instead of an auto-generated "@Node2D@N" in the editor
 	var area := _make_interact_area(collision_size)
 	var interactable := InteractableComponent.new()
@@ -295,9 +298,9 @@ static func add_loot_furniture(parent: Node2D, local_position: Vector2, texture:
 ## Same construction-before-entering-tree pattern for a salvage-only prop
 ## (e.g. a wrecked car, a pallet) -- no Inventory, just a one-time
 ## materials yield.
-static func add_salvage_prop(parent: Node2D, local_position: Vector2, texture: Texture2D, collision_size: Vector2, prop_id: StringName, material_yield: int) -> void:
+static func add_salvage_prop(parent: Node2D, local_position: Vector2, texture: Texture2D, collision_size: Vector2, prop_id: StringName, material_yield: int, visual_size: Vector2 = Vector2.ZERO, sprite_rotation: float = 0.0, tint: Color = Color.WHITE) -> void:
 	var stable_id := _scoped_prop_id(parent, prop_id)
-	var root := _make_physical_prop(local_position, texture, collision_size, stable_id)
+	var root := _make_physical_prop(local_position, texture, collision_size, stable_id, EnvironmentDamage.DamageClass.SMALL_ARMS, visual_size, sprite_rotation, tint)
 	root.name = String(stable_id).get_file()
 	var area := _make_interact_area(collision_size)
 	var interactable := InteractableComponent.new()
@@ -315,9 +318,9 @@ static func add_salvage_prop(parent: Node2D, local_position: Vector2, texture: T
 ## Generic physical furniture and street objects are salvageable and take
 ## class-filtered structural damage. Callers that do not provide an id get a
 ## deterministic id derived from their owning room/path and local tile.
-static func add_physical_prop(parent: Node2D, local_position: Vector2, texture: Texture2D, collision_size: Vector2, prop_id: StringName = &"", material_yield: int = 1, minimum_damage_class: int = EnvironmentDamage.DamageClass.SMALL_ARMS) -> void:
+static func add_physical_prop(parent: Node2D, local_position: Vector2, texture: Texture2D, collision_size: Vector2, prop_id: StringName = &"", material_yield: int = 1, minimum_damage_class: int = EnvironmentDamage.DamageClass.SMALL_ARMS, visual_size: Vector2 = Vector2.ZERO, sprite_rotation: float = 0.0, tint: Color = Color.WHITE) -> void:
 	var stable_id := prop_id if prop_id != &"" else _derived_object_id(parent, local_position, &"prop")
-	var root := _make_physical_prop(local_position, texture, collision_size, stable_id, minimum_damage_class)
+	var root := _make_physical_prop(local_position, texture, collision_size, stable_id, minimum_damage_class, visual_size, sprite_rotation, tint)
 	root.name = String(stable_id).get_file()
 	var area := _make_interact_area(collision_size)
 	var interactable := InteractableComponent.new()
@@ -345,11 +348,19 @@ static func add_decal(parent: Node2D, local_position: Vector2, texture: Texture2
 	sprite.z_index = z_index
 	parent.add_child(sprite)
 
-static func _make_physical_prop(local_position: Vector2, texture: Texture2D, collision_size: Vector2, object_id: StringName = &"", minimum_damage_class: int = EnvironmentDamage.DamageClass.SMALL_ARMS) -> Node2D:
+static func _make_physical_prop(local_position: Vector2, texture: Texture2D, collision_size: Vector2, object_id: StringName = &"", minimum_damage_class: int = EnvironmentDamage.DamageClass.SMALL_ARMS, visual_size: Vector2 = Vector2.ZERO, sprite_rotation: float = 0.0, tint: Color = Color.WHITE) -> Node2D:
 	var root := Node2D.new()
 	root.position = local_position
 	var sprite := Sprite2D.new()
 	sprite.texture = texture
+	# Visual dimensions are independent of the collision footprint: the
+	# sprite scales to visual_size (when given) while the body keeps its own
+	# smaller/larger physical shape. Overturned furniture rotates visually.
+	if visual_size != Vector2.ZERO and texture != null and texture.get_size().x > 0.0:
+		sprite.scale = visual_size / texture.get_size()
+	sprite.rotation = sprite_rotation
+	if tint != Color.WHITE:
+		sprite.modulate = tint
 	root.add_child(sprite)
 	var body := StaticBody2D.new()
 	body.collision_layer = 1
@@ -479,4 +490,5 @@ static func add_street_object(parent: Node2D, local_position: Vector2, spec: Dic
 			salvage.material_yield = maxi(int(spec.get("yield", 1)), 1)
 			area.add_child(salvage)
 		root.add_child(area)
+	PhysicsReactionComponent.attach(root, PhysicsReactionComponent.mass_class_for_kind(kind))
 	parent.add_child(root)

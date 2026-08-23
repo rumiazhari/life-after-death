@@ -6,6 +6,9 @@ extends Node2D
 
 var _occupant_survivor_id: int = 0
 
+func _ready() -> void:
+	add_to_group("sleep_spots")
+
 func is_free() -> bool:
 	return _occupant_survivor_id == 0
 

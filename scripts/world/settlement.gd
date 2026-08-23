@@ -22,6 +22,9 @@ var entrance: Node2D = null
 ## generated building as its base. Freed on abandonment -- the building
 ## itself is never touched.
 var _base_dressing: Node2D = null
+## Functional base furniture (storage containers, sleep spots, guard posts)
+## located inside the claimed building's actual rooms. Freed on abandon.
+var _base_interior: Node2D = null
 
 func _ready() -> void:
 	add_to_group("settlement")
@@ -149,7 +152,63 @@ func claim_building_base(city_model: Dictionary, world_seed: int, entity_parent:
 		return claimed
 	global_position = claimed_building.get("approach_position", global_position)
 	_apply_occupation_dressing(claimed_building, entity_parent)
+	_setup_base_interior(claimed_building)
 	return claimed
+
+## Locates the settlement's functionality inside the claimed building's
+## ACTUAL rooms: storage containers, sleep spots and guard posts are placed
+## at deterministic positions inside generated rooms. No walls, roof or shell
+## is ever created -- the ordinary generated building remains the structure.
+func _setup_base_interior(building: Dictionary) -> void:
+	if _base_interior != null:
+		_base_interior.queue_free()
+	_base_interior = Node2D.new()
+	_base_interior.name = "BaseInterior"
+	add_child(_base_interior)
+	var building_origin: Vector2 = building.get("position", Vector2.ZERO)
+	var rooms: Array = building.get("interior", {}).get("rooms", [])
+	if rooms.is_empty():
+		return
+	# Room roles drive placement; fallback order keeps every function inside
+	# a real room even when an archetype lacks a dedicated bedroom/pantry.
+	var storage_room := _find_room(rooms, [&"storage", &"pantry", &"stock_room", &"kitchen", &"medical_storage"])
+	if storage_room.is_empty():
+		storage_room = rooms[0]
+	var sleep_room := _find_room(rooms, [&"bedroom", &"living_room", &"exam_room"])
+	if sleep_room.is_empty():
+		sleep_room = rooms[mini(1, rooms.size() - 1)]
+	var watch_room: Dictionary = rooms[0]
+	var roles := ["general", "food", "water", "medical"]
+	for role_index in range(roles.size()):
+		var container := StorageContainer.new()
+		container.name = "BaseStorage%s" % String(roles[role_index]).capitalize()
+		container.storage_role = roles[role_index]
+		container.structure_id = StringName("%s/base_storage_%s" % [String(data.building_id), roles[role_index]])
+		container.physical_interaction_enabled = true
+		var slot_offset := Vector2(-40.0 + float(role_index) * 27.0, -24.0)
+		_base_interior.add_child(container)
+		container.global_position = building_origin + (storage_room["rect"] as Rect2).get_center() + slot_offset
+	for spot_index in range(4):
+		var spot := SleepSpot.new()
+		spot.name = "BaseSleepSpot%d" % (spot_index + 1)
+		_base_interior.add_child(spot)
+		spot.global_position = building_origin + (sleep_room["rect"] as Rect2).get_center() \
+			+ Vector2(-48.0 + float(spot_index % 2) * 96.0, -32.0 + float(spot_index / 2) * 56.0)
+	for post_index in range(2):
+		var post := GuardPost.new()
+		post.name = "BaseGuardPost%d" % (post_index + 1)
+		_base_interior.add_child(post)
+		post.global_position = building_origin + (watch_room["rect"] as Rect2).get_center() \
+			+ Vector2(-64.0 if post_index == 0 else 64.0, 40.0)
+
+func _find_room(rooms: Array, preferred_roles: Array) -> Dictionary:
+	for role_variant in preferred_roles:
+		var role: StringName = role_variant
+		for room_variant in rooms:
+			var room: Dictionary = room_variant
+			if room["role"] == role:
+				return room
+	return {}
 
 ## State-driven dressing around the claimed entrance: crates, sandbags and a
 ## sign grouped by the door. The approach corridor itself stays clear so the
@@ -187,11 +246,14 @@ func _apply_occupation_dressing(building: Dictionary, entity_parent: Node2D) -> 
 		index += 1
 		BuildingShellBuilder.add_street_object(_base_dressing, spec["offset"], prop_spec)
 
-## The group leaves: occupancy state disappears, dressing is freed, and the
-## generated building remains exactly as it was generated.
+## The group leaves: occupancy state disappears, dressing and base interior
+## are freed, and the generated building remains exactly as it was generated.
 func abandon_building_base() -> void:
 	if _base_dressing != null:
 		_base_dressing.queue_free()
 		_base_dressing = null
+	if _base_interior != null:
+		_base_interior.queue_free()
+		_base_interior = null
 	if data != null and data.building_id != &"":
 		SurvivorBaseService.new().abandon_base(data.id)

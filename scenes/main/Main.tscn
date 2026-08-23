@@ -14,7 +14,7 @@
 [ext_resource type="PackedScene" path="res://scenes/ui/DeathOverlay.tscn" id="12"]
 [ext_resource type="PackedScene" path="res://scenes/ui/MobileControls.tscn" id="13"]
 [ext_resource type="PackedScene" path="res://scenes/ui/DebugOverlay.tscn" id="14"]
-[ext_resource type="PackedScene" path="res://scenes/world/Safehouse.tscn" id="15"]
+[ext_resource type="PackedScene" path="res://scenes/world/SettlementController.tscn" id="15"]
 [ext_resource type="PackedScene" path="res://scenes/world/ScavengePoint.tscn" id="16"]
 [ext_resource type="PackedScene" path="res://scenes/ui/SurvivorInspector.tscn" id="17"]
 [ext_resource type="Script" path="res://scripts/combat/blood_decal_manager.gd" id="18"]
@@ -76,3 +76,4 @@ position = Vector2(-976, -976)
 [node name="DebugOverlay" parent="UI" unique_id=2059187727 instance=ExtResource("14")]
 
 [node name="SurvivorInspector" parent="UI" unique_id=1010038244 instance=ExtResource("17")]
+
