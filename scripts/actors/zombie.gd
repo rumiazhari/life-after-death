@@ -104,7 +104,43 @@ func _physics_process(delta: float) -> void:
 	# Bounded contact shoving: a walking zombie pressures furniture it
 	# actually collides with; crowds combine into real pushing force.
 	PhysicsReactionComponent.contact_push(self, 0.28)
+	_animate_gait(delta)
 	body_visual.update_from_velocity(velocity)
+
+## Procedural shambling gait. The sprite's own walk animation stays driven by
+## velocity; this layers the body language that sells a corpse: sway and bob
+## for walkers, a heavy dip-limp for one-legged zombies, a prone wiggle-crawl
+## for the legless, all scaled by how much anatomy is left.
+var _anim_time := 0.0
+
+func _animate_gait(delta: float) -> void:
+	var factor := anatomy.movement_factor()
+	var moving := velocity.length() > 5.0
+	var crawl := factor <= 0.2
+	var limping := factor < 1.0 and not crawl
+	_anim_time += delta * (1.4 + velocity.length() / 34.0)
+	if moving:
+		_anim_time += delta * 1.6
+	var target_rotation := 0.0
+	var bob := 0.0
+	if crawl:
+		# Prone: tipped sideways, dragging forward with a slow wiggle.
+		target_rotation = PI * 0.5 + sin(_anim_time * TAU * 0.9) * 0.28
+		body_visual.speed_scale = 0.45 if moving else 0.15
+	elif limping:
+		# One leg gone: every step dips hard toward the missing side.
+		target_rotation = sin(_anim_time * TAU * 0.7) * 0.36
+		bob = absf(sin(_anim_time * TAU * 0.7)) * -3.0
+		body_visual.speed_scale = 0.55 + 0.35 * factor
+	else:
+		# Full shambling walk: loose sway with a lurching bob.
+		target_rotation = sin(_anim_time * TAU * 0.55) * 0.13
+		bob = absf(sin(_anim_time * TAU * 0.55)) * -2.0
+		body_visual.speed_scale = clampf(0.6 + velocity.length() / maxf(move_speed, 1.0) * 0.7, 0.5, 1.35)
+	if _stagger_remaining > 0.0:
+		target_rotation += sin(_anim_time * 30.0) * 0.35
+	body_visual.rotation = lerpf(body_visual.rotation, target_rotation, minf(10.0 * delta, 1.0))
+	body_visual.position.y = bob
 
 ## Physical impulse state: added on top of steering this frame, then decays.
 func apply_knockback(push: Vector2) -> void:
@@ -126,7 +162,8 @@ func take_damage(amount: float, source: Node = null, hit_position: Vector2 = Vec
 	_last_hit_source = source
 	_last_hit_position = hit_position if hit_position != Vector2.INF else global_position
 	var zone := ZombieAnatomy.resolve_zone(_last_hit_position, global_position)
-	var effect := anatomy.apply_zone_damage(zone, amount)
+	var applied := amount * (2.25 if zone == &"head" else 1.0)
+	var effect := anatomy.apply_zone_damage(zone, applied)
 	var container := get_tree().get_first_node_in_group("entity_container")
 	if container == null:
 		container = get_parent()
@@ -134,23 +171,28 @@ func take_damage(amount: float, source: Node = null, hit_position: Vector2 = Vec
 	if wound_direction == Vector2.ZERO:
 		wound_direction = Vector2.RIGHT
 	if effect["severed"]:
-		# Detached limb flies along the impact; stump + gore at the wound.
-		GoreSystem.blood_spray(container, _last_hit_position, wound_direction, amount)
-		GoreSystem.blood_splat(container, _last_hit_position, wound_direction, amount * 1.5)
-		GoreSystem.gore_chunk(container, _last_hit_position, wound_direction * 120.0)
+		# The limb physically tears off and flies; stump + gore at the wound.
+		GoreSystem.blood_spray(container, _last_hit_position, wound_direction, applied)
+		GoreSystem.blood_splat(container, _last_hit_position, wound_direction, applied * 1.5)
+		GoreSystem.gore_chunk(container, _last_hit_position, wound_direction * 110.0)
+		# Lazy load avoids the new-class registration ordering issue.
+		load("res://scripts/actors/severed_limb.gd").spawn(container, _last_hit_position, wound_direction * 190.0 + Vector2(0, -30))
 		_sever_visual(zone)
 	elif effect["head_destroyed"]:
-		GoreSystem.blood_spray(container, global_position, -wound_direction, amount)
+		GoreSystem.blood_spray(container, global_position, -wound_direction, applied)
+		GoreSystem.gore_chunk(container, _last_hit_position, -wound_direction * 90.0)
 	else:
 		GoreSystem.blood_splat(container, _last_hit_position, -wound_direction, amount * 0.6)
 	if effect["head_destroyed"]:
-		# The ONLY true death: head destroyed.
+		# The ONLY true death: head destroyed (headshots carry a 2.25x
+		# integrity multiplier AND drain real health, so precise aim kills in
+		# one or two rounds depending on the weapon).
 		health_component.take_damage(99999.0, source)
 		return
 	# Non-head damage cripples but can never kill while the head lives.
 	if zone == &"torso" and anatomy.integrity[&"torso"] <= 30.0:
 		_stagger_remaining = 0.8
-	health_component.current_health = maxf(health_component.current_health - amount * 0.25, 1.0)
+	health_component.current_health = maxf(health_component.current_health - amount * 0.35, 1.0)
 	_on_damaged(amount)
 	# A hit shoves the zombie along the impact direction even if it survives.
 	if source is Node2D:

@@ -897,9 +897,12 @@ func _make_exterior_props(seed_value: int, blocks: Array[Dictionary], buildings:
 				&"alley":
 					var alley_kind: StringName = &"dumpster" if block["zone"] in [&"commercial", &"civic"] else (&"crate" if block["zone"] == &"industrial" else &"trash")
 					_append_prop(result, serial_by_block, seed_value, block, alley_kind, &"alley", zone_rect.get_center())
-					# Bins cluster: service alleys collect a second bag or crate.
+					# Bins cluster: a second bag beside the alley mouth on the
+					# sidewalk strip (never inside the zone, where semantic
+					# spawn regions need their full clearance).
 					if apocalypse >= 1 or block["zone"] in [&"commercial", &"industrial"]:
-						_append_prop(result, serial_by_block, seed_value, block, &"trash", &"alley", zone_rect.get_center() + Vector2(36.0, 12.0))
+						var bag_x: float = clampf(zone_rect.get_center().x + zone_rect.size.x * 0.5 + 16.0, rect.position.x + 20.0, rect.end.x - 20.0)
+						_append_prop(result, serial_by_block, seed_value, block, &"trash", &"alley", Vector2(bag_x, zone_rect.get_center().y + 8.0))
 		if block["zone"] == &"residential" and building_by_block.has(block_id):
 			var building: Dictionary = building_by_block[block_id]
 			var position: Vector2 = building["approach_position"] + Vector2(72.0 if _rng.randi_range(0, 1) == 0 else -72.0, -24.0)

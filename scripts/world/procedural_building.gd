@@ -114,6 +114,43 @@ func _build_shell(interior: Dictionary) -> void:
 		BuildingShellBuilder.build_partition(self, partition["from"], partition["to"], interior_wall_texture, gaps)
 	var exterior_nodes := BuildingExteriorRenderer.build(self, specification, interior)
 	_facade_visual = exterior_nodes["facade"]
+	_wire_wall_destruction_sync()
+
+## Logical spatial sync between interior wall destruction and the projected
+## exterior: destroying a perimeter wall segment erases the roof tile(s)
+## above that footprint cell and notches the south facade if the segment sat
+## on the street-facing edge -- so the elevation always tells the truth about
+## the interior below it. Destroyed state persists by stable id, so rebuilt
+## buildings re-open the same holes.
+func _wire_wall_destruction_sync() -> void:
+	for child in get_children():
+		if child is StaticBody2D:
+			var damage_comp := child.get_node_or_null("EnvironmentDamageComponent") as EnvironmentDamageComponent
+			if damage_comp == null or not String(damage_comp.object_id).contains("/wall_"):
+				continue
+			damage_comp.destroyed.connect(_on_wall_segment_destroyed.bind(damage_comp))
+			if WorldState.get_prop_state_flag(damage_comp.object_id, &"destroyed", false):
+				call_deferred("_apply_wall_breach", damage_comp)
+
+func _on_wall_segment_destroyed(_object_id: StringName, comp: EnvironmentDamageComponent) -> void:
+	_apply_wall_breach(comp)
+
+func _apply_wall_breach(comp: EnvironmentDamageComponent) -> void:
+	var body := comp.get_parent() as Node2D
+	if body == null:
+		return
+	var local := body.position
+	var roof := get_node_or_null(roof_node_path) as TileMapLayer
+	if roof != null:
+		# Roof tiles were painted using building-local footprint coordinates
+		# as layer cells; erasing that same cell opens the roof exactly where
+		# the interior wall segment used to stand (the whole layer is drawn
+		# displaced north by the projection, like every roof tile).
+		var cell := Vector2i(floori(local.x / PixelAtlasMap.TILE_SIZE), floori(local.y / PixelAtlasMap.TILE_SIZE))
+		roof.erase_cell(cell)
+	var half_extent: Vector2 = specification.get("interior", {}).get("half_extent", Vector2.ZERO)
+	if half_extent.y > 0.0 and local.y >= half_extent.y - PixelAtlasMap.TILE_SIZE and _facade_visual != null:
+		_facade_visual.add_ground_breach(local.x)
 
 func _build_furniture(interior: Dictionary, rooms_by_id: Dictionary) -> void:
 	for furniture in interior["furniture"]:

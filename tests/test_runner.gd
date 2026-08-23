@@ -118,6 +118,10 @@ func _run_all() -> void:
 	await _run_test("weapons_are_data_driven_with_sprites", _test_weapons_are_data_driven_with_sprites)
 	await _run_test("infinite_player_ammo_debug_flag", _test_infinite_player_ammo_debug_flag)
 	await _run_test("base_functions_use_valid_interior_spots", _test_base_functions_use_valid_interior_spots)
+	await _run_test("wall_shatters_into_quarter_chunks", _test_wall_shatters_into_quarter_chunks)
+	await _run_test("breach_syncs_roof_and_facade", _test_breach_syncs_roof_and_facade)
+	await _run_test("headshots_kill_fast_and_limbs_sever", _test_headshots_kill_fast_and_limbs_sever)
+	await _run_test("zombie_gait_animation_states", _test_zombie_gait_animation_states)
 	await _run_test("streamed_prague_quarters_are_dense_and_open_spaces_are_rare", _test_streamed_prague_quarters_are_dense_and_open_spaces_are_rare)
 	await _run_test("procedural_seed_corpus_is_deterministic_valid_and_bounded", _test_procedural_seed_corpus_is_deterministic_valid_and_bounded)
 	await _run_test("procedural_generation_retries_and_fails_explicitly", _test_procedural_generation_retries_and_fails_explicitly)
@@ -1144,11 +1148,14 @@ func _test_wall_breach_updates_collision_and_navigation() -> void:
 	var source := Node2D.new()
 	add_child(source)
 	source.global_position = wall.global_position + Vector2(-48.0, 0.0)
-	var shapes_before := wall.get_children().filter(func(child: Node) -> bool: return child is CollisionShape2D).size()
 	comp.apply_damage(13.0, 1, source)
 	await get_tree().physics_frame
-	var corner_shapes := wall.get_children().filter(func(child: Node) -> bool: return child is CollisionShape2D).size()
-	_assert(corner_shapes >= shapes_before, "chipping must rebuild collision from surviving microcells")
+	await get_tree().physics_frame
+	# The original whole-cell collider must yield to surviving microcells.
+	var base_shape := wall.get_node("CollisionShape2D") as CollisionShape2D
+	_assert(base_shape == null or base_shape.disabled, "a breached wall's full-cell collider must be disabled")
+	var partial_shapes := wall.get_children().filter(func(child: Node) -> bool: return child is CollisionShape2D and not (child as CollisionShape2D).disabled)
+	_assert(partial_shapes.size() >= 1, "surviving microcells must keep colliding")
 	comp.apply_damage(9999.0, 2, source)
 	await get_tree().process_frame
 	await get_tree().physics_frame
@@ -1159,6 +1166,171 @@ func _test_wall_breach_updates_collision_and_navigation() -> void:
 	fixture.queue_free()
 	PhysicsDebris.active_count = 0
 	WorldState.reset()
+
+## Single-block model: a destroyed wall shows NO stacked fragments in place --
+## its sprite goes away and up to four quarter chunks fly off as physics.
+func _test_wall_shatters_into_quarter_chunks() -> void:
+	WorldState.reset()
+	var fixture := Node2D.new()
+	add_child(fixture)
+	BuildingShellBuilder._maybe_wall(fixture, Vector2(79800, 79800), load("res://assets/pixel/props/wall_concrete.png"), [])
+	var wall := fixture.get_child(fixture.get_child_count() - 1) as StaticBody2D
+	var comp := wall.get_node("EnvironmentDamageComponent") as EnvironmentDamageComponent
+	var source := Node2D.new()
+	add_child(source)
+	source.global_position = wall.global_position + Vector2(-48.0, 0.0)
+	var debris_before := get_tree().get_nodes_in_group("physics_debris").size()
+	comp.apply_damage(9999.0, 2, source)
+	await get_tree().process_frame
+	await get_tree().physics_frame
+	var debris_nodes := get_tree().get_nodes_in_group("physics_debris")
+	var new_chunks := debris_nodes.size() - debris_before
+	_assert(new_chunks >= 3 and new_chunks <= 5,
+		"a shattered wall must separate into a few quarter chunks (%d)" % new_chunks)
+	_assert(not is_instance_valid(wall) or wall.is_queued_for_deletion(), "the broken block itself must leave the world")
+	for node in debris_nodes:
+		if is_instance_valid(node):
+			node.free()
+	PhysicsDebris.active_count = 0
+	source.queue_free()
+	fixture.queue_free()
+	WorldState.reset()
+	await get_tree().process_frame
+
+## Logical spatial sync: destroying a perimeter segment erases the roof tile
+## above it, notches the south facade, and both stay open after rebuild.
+func _test_breach_syncs_roof_and_facade() -> void:
+	WorldState.reset()
+	UrbanNavigationService.reset()
+	var city := ProceduralCityGenerator.new().generate_streamed_chunk(20260821, Vector2i.ZERO)
+	var building_spec: Dictionary = city["buildings"][0]
+	var half_extent: Vector2 = building_spec["interior"]["half_extent"]
+	var first := ProceduralBuilding.new()
+	first.configure(building_spec)
+	add_child(first)
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	var roof := first.get_node("Roof") as TileMapLayer
+	_assert(roof != null, "fixture needs the projected roof layer")
+	var south_comp: EnvironmentDamageComponent = null
+	for child in first.get_children():
+		if child is StaticBody2D:
+			var candidate := child.get_node_or_null("EnvironmentDamageComponent") as EnvironmentDamageComponent
+			if candidate != null and "/wall_" in String(candidate.object_id):
+				var body := child as Node2D
+				if body.position.y >= half_extent.y - PixelAtlasMap.TILE_SIZE:
+					south_comp = candidate
+					break
+	_assert(south_comp != null, "the building must expose a south-edge destructible wall")
+	if south_comp == null:
+		first.free()
+		WorldState.reset()
+		return
+	var breach_body := south_comp.get_parent() as Node2D
+	var breach_x := breach_body.position.x
+	var expected_cell := Vector2i(floori(breach_body.position.x / PixelAtlasMap.TILE_SIZE), floori(breach_body.position.y / PixelAtlasMap.TILE_SIZE))
+	_assert(roof.get_used_cells().has(expected_cell), "sanity: the roof tile above an intact wall must exist")
+	south_comp.apply_damage(9999.0, EnvironmentDamage.DamageClass.EXPLOSIVE, null)
+	await get_tree().process_frame
+	await get_tree().physics_frame
+	_assert(not roof.get_used_cells().has(expected_cell), "destroying a perimeter wall must open the roof above it")
+	var facade := first.projected_facade()
+	_assert(facade != null and facade.ground_breaches.has(breach_x), "the south facade must notch at the breached segment")
+	first.free()
+	await get_tree().process_frame
+	var second := ProceduralBuilding.new()
+	second.configure(city["buildings"][0])
+	add_child(second)
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	var rebuilt_roof := second.get_node("Roof") as TileMapLayer
+	_assert(not rebuilt_roof.get_used_cells().has(expected_cell), "persisted destruction must keep the roof hole open after rebuild")
+	var rebuilt_facade := second.projected_facade()
+	_assert(rebuilt_facade != null and rebuilt_facade.ground_breaches.has(breach_x), "persisted breaches must re-notch the rebuilt facade")
+	second.free()
+	WorldState.reset()
+	await get_tree().process_frame
+
+func _test_headshots_kill_fast_and_limbs_sever() -> void:
+	WorldState.reset()
+	var zombie := (load("res://scenes/actors/Zombie.tscn") as PackedScene).instantiate() as Zombie
+	add_child(zombie)
+	zombie.global_position = Vector2(80000, 80000)
+	await get_tree().physics_frame
+	var shooter := Node2D.new()
+	add_child(shooter)
+	shooter.global_position = zombie.global_position + Vector2(-40.0, 0.0)
+	# Two SMG-grade headshots (12 dmg x 2.25 headshot multiplier vs 40 head
+	# integrity): precise aim must kill quickly.
+	zombie.take_damage(12.0, shooter, zombie.global_position + Vector2(3.0, 2.0))
+	_assert(zombie.anatomy.head_alive(), "one SMG round to the head wounds but must not instantly kill")
+	zombie.take_damage(12.0, shooter, zombie.global_position + Vector2(-2.0, 1.0))
+	_assert(not zombie.anatomy.head_alive(), "two precise head rounds must destroy the head")
+	await get_tree().process_frame
+	_assert(not is_instance_valid(zombie) or zombie.health_component.is_dead, "head destruction kills")
+
+	# Limb severing through the same live path: an arm-zone overkill hit.
+	var zombie_b := (load("res://scenes/actors/Zombie.tscn") as PackedScene).instantiate() as Zombie
+	add_child(zombie_b)
+	zombie_b.global_position = Vector2(80200, 80000)
+	await get_tree().physics_frame
+	zombie_b.take_damage(60.0, shooter, zombie_b.global_position + Vector2(20.0, 0.0))
+	_assert(zombie_b.anatomy.severed.has(&"arm_r"), "arm-zone overkill must sever the arm")
+	var limbs := get_tree().get_nodes_in_group("severed_limbs").filter(func(node: Node) -> bool:
+		return is_instance_valid(node))
+	_assert(limbs.size() >= 1, "severed arms must spawn physical limb bodies")
+	_assert(zombie_b.anatomy.attack_factor() == 0.5, "one arm gone halves attack capability")
+	for node in limbs:
+		node.free()
+	SeveredLimb.active_count = maxi(SeveredLimb.active_count - limbs.size(), 0)
+	shooter.queue_free()
+	if is_instance_valid(zombie):
+		zombie.free()
+	if is_instance_valid(zombie_b):
+		zombie_b.free()
+	Corpse.active_count = 0
+	WorldState.reset()
+	GoreSystem._blood_texture = null
+	await get_tree().process_frame
+
+func _test_zombie_gait_animation_states() -> void:
+	WorldState.reset()
+	var zombie := (load("res://scenes/actors/Zombie.tscn") as PackedScene).instantiate() as Zombie
+	add_child(zombie)
+	zombie.global_position = Vector2(80400, 80400)
+	await get_tree().physics_frame
+	# Healthy shamble: upright sway only.
+	zombie._animate_gait(0.05)
+	_assert(absf(zombie.body_visual.rotation) < 0.5, "an intact zombie stays roughly upright while shambling")
+	# One leg severed: heavy limp dip (pin the gait phase so the dip is at
+	# its extreme, not mid-swing).
+	zombie.take_damage(999.0, null, zombie.global_position + Vector2(0.0, -22.0))
+	_assert(zombie.anatomy.severed.has(&"leg_l"), "fixture severs the left leg")
+	zombie._anim_time = 0.125
+	zombie._animate_gait(1.0)
+	# Expected limp dip is deterministic: idle frames still advance the gait
+	# clock by 1.4s, then the target snaps fully into place.
+	var expected_dip: float = absf(sin((0.125 + 1.4) * TAU * 0.7)) * 0.36
+	_assert(absf(absf(zombie.body_visual.rotation) - expected_dip) < 0.02,
+		"a one-legged zombie must dip into a visible limp (rot=%.3f expected=%.3f)" % [absf(zombie.body_visual.rotation), expected_dip])
+	# Both legs: prone crawl wiggle around a sideways pose.
+	zombie.take_damage(999.0, null, zombie.global_position + Vector2(0.0, 22.0))
+	_assert(zombie.anatomy.movement_factor() <= 0.2, "legless zombies crawl")
+	for _i in range(10):
+		zombie.velocity = Vector2(20.0, 0.0)
+		zombie._animate_gait(0.05)
+		await get_tree().physics_frame
+	_assert(absf(zombie.body_visual.rotation) > 1.0, "crawling zombies lie tipped sideways with a wiggle")
+	if is_instance_valid(zombie):
+		zombie.free()
+	Corpse.active_count = 0
+	for node in get_tree().get_nodes_in_group("corpses"):
+		node.free()
+	for node in get_tree().get_nodes_in_group("severed_limbs"):
+		node.free()
+	SeveredLimb.active_count = 0
+	WorldState.reset()
+	GoreSystem._blood_texture = null
 	await get_tree().process_frame
 
 func _test_furniture_partial_damage_before_failure() -> void:

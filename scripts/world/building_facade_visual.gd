@@ -46,6 +46,14 @@ var roof_profile: StringName = &"pitched_ridge"
 ## elevation can only ever cover footprint grown northward by the
 ## projection height, so this defines exactly where the fade may engage.
 var occluder_footprints: Array[Rect2] = []
+## Building-local x centers of destroyed south-edge wall segments. Each one
+## is drawn as a dark ground-level opening so the elevation matches the
+## interior below it.
+var ground_breaches: Array[float] = []
+
+func add_ground_breach(local_x: float) -> void:
+	ground_breaches.append(local_x)
+	queue_redraw()
 
 var _occlusion_material: ShaderMaterial
 var _world_occlusion_regions: Array[Rect2] = []
@@ -154,6 +162,26 @@ func _draw_span(world_local_span: Rect2, span_index: int) -> void:
 	_draw_upper_windows(rect, palette, span_index)
 	_draw_ground_frontage(rect, world_local_span, palette, span_index)
 	_draw_prague_details(rect, palette, span_index)
+	_draw_breach_openings(rect)
+
+## Dark ground-level openings where south wall segments were destroyed.
+func _draw_breach_openings(rect: Rect2) -> void:
+	if ground_breaches.is_empty():
+		return
+	var opening_height := minf(projection_height * 0.62, 52.0)
+	for breach_x in ground_breaches:
+		if breach_x < rect.position.x - 12.0 or breach_x > rect.end.x + 12.0:
+			continue
+		var width := 30.0
+		var opening := Rect2(Vector2(breach_x - width * 0.5, rect.end.y - opening_height), Vector2(width, opening_height))
+		draw_rect(opening, Color8(16, 14, 13))
+		# Jagged remaining edges.
+		for edge_y in range(int(opening.position.y), int(opening.end.y) - 4, 9):
+			var jitter := 3.0 + float((int(breach_x) + edge_y) % 5)
+			draw_rect(Rect2(opening.position.x - 2.0, float(edge_y), jitter, 5.0), Color(0.08, 0.07, 0.06, 0.9))
+			draw_rect(Rect2(opening.end.x - jitter + 2.0, float(edge_y), jitter, 5.0), Color(0.08, 0.07, 0.06, 0.9))
+		# Debris spill on the ground line.
+		draw_rect(Rect2(opening.position.x - 6.0, rect.end.y - 4.0, opening.size.x + 12.0, 4.0), Color(0.1, 0.09, 0.08, 0.8))
 
 func _draw_masonry(rect: Rect2, palette: Dictionary, span_index: int) -> void:
 	if facade_style not in [&"masonry_industrial", &"exposed_brick_infill"]:

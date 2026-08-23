@@ -9,12 +9,12 @@ const ZONES := [&"head", &"torso", &"arm_l", &"arm_r", &"leg_l", &"leg_r"]
 const SEVER_AT := 0.0
 
 var integrity := {
-	&"head": 45.0,
-	&"torso": 110.0,
-	&"arm_l": 35.0,
-	&"arm_r": 35.0,
-	&"leg_l": 45.0,
-	&"leg_r": 45.0,
+	&"head": 40.0,
+	&"torso": 100.0,
+	&"arm_l": 22.0,
+	&"arm_r": 22.0,
+	&"leg_l": 28.0,
+	&"leg_r": 28.0,
 }
 ## Zones that have fully detached.
 var severed: Array[StringName] = []
@@ -42,14 +42,15 @@ func apply_zone_damage(zone: StringName, amount: float) -> Dictionary:
 	return result
 
 ## Resolves a world-space hit to an anatomical zone for a top-down body.
-## Head is the center bullseye; the torso ring surrounds it; limbs occupy
-## quadrants beyond the ring (|dx| dominant = arms, |dy| dominant = legs).
+## The head is the central bullseye (a generous ring -- precise aim must be
+## rewarded); the torso ring surrounds it; hits landing beyond the torso are
+## assigned to limbs by their dominant axis.
 static func resolve_zone(hit_world: Vector2, actor_center: Vector2) -> StringName:
 	var offset := hit_world - actor_center
 	var dist := offset.length()
-	if dist <= 7.0:
+	if dist <= 9.0:
 		return &"head"
-	if dist <= 15.0:
+	if dist <= 16.0:
 		return &"torso"
 	if absf(offset.x) >= absf(offset.y):
 		return &"arm_r" if offset.x > 0.0 else &"arm_l"

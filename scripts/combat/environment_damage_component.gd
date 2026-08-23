@@ -1,50 +1,50 @@
 class_name EnvironmentDamageComponent
 extends Node
-## Durable, partially destructible structure: a bounded microcell damage mask.
+## Durable destructible structure with a bounded microcell integrity grid.
 ##
-## A destructible body (wall cell, barricade, large furniture piece) carries
-## an N x N grid of microcells across its `affected_size`. Damage events carry
-## world hit geometry (position/direction/radius via the source node) and eat
-## away nearby microcells instead of deleting the whole object:
-##   intact -> damaged -> partially broken -> structurally failed.
-## Collision is rebuilt from surviving cells as merged rectangles; navigation
-## only opens where an actual full-thickness breach exists; the mask persists
-## through WorldState prop state. At structural failure the legacy whole-body
-## destruction path takes over (debris burst, loot drop, nav free).
+## VISUAL CONTRACT (single-block model): a structure always renders as ONE
+## block -- its original sprite, progressively cracked/darkened as integrity
+## drops. Per-microcell overlay drawing never happens. At structural failure
+## the block SHATTERS: its sprite disappears and up to four quarter-sized
+## physical chunks (the "microblocks separating") fly off along the killing
+## blow, replacing whole-body silent removal.
+##
+## LOGIC GRID: the N x N integrity mask stays authoritative for gameplay --
+## collision rectangles rebuild from surviving cells and navigation opens
+## only where a full-thickness breach exists; masks persist via WorldState.
 
 signal damaged(remaining: float, amount: float)
 signal destroyed(object_id: StringName)
-signal partially_damaged(fraction: float)
 
-## Microcells below this integrity count as destroyed (float-dust guard).
 const CELL_EPSILON := 0.001
+const MAX_SHATTER_CHUNKS := 4
 
 @export var object_id: StringName = &""
-@export_enum("Small Arms", "Heavy", "Explosive") var minimum_damage_class: int = 0
+@export_enum("Small Arms", "Heavy", "Explosive") var minimum_damage_class: int = EnvironmentDamage.DamageClass.SMALL_ARMS
 @export var max_durability: float = 30.0
 @export var affected_size: Vector2 = Vector2(32, 32)
-## Structural destruction spawns this many bounded physical debris chunks at
-## FULL structural failure. Zero keeps the no-debris behavior.
+## Quarter-chunks spawned at structural failure.
 @export var debris_count: int = 0
 @export var debris_texture: Texture2D = null
-## Microgrid resolution per axis. 1 = legacy whole-object durability;
-## walls use 4 (8 px microcells), chunky furniture 2-3.
-var sub_cells: int = 1
-## Alive fraction at or below which the structure collapses entirely.
-var fail_threshold := 0.4
+## Integrity grid resolution per axis. Purely logical: breach widths,
+## collision rebuilds and persisted masks -- never per-cell rendering.
+@export_range(1, 6) var sub_cells: int = 1
+@export_range(0.05, 0.9) var fail_threshold := 0.4
 
 var destroy_target: Node = null
 var _durability: float = 0.0
 var _destroyed: bool = false
 var _last_hit_direction := Vector2.ZERO
 
-# --- partial grid state ---
 var _cell_cols := 1
 var _cell_rows := 1
 var _cell_hp := PackedFloat32Array()
 var _cell_max := 0.0
 var _grid_active := false
-var _partial_visual: Node2D = null
+
+var _sprite: Sprite2D = null
+var _crack_overlay: Node2D = null
+var _stage := 0
 
 func _ready() -> void:
 	_durability = max_durability
@@ -70,32 +70,27 @@ func _setup_grid() -> void:
 	_cell_hp.resize(_cell_cols * _cell_rows)
 	_cell_hp.fill(_cell_max)
 	_grid_active = true
-	# Deferred: _ready cascades run while parents are mid-setup and cannot
-	# accept new children.
-	call_deferred("_build_partial_visual")
+	call_deferred("_cache_sprite")
 
-func _build_partial_visual() -> void:
-	var parent_node := get_parent()
-	if parent_node == null or not (parent_node is Node2D):
-		return
-	var sprite := (parent_node as Node2D).get_child(0) if (parent_node as Node2D).get_child_count() > 0 else null
-	var texture: Texture2D = debris_texture
-	if sprite is Sprite2D and (sprite as Sprite2D).texture != null:
-		texture = (sprite as Sprite2D).texture
-		sprite.visible = false
-	if texture == null:
-		return
-	# Lazy load: an eager preload here would create a parse-time dependency
-	# cycle across the damage classes.
-	_partial_visual = load("res://scripts/combat/partial_structure_visual.gd").new()
-	_partial_visual.name = "PartialVisual"
-	(parent_node as Node2D).add_child(_partial_visual)
-	_partial_visual.setup(texture, Vector2.ZERO, affected_size / Vector2(_cell_cols, _cell_rows), _cell_cols, _cell_rows, alive_cells())
+func _cache_sprite() -> void:
+	var target := destroy_target if destroy_target != null and is_instance_valid(destroy_target) else get_parent()
+	_sprite = _find_sprite(target)
+	if _sprite != null:
+		_refresh_damage_stage()
+
+static func _find_sprite(root: Node) -> Sprite2D:
+	if root is Sprite2D:
+		return root as Sprite2D
+	for child in root.get_children():
+		var found := _find_sprite(child)
+		if found != null:
+			return found
+	return null
 
 func alive_cells() -> Array:
 	var alive: Array = []
 	for i in range(_cell_hp.size()):
-		alive.append(_cell_hp[i] > 0.0)
+		alive.append(_cell_hp[i] > CELL_EPSILON)
 	return alive
 
 func alive_fraction() -> float:
@@ -107,10 +102,50 @@ func alive_fraction() -> float:
 			alive += 1
 	return float(alive) / float(_cell_hp.size())
 
+## Progressive single-block feedback: darkening + deterministic crack lines,
+## never per-cell geometry.
+func _refresh_damage_stage() -> void:
+	var ratio := _durability / maxf(max_durability, 1.0)
+	if _grid_active:
+		ratio = minf(ratio, alive_fraction())
+	var stage := 0
+	if ratio < 0.35:
+		stage = 3
+	elif ratio < 0.6:
+		stage = 2
+	elif ratio < 0.85:
+		stage = 1
+	if stage == _stage and _crack_overlay != null:
+		return
+	_stage = stage
+	if _sprite == null or not is_instance_valid(_sprite):
+		return
+	match stage:
+		0:
+			_sprite.modulate = Color.WHITE
+			if _crack_overlay != null and is_instance_valid(_crack_overlay):
+				_crack_overlay.queue_free()
+				_crack_overlay = null
+		1, 2, 3:
+			_sprite.modulate = Color(1.0 - stage * 0.12, 1.0 - stage * 0.14, 1.0 - stage * 0.16)
+			if _crack_overlay == null or not is_instance_valid(_crack_overlay):
+				_crack_overlay = load("res://scripts/combat/crack_overlay.gd").new()
+				_crack_overlay.name = "CrackOverlay"
+				var holder: Node = destroy_target if destroy_target != null and is_instance_valid(destroy_target) else get_parent()
+				holder.add_child(_crack_overlay)
+				_crack_overlay.z_index = 1
+				_crack_overlay.global_position = body_global_position()
+			_crack_overlay.stage = stage
+			_crack_overlay.size = affected_size
+			_crack_overlay.seed_hash = int(String(object_id).hash())
+			_crack_overlay.queue_redraw()
+
+## MARKER_REST
+
 func apply_damage(amount: float, damage_class: int, source: Node = null) -> bool:
 	if _destroyed or amount <= 0.0 or damage_class < minimum_damage_class:
 		return false
-	if _source_is_node2d(source):
+	if source is Node2D and is_instance_valid(source):
 		var direction: Vector2 = body_global_position() - (source as Node2D).global_position
 		if direction.length_squared() > 0.01:
 			_last_hit_direction = direction.normalized()
@@ -120,20 +155,24 @@ func apply_damage(amount: float, damage_class: int, source: Node = null) -> bool
 	if object_id != &"":
 		WorldState.set_prop_state_flag(object_id, &"durability", _durability)
 	damaged.emit(_durability, amount)
-	partially_damaged.emit(alive_fraction())
-	if _grid_active:
+	if not _grid_active:
+		_refresh_damage_stage()
+	else:
+		_persist_mask()
+		_refresh_collision()
+		_refresh_navigation()
+		_refresh_damage_stage()
 		if alive_fraction() <= fail_threshold:
 			_destroy()
 			return true
-	elif _durability <= 0.0:
+	if _durability <= 0.0:
 		_destroy()
 		return true
 	return true
 
-## Distributes one damage event across microcells: cells are consumed in
-## strict distance order from the impact point, so a small round kills the
-## nearest cell or two (a corner chip), a heavy blast eats an irregular
-## radial bite, and massive overkill keeps sweeping until the block is level.
+## Distributes one damage event across microcells: strict distance order from
+## the impact point -- light hits chip the nearest material first, massive
+## overkill sweeps until every cell is gone.
 func _apply_grid_damage(amount: float, damage_class: int, source: Node) -> void:
 	var hit_local := affected_size * 0.5
 	if _source_is_node2d(source):
@@ -155,11 +194,6 @@ func _apply_grid_damage(amount: float, damage_class: int, source: Node) -> void:
 			ordered.append({"index": index, "dist": cell_center.distance_to(hit_local)})
 	ordered.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return a["dist"] < b["dist"])
 	var remaining := amount
-	if OS.has_environment("GRID_DEBUG"):
-		var dump := "sorted:"
-		for i in range(mini(ordered.size(), 4)):
-			dump += " i=%d d=%.1f" % [ordered[i]["index"], ordered[i]["dist"]]
-		print(dump, " amount=", amount)
 	for entry in ordered:
 		if remaining <= CELL_EPSILON:
 			break
@@ -169,24 +203,24 @@ func _apply_grid_damage(amount: float, damage_class: int, source: Node) -> void:
 		var applied_to_cell := minf(remaining * falloff, _cell_hp[index])
 		_cell_hp[index] -= applied_to_cell
 		remaining -= applied_to_cell
-	_persist_mask()
-	_rebuild_partial_geometry()
+
+func _persist_mask() -> void:
+	if object_id != &"" and _grid_active:
+		WorldState.set_prop_state_flag(object_id, &"partial_cells", _cell_hp.duplicate())
 
 func _rebuild_partial_geometry() -> void:
-	_refresh_visual()
 	_refresh_collision()
 	_refresh_navigation()
 
-func _refresh_visual() -> void:
-	if _partial_visual != null and is_instance_valid(_partial_visual):
-		_partial_visual.set_cells(alive_cells())
-
-## Rebuilds merged collision rectangles from surviving cells (row-run greedy
-## merge keeps shape count tiny).
 func _refresh_collision() -> void:
 	var body := get_parent()
 	if body == null:
 		return
+	for child in body.get_children():
+		if child is CollisionShape2D and String(child.name) == "CollisionShape2D":
+			# The whole-cell collider yields the moment the grid takes over;
+			# surviving microcells become THE collision.
+			(child as CollisionShape2D).set_deferred("disabled", true)
 	for child in body.get_children():
 		if child is CollisionShape2D and (child as CollisionShape2D).name.begins_with("PartialCell"):
 			child.queue_free()
@@ -196,11 +230,11 @@ func _refresh_collision() -> void:
 	for row in range(_cell_rows):
 		var col := 0
 		while col < _cell_cols:
-			if _cell_hp[row * _cell_cols + col] <= 0.0:
+			if _cell_hp[row * _cell_cols + col] <= CELL_EPSILON:
 				col += 1
 				continue
 			var run := 1
-			while col + run < _cell_cols and _cell_hp[row * _cell_cols + col + run] > 0.0:
+			while col + run < _cell_cols and _cell_hp[row * _cell_cols + col + run] > CELL_EPSILON:
 				run += 1
 			var shape := RectangleShape2D.new()
 			shape.size = Vector2(cell_size.x * run, cell_size.y)
@@ -212,14 +246,11 @@ func _refresh_collision() -> void:
 			body.add_child(collider)
 			col += run
 
-## Opens navigation ONLY where dead microcells form a full-thickness breach
-## wide enough for an actor -- chipping a corner never frees the whole cell.
 func _refresh_navigation() -> void:
 	if not _grid_active:
 		return
 	var cell_size := affected_size / Vector2(_cell_cols, _cell_rows)
 	var strips: Array[Rect2] = []
-	# Vertical breaches: full-height runs of dead columns.
 	var col := 0
 	while col < _cell_cols:
 		if _column_alive(col):
@@ -230,7 +261,6 @@ func _refresh_navigation() -> void:
 			col += 1
 		strips.append(Rect2(Vector2(run_start * cell_size.x, 0.0),
 			Vector2(cell_size.x * (col - run_start), affected_size.y)))
-	# Horizontal breaches: full-width runs of dead rows.
 	var row := 0
 	while row < _cell_rows:
 		if _row_alive(row):
@@ -239,7 +269,7 @@ func _refresh_navigation() -> void:
 		var h_start := row
 		while row < _cell_rows and not _row_alive(row):
 			row += 1
-		strips.append(Rect2(Vector2(0, h_start * cell_size.y), Vector2(affected_size.x, cell_size.y * (row - h_start))))
+		strips.append(Rect2(Vector2(0.0, h_start * cell_size.y), Vector2(affected_size.x, cell_size.y * (row - h_start))))
 	for strip in strips:
 		if strip.size.x >= 16.0 or strip.size.y >= 16.0:
 			var excluded := RID()
@@ -259,10 +289,6 @@ func _row_alive(row: int) -> bool:
 			return true
 	return false
 
-func _persist_mask() -> void:
-	if object_id != &"" and _grid_active:
-		WorldState.set_prop_state_flag(object_id, &"partial_cells", _cell_hp.duplicate())
-
 func body_global_position() -> Vector2:
 	var parent_node := get_parent()
 	return (parent_node as Node2D).global_position if parent_node is Node2D else Vector2.ZERO
@@ -273,6 +299,8 @@ func _source_is_node2d(source: Node) -> bool:
 func durability() -> float:
 	return _durability
 
+## Structural failure: the ONE visible block shatters into its quarter
+## chunks along the killing blow, then the legacy removal path runs.
 func _destroy() -> void:
 	if _destroyed:
 		return
@@ -283,7 +311,7 @@ func _destroy() -> void:
 	var target: Node = destroy_target if destroy_target != null and is_instance_valid(destroy_target) else get_parent()
 	var world_position := body_global_position()
 	_preserve_loot(target, world_position)
-	_spawn_destruction_debris(body)
+	_shatter_structure(body)
 	var excluded_rid := RID()
 	if get_parent() is CollisionObject2D:
 		excluded_rid = (get_parent() as CollisionObject2D).get_rid()
@@ -292,21 +320,26 @@ func _destroy() -> void:
 	if target != null and is_instance_valid(target):
 		target.call_deferred("queue_free")
 
-## A bounded burst of physical chunks flying along the last hit direction.
-## Loaded lazily: keeps this script's compile-time dependencies minimal.
-func _spawn_destruction_debris(body: Node2D) -> void:
-	if debris_count <= 0 or debris_texture == null or body == null:
+## The microblocks separating: up to four quarter-sized chunks of this very
+## structure fly apart along the killing blow. Bounded by PhysicsDebris caps.
+func _shatter_structure(body: Node2D) -> void:
+	if body == null:
+		return
+	var texture := debris_texture
+	if texture == null:
+		var sprite := _find_sprite(destroy_target if destroy_target != null and is_instance_valid(destroy_target) else body)
+		texture = sprite.texture if sprite != null else null
+	var chunk_count := maxi(debris_count, mini(sub_cells, MAX_SHATTER_CHUNKS))
+	if chunk_count <= 0 or texture == null:
 		return
 	var container := _external_container(body)
-	var debris_script: Script = load("res://scripts/physics/physics_debris.gd")
-	for i in range(debris_count):
-		var direction := _last_hit_direction if _last_hit_direction != Vector2.ZERO else Vector2.RIGHT.rotated(float(i) * TAU / float(debris_count))
-		var spread := direction.rotated((float(i) - float(debris_count - 1) * 0.5) * 0.5)
-		debris_script.spawn(container, body.global_position + spread * 6.0, debris_texture,
-			Vector2(9.0, 7.0), spread * 300.0)
+	var chunk_size := affected_size * 0.45
+	for i in range(mini(chunk_count, MAX_SHATTER_CHUNKS)):
+		var direction := _last_hit_direction if _last_hit_direction != Vector2.ZERO else Vector2.RIGHT.rotated(float(i) * TAU / float(chunk_count))
+		var spread := direction.rotated((float(i) - float(chunk_count - 1) * 0.5) * 0.55)
+		PhysicsDebris.spawn(container, body.global_position + spread * 8.0, texture,
+			chunk_size, spread * (240.0 + float(i) * 40.0), Color.WHITE)
 
-## Debris belongs to the shared entity layer when one exists so it survives
-## chunk-local teardown ordering like every other world object.
 func _external_container(body: Node2D) -> Node:
 	var dynamic_world := body.get_tree().get_first_node_in_group("entity_container")
 	if dynamic_world != null:
