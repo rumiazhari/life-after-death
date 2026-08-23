@@ -88,6 +88,7 @@ func _run_all() -> void:
 	await _run_test("compound_footprints_extract_only_exposed_south_facades", _test_compound_footprints_extract_only_exposed_south_facades)
 	await _run_test("projected_exterior_runtime_is_visual_only_and_sortable", _test_projected_exterior_runtime_is_visual_only_and_sortable)
 	await _run_test("local_occlusion_fade_engages_and_releases", _test_local_occlusion_fade_engages_and_releases)
+	await _run_test("local_occlusion_fade_survives_player_removal", _test_local_occlusion_fade_survives_player_removal)
 	await _run_test("streamed_prague_quarters_are_dense_and_open_spaces_are_rare", _test_streamed_prague_quarters_are_dense_and_open_spaces_are_rare)
 	await _run_test("procedural_seed_corpus_is_deterministic_valid_and_bounded", _test_procedural_seed_corpus_is_deterministic_valid_and_bounded)
 	await _run_test("procedural_generation_retries_and_fails_explicitly", _test_procedural_generation_retries_and_fails_explicitly)
@@ -586,6 +587,40 @@ func _test_local_occlusion_fade_engages_and_releases() -> void:
 		_assert(not building.is_roof_visible(), "entering a building must hide the displaced roof as before")
 
 	player.queue_free()
+	building.queue_free()
+	await get_tree().process_frame
+
+## Regression: a fade that is already engaged must ease safely back to zero
+## when the player node disappears mid-fade (scene change, death, chunk
+## unload) instead of dereferencing a null player for player.global_position.
+func _test_local_occlusion_fade_survives_player_removal() -> void:
+	var city := ProceduralCityGenerator.new().generate_streamed_chunk(20260821, Vector2i.ZERO)
+	var spec: Dictionary = city["buildings"][0]
+	var building := ProceduralBuilding.new()
+	building.configure(spec)
+	building.position = spec["position"]
+	add_child(building)
+	await get_tree().process_frame
+	var facade = building.projected_facade()
+	_assert(facade != null, "projected facade must exist for the fade regression fixture")
+
+	var player: Player = PLAYER_SCENE.instantiate()
+	add_child(player)
+	var interior: Dictionary = spec["interior"]
+	var bounds: Rect2 = interior["footprint_bounds"]
+	player.global_position = building.global_position + Vector2(bounds.get_center().x, bounds.position.y - 48.0)
+	for _i in range(30):
+		await get_tree().process_frame
+	_assert(facade._fade_strength > 0.5, "fixture must engage the fade before removing the player (strength=%.2f)" % facade._fade_strength)
+
+	# Remove the player mid-fade; subsequent _process frames must neither
+	# crash on a missing player nor leave a stuck fade strength.
+	player.free()
+	for _i in range(90):
+		await get_tree().process_frame
+	_assert(facade._fade_strength < 0.001, "fade must ease to zero after the player disappears (strength=%.2f)" % facade._fade_strength)
+	_assert(int(facade.occlusion_material().get_shader_parameter("strength") * 1000.0) == 0, "shader strength must be reset once the fade releases without a player")
+
 	building.queue_free()
 	await get_tree().process_frame
 

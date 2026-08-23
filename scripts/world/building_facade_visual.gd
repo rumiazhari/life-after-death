@@ -51,6 +51,11 @@ var _occlusion_material: ShaderMaterial
 var _world_occlusion_regions: Array[Rect2] = []
 var _regions_dirty := true
 var _fade_strength := 0.0
+## Last known player position. The fade hole must keep a stable center while
+## it eases shut after the player node disappears mid-fade (scene change,
+## death, chunk unload); without this the ease-out frames would dereference a
+## freed/null player.
+var _last_player_world := Vector2.ZERO
 
 func configure(spec: Dictionary) -> void:
 	facade_spans.assign(spec.get("facade_spans", []))
@@ -99,16 +104,22 @@ func _process(delta: float) -> void:
 	if player != null:
 		if _regions_dirty and is_inside_tree():
 			_world_occlusion_regions.clear()
+			# This node deliberately sits anchor_y south of its building so
+			# the painted elevation baselines on the southern wall; strip
+			# that offset back off before lifting footprints into world
+			# space, or every fade region ends up anchor_y too far south.
+			var building_origin := global_position - Vector2(0.0, anchor_y)
 			for local_rect in occluder_footprints:
 				# Footprint grown northward by the projection height: the
 				# only screen region this building's elevation can cover.
 				_world_occlusion_regions.append(Rect2(
-					global_position + local_rect.position + Vector2(0.0, -projection_height),
+					building_origin + local_rect.position + Vector2(0.0, -projection_height),
 					local_rect.size + Vector2(0.0, projection_height)
 				))
 			_regions_dirty = false
+		_last_player_world = player.global_position
 		for region in _world_occlusion_regions:
-			if _distance_squared_point_to_rect(player.global_position, region) <= FADE_OUTER * FADE_OUTER:
+			if _distance_squared_point_to_rect(_last_player_world, region) <= FADE_OUTER * FADE_OUTER:
 				target = 1.0
 				break
 	_fade_strength = move_toward(_fade_strength, target, FADE_EASE_SPEED * delta)
@@ -116,7 +127,7 @@ func _process(delta: float) -> void:
 		if _occlusion_material.get_shader_parameter("strength") != 0.0:
 			_occlusion_material.set_shader_parameter("strength", 0.0)
 		return
-	_occlusion_material.set_shader_parameter("player_world", player.global_position)
+	_occlusion_material.set_shader_parameter("player_world", _last_player_world)
 	_occlusion_material.set_shader_parameter("strength", _fade_strength)
 
 func _draw() -> void:

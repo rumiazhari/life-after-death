@@ -21,6 +21,11 @@ const GENERATED_SPAWN_CLEARANCE := 25.0
 const PRAGUE_PLAZA_CHANCE_PERCENT := 5
 const PRAGUE_COURTYARD_CHANCE_PERCENT := 6
 const PRAGUE_COURTYARD_REAR_RESERVE := 192.0
+## Auxiliary connectors (driveways, square branches, edge portals) must reach
+## into their semantic parent carriageway by at least this much so Rect2
+## overlap -- and therefore graph adjacency -- never depends on extension
+## heuristics guessing a street band width.
+const CONNECTOR_ROAD_OVERLAP := 32.0
 
 const BUILDING_ARCHETYPES := {
 	&"apartment": {"minimum_size": Vector2(256, 256)},
@@ -91,9 +96,10 @@ func generate_streamed_chunk(world_seed: int, coordinate: Vector2i) -> Dictionar
 			&"west": ChunkEdgeContract.edge_portals(world_seed, coordinate, ChunkEdgeContract.Side.WEST, chunk_tiles),
 		}
 		var roads: Array[Dictionary] = city["roads"]
-		_append_edge_contract_roads(roads, edge_contracts)
-		_append_park_branch(roads, city["blocks"], seed_value)
-		_append_building_access_branches(roads, city["buildings"])
+		var road_by_id := _index_by_id(roads)
+		_append_edge_contract_roads(roads, edge_contracts, road_by_id)
+		_append_park_branch(roads, city["blocks"], seed_value, road_by_id)
+		_append_building_access_branches(roads, city["buildings"], road_by_id)
 		city["roads"] = roads
 		city["world_seed"] = world_seed
 		city["chunk_coordinate"] = coordinate
@@ -148,6 +154,7 @@ func _generate_prague_attempt(seed_value: int, attempt: int, attempt_seed: int, 
 		region["environment_tags"] = tags
 	var scavenging := _make_scavenge_points(seed_value, blocks, exterior_zones, props)
 	var landmarks := _make_landmarks(seed_value, blocks, buildings, exterior_zones, props, scavenging, include_safehouse)
+	props = _filter_prague_anchor_conflicts(props, scavenging, landmarks)
 	var safe_block: Dictionary = blocks[0]
 	var safehouse_position: Vector2 = safe_block["rect"].get_center() if include_safehouse else Vector2.ZERO
 	var safehouse_entrance := safehouse_position + Vector2(0, 208) if include_safehouse else Vector2.ZERO
@@ -326,6 +333,28 @@ func _filter_prague_frontage_props(props: Array[Dictionary], buildings: Array[Di
 			accepted.append(prop)
 	return accepted
 
+## Dressing props yield to semantic anchors: any prop whose clearance footprint
+## swallows a scavenge point or landmark position is dropped deterministically.
+## The anchors are gameplay-critical navigation/loot targets; debris is not.
+func _filter_prague_anchor_conflicts(props: Array[Dictionary], scavenge_points: Array[Dictionary], landmarks: Array[Dictionary]) -> Array[Dictionary]:
+	var anchor_positions: Array[Vector2] = []
+	for point in scavenge_points:
+		anchor_positions.append(point["position"])
+	for landmark in landmarks:
+		if landmark.get("position", Vector2.ZERO) != Vector2.ZERO:
+			anchor_positions.append(landmark["position"])
+	var accepted: Array[Dictionary] = []
+	for prop in props:
+		var prop_rect := Rect2((prop["position"] as Vector2) - (prop["size"] as Vector2) * 0.5, prop["size"]).grow(16.0)
+		var blocked := false
+		for position in anchor_positions:
+			if prop_rect.has_point(position):
+				blocked = true
+				break
+		if not blocked:
+			accepted.append(prop)
+	return accepted
+
 func _make_prague_courtyards(seed_value: int, blocks: Array[Dictionary], buildings: Array[Dictionary]) -> Array[Dictionary]:
 	var result: Array[Dictionary] = []
 	var buildings_by_block: Dictionary = {}
@@ -383,9 +412,15 @@ func _generate_attempt(seed_value: int, attempt: int, attempt_seed: int) -> Dict
 		"tram_axis": &"horizontal",
 		"apocalypse_level": 1,
 	})
+	# Profile/apocalypse dressing scatters deterministic debris anywhere in a
+	# quarter; the same frontage-clearance filter the streamed Prague path
+	# applies keeps those props off building shells and access corridors so
+	# the compact district still validates without weakening its invariants.
+	props = _filter_prague_frontage_props(props, buildings)
 	var spawn_regions := _make_spawn_regions(seed_value, blocks, roads, exterior_zones, buildings, props)
 	var scavenging := _make_scavenge_points(seed_value, blocks, exterior_zones, props)
 	var landmarks := _make_landmarks(seed_value, blocks, buildings, exterior_zones, props, scavenging)
+	props = _filter_prague_anchor_conflicts(props, scavenging, landmarks)
 	var safe_block: Dictionary = blocks[0]
 	var safehouse_position: Vector2 = safe_block["rect"].get_center()
 	var safehouse_entrance := safehouse_position + Vector2(0, 208)
@@ -416,10 +451,11 @@ func _attempt_seed(seed_value: int, attempt: int) -> int:
 		return seed_value & 0x7FFFFFFF
 	return int((seed_value ^ (attempt * 0x9E3779B9) ^ 0x51A7C05) & 0x7FFFFFFF)
 
-func _append_edge_contract_roads(roads: Array[Dictionary], contracts: Dictionary) -> void:
+func _append_edge_contract_roads(roads: Array[Dictionary], contracts: Dictionary, road_by_id: Dictionary = {}) -> void:
 	var half := ARENA_HALF_EXTENT
 	var serial := 0
 	for side_name in [&"north", &"east", &"south", &"west"]:
+		var parent_rect := _edge_parent_ring_rect(side_name, road_by_id)
 		for portal_variant in contracts[side_name]:
 			var portal: Dictionary = portal_variant
 			var lane := -half.y + float(portal["lane_tile"] * TILE_SIZE) + TILE_SIZE * 0.5
@@ -428,14 +464,26 @@ func _append_edge_contract_roads(roads: Array[Dictionary], contracts: Dictionary
 			var orientation: StringName
 			if side_name == &"east" or side_name == &"west":
 				orientation = &"horizontal"
-				var x0 := half.x - 128.0 if side_name == &"east" else -half.x
-				var x1 := half.x if side_name == &"east" else -half.x + 128.0
+				var x0: float
+				var x1: float
+				if side_name == &"east":
+					x1 = half.x
+					x0 = x1 - _edge_connector_reach(parent_rect, half.x)
+				else:
+					x0 = -half.x
+					x1 = x0 + _edge_connector_reach(parent_rect, half.x)
 				rect = Rect2(x0, lane - width * 0.5, x1 - x0, width)
 			else:
 				orientation = &"vertical"
 				var x_lane := -half.x + float(portal["lane_tile"] * TILE_SIZE) + TILE_SIZE * 0.5
-				var y0 := half.y - 128.0 if side_name == &"south" else -half.y
-				var y1 := half.y if side_name == &"south" else -half.y + 128.0
+				var y0: float
+				var y1: float
+				if side_name == &"south":
+					y1 = half.y
+					y0 = y1 - _edge_connector_reach(parent_rect, half.y)
+				else:
+					y0 = -half.y
+					y1 = y0 + _edge_connector_reach(parent_rect, half.y)
 				rect = Rect2(x_lane - width * 0.5, y0, width, y1 - y0)
 			roads.append({
 				"id": StringName("road_contract_%s_%02d" % [String(side_name), serial]),
@@ -449,7 +497,37 @@ func _append_edge_contract_roads(roads: Array[Dictionary], contracts: Dictionary
 			})
 			serial += 1
 
-func _append_park_branch(roads: Array[Dictionary], blocks: Array[Dictionary], seed_value: int) -> void:
+## The bordering ring road a given chunk edge must connect back to.
+func _edge_parent_ring_rect(side_name: StringName, road_by_id: Dictionary) -> Rect2:
+	var want_horizontal := side_name in [&"north", &"south"]
+	var pick_minimum := side_name in [&"north", &"west"]
+	var best_rect := Rect2()
+	var best_center := INF if pick_minimum else -INF
+	for id in road_by_id:
+		var road: Dictionary = road_by_id[id]
+		if road.get("kind", &"") != &"ring":
+			continue
+		var horizontal: bool = road["orientation"] == &"horizontal"
+		if horizontal != want_horizontal:
+			continue
+		var rect: Rect2 = road["rect"]
+		var center := rect.get_center().y if horizontal else rect.get_center().x
+		if (pick_minimum and center < best_center) or (not pick_minimum and center > best_center):
+			best_center = center
+			best_rect = rect
+	return best_rect
+
+## How far inward from a chunk edge a contract portal must run so its inner
+## end overlaps the parent ring carriageway by CONNECTOR_ROAD_OVERLAP past the
+## carriageway centerline. Derived from the actual ring Rect2; falls back to
+## the historical one-band reach only when no ring road exists to measure.
+func _edge_connector_reach(parent_rect: Rect2, edge: float) -> float:
+	if parent_rect.size == Vector2.ZERO:
+		return 128.0
+	var parent_center := parent_rect.get_center().x if parent_rect.size.x < parent_rect.size.y else parent_rect.get_center().y
+	return maxf(absf(edge - parent_center) + CONNECTOR_ROAD_OVERLAP, TILE_SIZE + CONNECTOR_ROAD_OVERLAP)
+
+func _append_park_branch(roads: Array[Dictionary], blocks: Array[Dictionary], seed_value: int, road_by_id: Dictionary = {}) -> void:
 	var park: Dictionary = {}
 	for block in blocks:
 		if block["zone"] == &"park":
@@ -467,16 +545,20 @@ func _append_park_branch(roads: Array[Dictionary], blocks: Array[Dictionary], se
 	if rng.randi_range(0, 1) == 0:
 		orientation = &"vertical"
 		var x := rect.position.x + 96.0 + float(rng.randi_range(0, maxi(int((rect.size.x - 192.0) / TILE_SIZE), 0)) * TILE_SIZE)
-		# Reach 128 px past the block edge so the branch always crosses the
-		# sidewalk band into the bordering collector even when profile street
-		# widths leave that band wider than one tile.
-		branch_rect = Rect2(x - width * 0.5, rect.position.y - 128.0, width, rect.size.y * 0.58 + 128.0)
+		# The branch runs north across the sidewalk band into its semantic
+		# parent street (the collector bordering this quarter's row); its end
+		# is snapped onto that road's centerline so graph adjacency never
+		# depends on guessing how wide the band between block and carriageway
+		# is for the active profile.
+		var parent_y := _parent_axis_center(road_by_id, StringName("road_h_%d" % int(park["row"])), rect.position.y - 128.0)
+		branch_rect = Rect2(x - width * 0.5, parent_y, width, rect.position.y + rect.size.y * 0.58 - parent_y)
 		var cross_y := branch_rect.end.y - width
 		cross_rect = Rect2(rect.position.x + 64.0, cross_y, rect.size.x - 128.0, width)
 	else:
 		orientation = &"horizontal"
 		var y := rect.position.y + 96.0 + float(rng.randi_range(0, maxi(int((rect.size.y - 192.0) / TILE_SIZE), 0)) * TILE_SIZE)
-		branch_rect = Rect2(rect.position.x - 128.0, y - width * 0.5, rect.size.x * 0.58 + 128.0, width)
+		var parent_x := _parent_axis_center(road_by_id, StringName("road_v_%d" % int(park["col"])), rect.position.x - 128.0)
+		branch_rect = Rect2(parent_x, y - width * 0.5, rect.position.x + rect.size.x * 0.58 - parent_x, width)
 		var cross_x := branch_rect.end.x - width
 		cross_rect = Rect2(cross_x, rect.position.y + 64.0, width, rect.size.y - 128.0)
 	roads.append({
@@ -498,21 +580,35 @@ func _append_park_branch(roads: Array[Dictionary], blocks: Array[Dictionary], se
 		"topology": &"dogleg_square_lane",
 	})
 
+## Centerline of a semantic parent road on its running axis, or the supplied
+## deterministic fallback when that axis record is unavailable.
+func _parent_axis_center(road_by_id: Dictionary, road_id: StringName, fallback: float) -> float:
+	var road: Dictionary = road_by_id.get(road_id, {})
+	if road.is_empty():
+		return fallback
+	var rect: Rect2 = road["rect"]
+	if road["orientation"] == &"horizontal":
+		return rect.get_center().y
+	return rect.get_center().x
+
 ## Every generated building gets a narrow, unmarked access drive from its
 ## entrance to the collector it fronts.  These are actual road rectangles in
 ## the semantic graph (not painted decoration), so streamed districts read as
 ## a hierarchy of arterial grid, local branch, and building approach rather
 ## than a field of isolated boxes on a grid.
-func _append_building_access_branches(roads: Array[Dictionary], buildings: Array[Dictionary]) -> void:
+func _append_building_access_branches(roads: Array[Dictionary], buildings: Array[Dictionary], road_by_id: Dictionary = {}) -> void:
 	for building in buildings:
 		var corridor: Rect2 = building["access_corridor"]
 		if corridor.size.y < TILE_SIZE * 2.0:
 			continue
 		var width := maxf(corridor.size.x, TILE_SIZE * 2.0)
-		var rect := Rect2(corridor.get_center().x - width * 0.5, corridor.position.y, width, corridor.size.y + 128.0)
-		# The extra 128 px drives the branch through the sidewalk band into
-		# its collector carriageway even when profile street widths leave
-		# that band wider than one tile past the block edge.
+		# The drive ends on its declared frontage collector's centerline, so
+		# the semantic branch always physically intersects the exact road it
+		# claims to join — whatever width that profile gives it — instead of
+		# relying on a fixed extension length to luck across the band.
+		var end_y := _parent_axis_center(road_by_id, building.get("frontage_road_id", &""), corridor.end.y + TILE_SIZE * 4.0)
+		var height := maxf(end_y - corridor.position.y, corridor.size.y + TILE_SIZE)
+		var rect := Rect2(corridor.get_center().x - width * 0.5, corridor.position.y, width, height)
 		roads.append({
 			"id": StringName("road_branch_%s" % String(building["id"]).replace("/", "_")),
 			"orientation": &"vertical",
@@ -661,6 +757,7 @@ func _make_buildings(seed_value: int, parcels: Array[Dictionary], blocks: Array[
 			"parcel_id": parcel["id"],
 			"zone": block["zone"],
 			"archetype": archetype,
+			"frontage_road_id": parcel["frontage_road_id"],
 			"position": position,
 			"rotation": 0.0,
 			"size": footprint.size,
@@ -816,6 +913,12 @@ func _make_profile_street_dressing(output: Array[Dictionary], serials: Dictionar
 	for i in range(slots):
 		var x := rect.position.x + 96.0 + float(i) * ((rect.size.x - 192.0) / float(maxi(slots - 1, 1)))
 		var y := rect.end.y - 16.0 # south sidewalk band, matching lamp placement
+		# Keep the residential frontage anchor (block-center approach, where
+		# the semantic frontage spawn region samples) clear of physical props:
+		# a dressing item parked on that anchor leaves its spawn region no
+		# full-footprint-valid candidate.
+		if absf(x - rect.get_center().x) < 56.0:
+			continue
 		match profile:
 			&"historic_core":
 				var historic_kind: StringName = [&"bollard", &"planter", &"trash", &"bollard"][i % 4]
@@ -1097,6 +1200,22 @@ func _clear_exterior_position(rect: Rect2, props: Array[Dictionary], occupied: A
 		for x in range(first_cell.x, last_cell.x + 1):
 			var sample := -ARENA_HALF_EXTENT + Vector2(x * TILE_SIZE + TILE_SIZE * 0.5, y * TILE_SIZE + TILE_SIZE * 0.5)
 			if rect.has_point(sample) and _exterior_sample_is_clear(sample, props, occupied):
+				return sample
+	# Relaxed pass: dense dressing can legitimately cover every cell of a
+	# narrow alley/parking zone. Prefer an anchor-clear cell anyway; the prop
+	# half of the conflict is resolved afterwards by
+	# _filter_prague_anchor_conflicts, which yields props to semantic anchors.
+	for y in range(first_cell.y, last_cell.y + 1):
+		for x in range(first_cell.x, last_cell.x + 1):
+			var sample := -ARENA_HALF_EXTENT + Vector2(x * TILE_SIZE + TILE_SIZE * 0.5, y * TILE_SIZE + TILE_SIZE * 0.5)
+			if not rect.has_point(sample):
+				continue
+			var anchor_clear := true
+			for other in occupied:
+				if sample.distance_squared_to(other) < TILE_SIZE * TILE_SIZE:
+					anchor_clear = false
+					break
+			if anchor_clear:
 				return sample
 	return _navigation_sample(rect.get_center())
 
@@ -1427,25 +1546,50 @@ func _validate_road_connectivity(roads: Array, errors: Array[String]) -> void:
 		errors.append("road graph is empty")
 		return
 	var adjacency: Dictionary = {}
+	var road_by_id: Dictionary = {}
 	for road in roads:
 		adjacency[road["id"]] = []
+		road_by_id[road["id"]] = road
 	for i in range(roads.size()):
 		for j in range(i + 1, roads.size()):
 			if (roads[i]["rect"] as Rect2).intersects(roads[j]["rect"]):
 				adjacency[roads[i]["id"]].append(roads[j]["id"])
 				adjacency[roads[j]["id"]].append(roads[i]["id"])
-	var queue: Array = [roads[0]["id"]]
-	var visited: Dictionary = {}
-	while not queue.is_empty():
-		var current = queue.pop_front()
-		if visited.has(current):
+	# Label whole components so a failure names every stranded road instead of
+	# only reporting that *some* street is unreachable.
+	var component_of: Dictionary = {}
+	var component_sizes: Array[int] = []
+	for road in roads:
+		var root: StringName = road["id"]
+		if component_of.has(root):
 			continue
-		visited[current] = true
-		for neighbor in adjacency[current]:
-			if not visited.has(neighbor):
-				queue.append(neighbor)
-	if visited.size() != roads.size():
-		errors.append("road hierarchy contains disconnected streets")
+		var size := 0
+		var queue: Array = [root]
+		while not queue.is_empty():
+			var current: StringName = queue.pop_front()
+			if component_of.has(current):
+				continue
+			component_of[current] = component_sizes.size()
+			size += 1
+			for neighbor in adjacency[current]:
+				if not component_of.has(neighbor):
+					queue.append(neighbor)
+		component_sizes.append(size)
+	if component_sizes.size() <= 1:
+		return
+	var largest: int = component_sizes.max()
+	for road in roads:
+		var id: StringName = road["id"]
+		var component := int(component_of[id])
+		if component_sizes[component] == largest:
+			continue
+		errors.append("disconnected road %s kind=%s orientation=%s rect=%s component=%d/%d size=%d adjacency=%d" % [
+			String(id), String(road.get("kind", &"?")), String(road.get("orientation", &"?")),
+			str(road["rect"]), component + 1, component_sizes.size(), component_sizes[component], (adjacency[id] as Array).size(),
+		])
+	errors.append("road hierarchy has %d disconnected components (sizes %s); largest is %d of %d roads" % [
+		component_sizes.size(), str(component_sizes), largest, roads.size(),
+	])
 
 func _register_id(id: StringName, ids: Dictionary, errors: Array[String]) -> void:
 	if id == &"":
