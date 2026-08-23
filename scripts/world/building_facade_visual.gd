@@ -164,34 +164,102 @@ func _draw_span(world_local_span: Rect2, span_index: int) -> void:
 	_draw_prague_details(rect, palette, span_index)
 	_draw_breach_openings(rect)
 
-## Dark openings where south wall segments were destroyed. A breach is a
-## FULL-HEIGHT shaft: losing a ground-floor load-bearing segment brings the
-## whole elevation column above it down with it -- every storey shows the
-## wound, with only broken slab lips left at each floor line.
+## Facade wound model:
+## - ground_breaches: dead ground-floor segments -> a real opening on the
+##   ground storey only, plus escalating breakage on the storey above.
+## - collapse_columns: x positions where ADJACENT segments died (or over half
+##   the face is gone) -- the upper floors structurally failed and the whole
+##   column comes down. This is the only case that blackens the full height.
+var upper_damage_levels := {}
+var collapse_columns := {}
+
+func set_upper_damage(local_x: float, level: int) -> void:
+	if level <= 0:
+		upper_damage_levels.erase(local_x)
+	else:
+		upper_damage_levels[local_x] = level
+	queue_redraw()
+
+func add_collapse_column(local_x: float) -> void:
+	collapse_columns[local_x] = true
+	upper_damage_levels.erase(local_x)
+	queue_redraw()
+
+func upper_damage_level(local_x: float) -> int:
+	return int(upper_damage_levels.get(local_x, 0))
+
 func _draw_breach_openings(rect: Rect2) -> void:
-	if ground_breaches.is_empty():
-		return
-	var shaft_height := projection_height * 0.94
 	var floor_height := projection_height / float(maxi(storeys, 1))
-	var opening_width := 30.0
 	for breach_x in ground_breaches:
 		if breach_x < rect.position.x - 14.0 or breach_x > rect.end.x + 14.0:
 			continue
-		var top := rect.end.y - shaft_height
-		draw_rect(Rect2(Vector2(breach_x - opening_width * 0.5, top), Vector2(opening_width, shaft_height)), Color8(16, 14, 13))
-		# Jagged vertical edges the whole way up.
-		var edge_y := top
-		while edge_y < rect.end.y - 4.0:
-			var jitter := 3.0 + float((int(breach_x) + int(edge_y)) % 5)
-			draw_rect(Rect2(rect.position.x + 0.0 + (breach_x - rect.position.x) - opening_width * 0.5 - 2.0, edge_y, jitter, 6.0), Color(0.08, 0.07, 0.06, 0.9))
-			draw_rect(Rect2(breach_x + opening_width * 0.5 - jitter + 2.0, edge_y, jitter, 6.0), Color(0.08, 0.07, 0.06, 0.9))
-			edge_y += 7.0
-		# Broken slab lips remain at each storey line.
-		for floor_index in range(1, maxi(storeys, 1)):
-			var lip_y := rect.end.y - floor_height * float(floor_index)
-			draw_rect(Rect2(Vector2(breach_x - opening_width * 0.5 - 2.0, lip_y - 3.0), Vector2(opening_width + 4.0, 5.0)), Color8(58, 50, 44))
-		# Debris spill on the ground line.
-		draw_rect(Rect2(Vector2(breach_x - opening_width * 0.5 - 6.0, rect.end.y - 4.0), Vector2(opening_width + 12.0, 4.0)), Color(0.1, 0.09, 0.08, 0.85))
+		if collapse_columns.has(breach_x):
+			_draw_collapsed_column(rect, breach_x, floor_height)
+		else:
+			_draw_ground_breach(rect, breach_x, floor_height)
+	for damage_x in upper_damage_levels:
+		var level: int = upper_damage_levels[damage_x]
+		if level > 0 and not collapse_columns.has(damage_x):
+			_draw_upper_storey_damage(rect, damage_x, level)
+
+## Ground-storey opening: dark interior with jagged edges, rubble spill.
+func _draw_ground_breach(rect: Rect2, breach_x: float, floor_height: float) -> void:
+	var height := floor_height * 0.92
+	var width := 30.0
+	draw_rect(Rect2(Vector2(breach_x - width * 0.5, rect.end.y - height), Vector2(width, height)), Color8(16, 14, 13))
+	var edge_y := rect.end.y - height
+	while edge_y < rect.end.y - 4.0:
+		var jitter := 3.0 + float((int(breach_x) + int(edge_y)) % 5)
+		draw_rect(Rect2(Vector2(breach_x - width * 0.5 - 2.0, edge_y), Vector2(jitter, 6.0)), Color(0.08, 0.07, 0.06, 0.9))
+		draw_rect(Rect2(Vector2(breach_x + width * 0.5 - jitter + 2.0, edge_y), Vector2(jitter, 6.0)), Color(0.08, 0.07, 0.06, 0.9))
+		edge_y += 7.0
+	draw_rect(Rect2(Vector2(breach_x - width * 0.5 - 6.0, rect.end.y - 4.0), Vector2(width + 12.0, 4.0)), Color(0.1, 0.09, 0.08, 0.85))
+
+## Storey-above escalation for an isolated segment: broken windows first,
+## then scorch and cracked masonry. Never a full blackout unless cascade.
+func _draw_upper_storey_damage(rect: Rect2, breach_x: float, level: int) -> void:
+	var floor_height := projection_height / float(maxi(storeys, 1))
+	for floor_index in range(1, maxi(storeys, 1)):
+		var storey_top := rect.end.y - floor_height * float(floor_index + 1)
+		var window_y := storey_top + floor_height * 0.32
+		var window_count := 2
+		for w in range(window_count):
+			var wx := breach_x - 14.0 + float(w) * 20.0
+			var broken := (level >= 2) or (level == 1 and (w + floor_index) % 2 == 0)
+			if broken:
+				draw_rect(Rect2(Vector2(wx, window_y), Vector2(14.0, 12.0)), Color8(22, 22, 24))
+				draw_line(Vector2(wx, window_y), Vector2(wx + 8.0, window_y + 9.0), Color8(60, 58, 54), 1.2)
+			else:
+				draw_rect(Rect2(Vector2(wx, window_y), Vector2(14.0, 12.0)), Color8(40, 44, 46).darkened(0.2 * level))
+		if level >= 2:
+			# Scorch streaks licking up from the breach below.
+			var streak_seed := int(breach_x) * 31 + floor_index * 17
+			for s in range(level):
+				var sx := breach_x - 10.0 + float((streak_seed + s * 13) % 26)
+				draw_line(Vector2(sx, rect.end.y - floor_height * float(floor_index)),
+					Vector2(sx + float((streak_seed % 7) - 3), storey_top + floor_height * 0.18),
+					Color(0.12, 0.11, 0.1, 0.55), 2.0)
+		if level >= 3:
+			# Near-collapse cracks across this storey's band.
+			draw_line(Vector2(breach_x - 12.0, storey_top + floor_height * 0.15),
+				Vector2(breach_x + 10.0, storey_top + floor_height * 0.85), Color(0.08, 0.07, 0.06, 0.75), 1.4)
+
+## Structural failure of the floors above: the whole column comes down --
+## jagged full-height shaft, slab lips at each line, heavy rubble mound.
+func _draw_collapsed_column(rect: Rect2, breach_x: float, floor_height: float) -> void:
+	var shaft_height := projection_height * 0.94
+	var width := 34.0
+	draw_rect(Rect2(Vector2(breach_x - width * 0.5, rect.end.y - shaft_height), Vector2(width, shaft_height)), Color8(16, 14, 13))
+	var edge_y := rect.end.y - shaft_height
+	while edge_y < rect.end.y - 4.0:
+		var jitter := 3.0 + float((int(breach_x) + int(edge_y)) % 5)
+		draw_rect(Rect2(Vector2(breach_x - width * 0.5 - 2.0, edge_y), Vector2(jitter, 6.0)), Color(0.08, 0.07, 0.06, 0.9))
+		draw_rect(Rect2(Vector2(breach_x + width * 0.5 - jitter + 2.0, edge_y), Vector2(jitter, 6.0)), Color(0.08, 0.07, 0.06, 0.9))
+		edge_y += 7.0
+	for floor_index in range(1, maxi(storeys, 1)):
+		var lip_y := rect.end.y - floor_height * float(floor_index)
+		draw_rect(Rect2(Vector2(breach_x - width * 0.5 - 2.0, lip_y - 3.0), Vector2(width + 4.0, 5.0)), Color8(58, 50, 44))
+	draw_rect(Rect2(Vector2(breach_x - width * 0.5 - 8.0, rect.end.y - 6.0), Vector2(width + 16.0, 6.0)), Color(0.09, 0.08, 0.07, 0.95))
 
 func _draw_masonry(rect: Rect2, palette: Dictionary, span_index: int) -> void:
 	if facade_style not in [&"masonry_industrial", &"exposed_brick_infill"]:

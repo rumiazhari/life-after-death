@@ -131,10 +131,33 @@ func _wire_wall_destruction_sync() -> void:
 			damage_comp.destroyed.connect(_on_wall_segment_destroyed.bind(damage_comp))
 			if WorldState.get_prop_state_flag(damage_comp.object_id, &"destroyed", false):
 				call_deferred("_apply_wall_breach", damage_comp)
+	# Restore persisted facade wounds: destroyed wall BODIES are freed, so
+	# their positions come from this record rather than live nodes.
+	var stored_xs: Variant = WorldState.get_prop_state_flag(_south_breaches_key(), &"xs", null)
+	if stored_xs is PackedFloat32Array:
+		for stored_x in (stored_xs as PackedFloat32Array):
+			if _facade_visual != null:
+				_facade_visual.add_ground_breach(stored_x)
+		call_deferred("_refresh_south_facade_state")
 
 func _on_wall_segment_destroyed(_object_id: StringName, comp: EnvironmentDamageComponent) -> void:
 	_apply_wall_breach(comp)
 
+func _south_breaches_key() -> StringName:
+	return StringName("%s/south_breaches" % String(specification["id"]))
+
+## Records a dead south segment's position so the facade wound survives
+## rebuilds (the wall body itself is freed on destruction).
+func _record_south_breach(local_x: float) -> void:
+	var key := _south_breaches_key()
+	var arr_variant: Variant = WorldState.get_prop_state_flag(key, &"xs", null)
+	var arr: PackedFloat32Array = arr_variant if arr_variant is PackedFloat32Array else PackedFloat32Array()
+	for existing in arr:
+		if absf(existing - local_x) < 1.0:
+			return
+	arr.append(local_x)
+	arr.sort()
+	WorldState.set_prop_state_flag(key, &"xs", arr)
 func _apply_wall_breach(comp: EnvironmentDamageComponent) -> void:
 	var body := comp.get_parent() as Node2D
 	if body == null:
@@ -145,17 +168,14 @@ func _apply_wall_breach(comp: EnvironmentDamageComponent) -> void:
 	var roof := get_node_or_null(roof_node_path) as TileMapLayer
 	if roof != null:
 		if edge == &"none":
-			# Interior partition failure: the ceiling around it loses a
-			# localized patch (the cell itself plus its four neighbors).
 			_collapse_roof_patch(roof, local)
 		else:
-			# Perimeter load-bearing failure: the whole unsupported roof bay
-			# along that wall line collapses inward down to the floor.
 			_collapse_roof_bay(roof, local, edge, interior.get("perimeter_rects", []), comp)
-	if edge == &"south" and _facade_visual != null:
-		_facade_visual.add_ground_breach(local.x)
-
-## Which outer face (if any) this wall segment sits on.
+	if edge == &"south":
+		if _facade_visual != null:
+			_facade_visual.add_ground_breach(local.x)
+		_record_south_breach(local.x)
+		_refresh_south_facade_state()
 func _perimeter_edge_for(p: Vector2, rects: Array) -> StringName:
 	var margin := PixelAtlasMap.TILE_SIZE * 0.5 + 1.0
 	for rect_variant in rects:
@@ -316,6 +336,89 @@ func exterior_entrance_positions() -> Array[Vector2]:
 			result.append(global_transform * (door["position"] as Vector2))
 	return result
 
+## Rubric: a collapsing storey throws real rubble out of its base, once per
+## newly collapsed column.
+func _spawn_cascade_debris(x: float, ground_y: float) -> void:
+	var debris_script: Script = load("res://scripts/physics/physics_debris.gd")
+	var container := get_tree().get_first_node_in_group("entity_container")
+	if container == null:
+		container = self
+	var world_base := to_global(Vector2(x, ground_y))
+	for i in range(4):
+		debris_script.spawn(container, world_base + Vector2(randf_range(-10.0, 10.0), randf_range(-6.0, 6.0)),
+			load("res://assets/pixel/props/debris_small.png"), Vector2(12, 9),
+			Vector2(randf_range(-140.0, 140.0), randf_range(-160.0, -60.0)), Color(0.85, 0.8, 0.74))
+## Deterministic structural cascade for the street face: destroyed segments
+## are known from the persisted south-breach record (destroyed wall bodies
+## are freed), so rebuilds re-collapse the same columns.
+func _refresh_south_facade_state() -> void:
+	if _facade_visual == null:
+		return
+	var interior: Dictionary = specification.get("interior", {})
+	var half_extent: Vector2 = interior.get("half_extent", Vector2.ZERO)
+	var entries: Array[Dictionary] = []
+	var stored_xs: Variant = WorldState.get_prop_state_flag(_south_breaches_key(), &"xs", null)
+	if stored_xs is PackedFloat32Array:
+		for stored_x in (stored_xs as PackedFloat32Array):
+			entries.append({"x": float(stored_x), "destroyed": true})
+	for child in get_children():
+		if not (child is StaticBody2D):
+			continue
+		var candidate := child.get_node_or_null("EnvironmentDamageComponent") as EnvironmentDamageComponent
+		if candidate == null or not "/wall_" in String(candidate.object_id):
+			continue
+		var pos: Vector2 = (child as Node2D).position
+		if pos.y < half_extent.y - PixelAtlasMap.TILE_SIZE:
+			continue
+		if WorldState.get_prop_state_flag(candidate.object_id, &"destroyed", false):
+			continue
+		var duplicate := false
+		for entry in entries:
+			if absf(float(entry["x"]) - pos.x) < PixelAtlasMap.TILE_SIZE * 0.5:
+				duplicate = true
+				break
+		if not duplicate:
+			entries.append({"x": pos.x, "destroyed": false})
+	if entries.size() < 2:
+		for entry in entries:
+			_facade_visual.set_upper_damage(entry["x"], 1 if bool(entry["destroyed"]) else 0)
+		return
+	entries.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return a["x"] < b["x"])
+	var destroyed_count := 0
+	for entry in entries:
+		destroyed_count += 1 if bool(entry["destroyed"]) else 0
+	var cascading := destroyed_count * 2 >= entries.size()
+	var runs: Array[Array] = []
+	var current_run: Array = []
+	for i in range(entries.size()):
+		var entry: Dictionary = entries[i]
+		if bool(entry["destroyed"]):
+			if not current_run.is_empty() and absf(float(entry["x"]) - float((current_run.back() as Dictionary)["x"])) > PixelAtlasMap.TILE_SIZE * 1.5:
+				runs.append(current_run)
+				current_run = []
+			current_run.append(entry)
+		elif not current_run.is_empty():
+			runs.append(current_run)
+			current_run = []
+	if not current_run.is_empty():
+		runs.append(current_run)
+	for run in runs:
+		var run_collapses: bool = run.size() >= 2 or cascading
+		for entry_variant in run:
+			var entry: Dictionary = entry_variant
+			var x: float = entry["x"]
+			if run_collapses:
+				if not _facade_visual.collapse_columns.has(x):
+					_spawn_cascade_debris(x, half_extent.y)
+				_facade_visual.add_collapse_column(x)
+			else:
+				_facade_visual.set_upper_damage(x, clampi(run.size(), 1, 3))
+	for run in runs:
+		if run.size() >= 2 or cascading:
+			continue
+		for entry_variant in run:
+			var entry: Dictionary = entry_variant
+			_facade_visual.set_upper_damage(entry["x"], clampi(run.size(), 1, 3))
 func attach_exterior_sort_parent(sort_parent: Node2D) -> BuildingFacadeVisual:
 	if _facade_visual == null or sort_parent == null or _facade_visual.get_parent() == sort_parent:
 		return _facade_visual

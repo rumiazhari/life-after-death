@@ -1244,6 +1244,11 @@ func _test_breach_syncs_roof_and_facade() -> void:
 		"the whole unsupported roof bay along the breached wall must collapse (only %d of ~%d left)" % [strip_erased, row_cells_before_estimate])
 	var facade := first.projected_facade()
 	_assert(facade != null and facade.ground_breaches.has(breach_x), "the south facade must notch at the breached segment")
+	# Single-segment rule: NO full-column blackout for one dead segment --
+	# the storey above shows escalating breakage instead.
+	if facade != null:
+		_assert(not facade.collapse_columns.has(breach_x), "one segment must never black out the whole column")
+		_assert(facade.upper_damage_level(breach_x) >= 1, "the storey above an isolated breach must show breakage")
 	first.free()
 	await get_tree().process_frame
 	var second := ProceduralBuilding.new()
@@ -1255,7 +1260,45 @@ func _test_breach_syncs_roof_and_facade() -> void:
 	_assert(not rebuilt_roof.get_used_cells().has(expected_cell), "persisted destruction must keep the roof hole open after rebuild")
 	var rebuilt_facade := second.projected_facade()
 	_assert(rebuilt_facade != null and rebuilt_facade.ground_breaches.has(breach_x), "persisted breaches must re-notch the rebuilt facade")
+	# Cascade contract: an ADJACENT second segment structurally fails the
+	# floors above -- both columns collapse (and it derives from persisted
+	# wall state, so it survives rebuild).
+	var south_comps: Array[Dictionary] = []
+	for child in second.get_children():
+		if child is StaticBody2D:
+			var candidate := child.get_node_or_null("EnvironmentDamageComponent") as EnvironmentDamageComponent
+			if candidate != null and "/wall_" in String(candidate.object_id):
+				var body := child as Node2D
+				if body.position.y >= half_extent.y - PixelAtlasMap.TILE_SIZE:
+					south_comps.append({"x": body.position.x, "comp": candidate})
+	south_comps.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return a["x"] < b["x"])
+	var neighbor: Dictionary = {}
+	for entry_variant in south_comps:
+		var entry: Dictionary = entry_variant
+		if absf(float(entry["x"]) - breach_x) <= PixelAtlasMap.TILE_SIZE * 1.5 and not is_equal_approx(float(entry["x"]), breach_x):
+			neighbor = entry
+			break
+	_assert(not neighbor.is_empty(), "fixture needs an adjacent south segment for the cascade")
+	if not neighbor.is_empty():
+		var neighbor_comp: EnvironmentDamageComponent = neighbor["comp"]
+		var neighbor_x := float(neighbor["x"])
+		neighbor_comp.apply_damage(9999.0, EnvironmentDamage.DamageClass.EXPLOSIVE, null)
+		await get_tree().process_frame
+		await get_tree().physics_frame
+		var cascaded_facade := second.projected_facade()
+		_assert(cascaded_facade != null and cascaded_facade.collapse_columns.has(breach_x) and cascaded_facade.collapse_columns.has(neighbor_x),
+			"two adjacent dead segments must structurally collapse the columns above them")
 	second.free()
+	await get_tree().process_frame
+	var fourth := ProceduralBuilding.new()
+	fourth.configure(city["buildings"][0])
+	add_child(fourth)
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	var persisted_facade := fourth.projected_facade()
+	_assert(persisted_facade != null and persisted_facade.collapse_columns.size() >= 2,
+		"the structural cascade must persist through reconstruction")
+	fourth.free()
 
 	# Interior partitions collapse a localized ceiling patch instead.
 	var third := ProceduralBuilding.new()
