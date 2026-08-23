@@ -4,6 +4,8 @@
 [ext_resource type="Script" path="res://scripts/core/health_component.gd" id="2"]
 [ext_resource type="Script" path="res://scripts/combat/weapon.gd" id="3"]
 [ext_resource type="Resource" path="res://resources/weapons/smg.tres" id="4"]
+[ext_resource type="Resource" path="res://resources/weapons/shotgun.tres" id="16"]
+[ext_resource type="Resource" path="res://resources/weapons/rifle.tres" id="17"]
 [ext_resource type="Script" path="res://scripts/visuals/actor_visual.gd" id="5"]
 [ext_resource type="Texture2D" path="res://assets/pixel/actors/shadow.png" id="6"]
 [ext_resource type="Texture2D" path="res://assets/pixel/effects/muzzle_flash.png" id="7"]
@@ -53,6 +55,30 @@ data = ExtResource("4")
 position = Vector2(24, 0)
 
 [node name="MuzzleFlash" type="Sprite2D" parent="WeaponPivot/Weapon/Muzzle"]
+visible = false
+texture = ExtResource("7")
+
+[node name="Shotgun" type="Node2D" parent="WeaponPivot"]
+script = ExtResource("3")
+data = ExtResource("16")
+equipped = false
+
+[node name="Muzzle" type="Marker2D" parent="WeaponPivot/Shotgun"]
+position = Vector2(22, 0)
+
+[node name="MuzzleFlash" type="Sprite2D" parent="WeaponPivot/Shotgun/Muzzle"]
+visible = false
+texture = ExtResource("7")
+
+[node name="Rifle" type="Node2D" parent="WeaponPivot"]
+script = ExtResource("3")
+data = ExtResource("17")
+equipped = false
+
+[node name="Muzzle" type="Marker2D" parent="WeaponPivot/Rifle"]
+position = Vector2(24, 0)
+
+[node name="MuzzleFlash" type="Sprite2D" parent="WeaponPivot/Rifle/Muzzle"]
 visible = false
 texture = ExtResource("7")
 

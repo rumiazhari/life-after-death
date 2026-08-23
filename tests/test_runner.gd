@@ -105,6 +105,19 @@ func _run_all() -> void:
 	await _run_test("zombie_death_leaves_a_physical_corpse", _test_zombie_death_leaves_a_physical_corpse)
 	await _run_test("explosion_pushes_world_with_radial_falloff", _test_explosion_pushes_world_with_radial_falloff)
 	await _run_test("physics_debris_and_corpses_are_capped", _test_physics_debris_and_corpses_are_capped)
+	await _run_test("furniture_refreezes_and_reactivates", _test_furniture_refreezes_and_reactivates)
+	await _run_test("contact_shoving_moves_light_not_heavy", _test_contact_shoving_moves_light_not_heavy)
+	await _run_test("moved_furniture_transform_persists", _test_moved_furniture_transform_persists)
+	await _run_test("sleeping_corpse_thrown_by_explosion", _test_sleeping_corpse_thrown_by_explosion)
+	await _run_test("corpse_lifetime_cleanup_works", _test_corpse_lifetime_cleanup_works)
+	await _run_test("partial_wall_damage_is_progressive", _test_partial_wall_damage_is_progressive)
+	await _run_test("wall_breach_updates_collision_and_navigation", _test_wall_breach_updates_collision_and_navigation)
+	await _run_test("furniture_partial_damage_before_failure", _test_furniture_partial_damage_before_failure)
+	await _run_test("zombie_anatomy_governs_death_and_cripples", _test_zombie_anatomy_governs_death_and_cripples)
+	await _run_test("severed_limbs_get_physics_and_gore_caps", _test_severed_limbs_get_physics_and_gore_caps)
+	await _run_test("weapons_are_data_driven_with_sprites", _test_weapons_are_data_driven_with_sprites)
+	await _run_test("infinite_player_ammo_debug_flag", _test_infinite_player_ammo_debug_flag)
+	await _run_test("base_functions_use_valid_interior_spots", _test_base_functions_use_valid_interior_spots)
 	await _run_test("streamed_prague_quarters_are_dense_and_open_spaces_are_rare", _test_streamed_prague_quarters_are_dense_and_open_spaces_are_rare)
 	await _run_test("procedural_seed_corpus_is_deterministic_valid_and_bounded", _test_procedural_seed_corpus_is_deterministic_valid_and_bounded)
 	await _run_test("procedural_generation_retries_and_fails_explicitly", _test_procedural_generation_retries_and_fails_explicitly)
@@ -1091,6 +1104,381 @@ func _test_physics_debris_and_corpses_are_capped() -> void:
 	WorldState.reset()
 	await get_tree().process_frame
 
+## --- partial destruction ---
+
+func _test_partial_wall_damage_is_progressive() -> void:
+	WorldState.reset()
+	var fixture := Node2D.new()
+	add_child(fixture)
+	BuildingShellBuilder._maybe_wall(fixture, Vector2(79000, 79000), load("res://assets/pixel/props/wall_concrete.png"), [])
+	var wall := fixture.get_child(fixture.get_child_count() - 1) as StaticBody2D
+	var comp := wall.get_node("EnvironmentDamageComponent") as EnvironmentDamageComponent
+	var source := Node2D.new()
+	add_child(source)
+	source.global_position = wall.global_position + Vector2(-48.0, 0.0)
+	# One light chip: the wall must survive with most cells intact.
+	comp.apply_damage(13.0, 1, source)
+	var fraction_after_chip: float = comp.alive_fraction()
+	_assert(fraction_after_chip > 0.8 and fraction_after_chip < 1.0,
+		"a small hit must remove only a corner of the wall (fraction=%.2f)" % fraction_after_chip)
+	var cells_before: int = comp.alive_cells().filter(func(alive: bool) -> bool: return alive).size()
+	for _i in range(3):
+		comp.apply_damage(12.0, 1, source)
+	var cells_after: int = comp.alive_cells().filter(func(alive: bool) -> bool: return alive).size()
+	_assert(cells_after < cells_before, "repeated damage must progressively enlarge the breach (%d -> %d)" % [cells_before, cells_after])
+	_assert(comp.durability() < comp.max_durability and not WorldState.get_prop_state_flag(comp.object_id, &"destroyed", false),
+		"partial damage must persist without deleting the whole wall")
+	source.queue_free()
+	fixture.queue_free()
+	WorldState.reset()
+	await get_tree().process_frame
+
+func _test_wall_breach_updates_collision_and_navigation() -> void:
+	WorldState.reset()
+	UrbanNavigationService.reset()
+	var fixture := Node2D.new()
+	add_child(fixture)
+	BuildingShellBuilder._maybe_wall(fixture, Vector2(79400, 79400), load("res://assets/pixel/props/wall_concrete.png"), [])
+	var wall := fixture.get_child(fixture.get_child_count() - 1) as StaticBody2D
+	var comp := wall.get_node("EnvironmentDamageComponent") as EnvironmentDamageComponent
+	var source := Node2D.new()
+	add_child(source)
+	source.global_position = wall.global_position + Vector2(-48.0, 0.0)
+	var shapes_before := wall.get_children().filter(func(child: Node) -> bool: return child is CollisionShape2D).size()
+	comp.apply_damage(13.0, 1, source)
+	await get_tree().physics_frame
+	var corner_shapes := wall.get_children().filter(func(child: Node) -> bool: return child is CollisionShape2D).size()
+	_assert(corner_shapes >= shapes_before, "chipping must rebuild collision from surviving microcells")
+	comp.apply_damage(9999.0, 2, source)
+	await get_tree().process_frame
+	await get_tree().physics_frame
+	var wall_destroyed: bool = not is_instance_valid(comp) \
+		or WorldState.get_prop_state_flag(comp.object_id, &"destroyed", false)
+	_assert(wall_destroyed, "structural failure must still destroy and free navigation")
+	source.queue_free()
+	fixture.queue_free()
+	PhysicsDebris.active_count = 0
+	WorldState.reset()
+	await get_tree().process_frame
+
+func _test_furniture_partial_damage_before_failure() -> void:
+	WorldState.reset()
+	var city := ProceduralCityGenerator.new().generate_streamed_chunk(20260821, Vector2i.ZERO)
+	var spec: Dictionary = {}
+	for building_variant in city["buildings"]:
+		for furniture_variant in (building_variant as Dictionary)["interior"]["furniture"]:
+			var candidate: Dictionary = furniture_variant
+			if candidate["kind"] in [&"dining_table", &"bookshelf", &"wardrobe"] and String(candidate["mode"]) == "physical":
+				spec = candidate
+				break
+		if not spec.is_empty():
+			break
+	_assert(not spec.is_empty(), "fixture needs chunky physical furniture")
+	var building := await _instantiate_generated_building_for_piece(String(spec["id"]))
+	var piece := _find_built_piece(building, String(spec["id"]))
+	_assert(piece != null, "the furniture piece must exist at runtime")
+	var damage := _find_damage_component_deep(piece)
+	_assert(damage != null, "chunky furniture must carry its own damage component")
+	if damage != null:
+		damage.apply_damage(14.0, 1, null) # one heavy round: partial quarter damage
+		_assert(not WorldState.get_prop_state_flag(damage.object_id, &"destroyed", false),
+			"a single heavy round must partially damage furniture without collapsing it")
+		_assert(is_instance_valid(piece), "partially damaged furniture must stay in the world")
+	building.queue_free()
+	WorldState.reset()
+	await get_tree().process_frame
+
+func _find_damage_component_deep(root: Node) -> EnvironmentDamageComponent:
+	if root.name == "EnvironmentDamageComponent":
+		return root as EnvironmentDamageComponent
+	for child in root.get_children():
+		var found := _find_damage_component_deep(child)
+		if found != null:
+			return found
+	return null
+
+## --- zombie anatomy / gore ---
+
+func _test_zombie_anatomy_governs_death_and_cripples() -> void:
+	WorldState.reset()
+	var anatomy := ZombieAnatomy.new()
+	anatomy.apply_zone_damage(&"torso", 200.0)
+	anatomy.apply_zone_damage(&"arm_l", 100.0)
+	anatomy.apply_zone_damage(&"arm_r", 100.0)
+	anatomy.apply_zone_damage(&"leg_l", 100.0)
+	anatomy.apply_zone_damage(&"leg_r", 100.0)
+	_assert(anatomy.head_alive(), "a limbless, gut-shot zombie must remain alive while the head lives")
+	_assert(anatomy.movement_factor() < 0.2, "losing both legs must reduce the zombie to a crawl")
+	_assert(anatomy.attack_factor() == 0.0, "losing both arms must remove normal arm attacks")
+	var head_result := anatomy.apply_zone_damage(&"head", 999.0)
+	_assert(head_result["head_destroyed"], "head destruction must be reported as fatal")
+	_assert(not anatomy.head_alive(), "head integrity zero must end the zombie")
+
+	var zombie := (load("res://scenes/actors/Zombie.tscn") as PackedScene).instantiate() as Zombie
+	add_child(zombie)
+	zombie.global_position = Vector2(79600, 79600)
+	await get_tree().physics_frame
+	var shooter := Node2D.new()
+	add_child(shooter)
+	shooter.global_position = zombie.global_position + Vector2(-30.0, 0.0)
+	zombie.take_damage(60.0, shooter, zombie.global_position + Vector2(18.0, 0.0))
+	_assert(zombie.anatomy.head_alive(), "body shots must leave the head alive")
+	_assert(not zombie.health_component.is_dead, "a body-shot zombie must NOT die while its head lives")
+	zombie.take_damage(999.0, shooter, zombie.global_position)
+	await get_tree().process_frame
+	_assert(not is_instance_valid(zombie) or zombie.health_component.is_dead, "destroying the head must kill the zombie")
+	_assert(not get_tree().get_nodes_in_group("corpses").is_empty(), "the headshot must leave a physical corpse behind")
+	for node in get_tree().get_nodes_in_group("corpses"):
+		node.free()
+	Corpse.active_count = 0
+	shooter.queue_free()
+	if is_instance_valid(zombie):
+		zombie.free()
+	WorldState.reset()
+	GoreSystem._blood_texture = null
+	await get_tree().process_frame
+
+func _test_severed_limbs_get_physics_and_gore_caps() -> void:
+	WorldState.reset()
+	var fixture := Node2D.new()
+	add_child(fixture)
+	var anatomy := ZombieAnatomy.new()
+	var result := anatomy.apply_zone_damage(&"arm_l", 999.0)
+	_assert(result["severed"], "reaching the sever threshold must detach the arm")
+	_assert(anatomy.attack_factor() == 0.5, "one missing arm must halve attack capability")
+	GoreSystem.blood_splat(fixture, Vector2.ZERO, Vector2.RIGHT, 40.0)
+	GoreSystem.blood_splat(fixture, Vector2(10, 0), Vector2.RIGHT, 80.0)
+	var decals := fixture.get_children().filter(func(node: Node) -> bool: return node.is_in_group("blood_decals"))
+	_assert(decals.size() >= 2, "severing must produce directional blood decals")
+	for i in range(GoreSystem.MAX_DECALS + 10):
+		GoreSystem.blood_splat(fixture, Vector2(i * 3.0, 0), Vector2.RIGHT, 20.0)
+	var live_decals := fixture.get_children().filter(func(node: Node) -> bool: return node.is_in_group("blood_decals") and not node.is_queued_for_deletion())
+	_assert(live_decals.size() <= GoreSystem.MAX_DECALS, "blood decals must respect their global cap (%d)" % live_decals.size())
+	for decal in live_decals:
+		decal.free()
+	GoreSystem._blood_texture = null
+	fixture.queue_free()
+	WorldState.reset()
+	await get_tree().process_frame
+
+## --- weapons ---
+
+func _test_weapons_are_data_driven_with_sprites() -> void:
+	var pistol: WeaponData = load("res://resources/weapons/pistol.tres")
+	var shotgun: WeaponData = load("res://resources/weapons/shotgun.tres")
+	var rifle: WeaponData = load("res://resources/weapons/rifle.tres")
+	for weapon in [pistol, shotgun, rifle]:
+		_assert(weapon.id != &"" and weapon.sprite_path != "", "%s must be fully data-driven (id+sprite)" % weapon.weapon_name)
+		_assert(load(weapon.sprite_path) != null, "%s sprite asset must exist" % weapon.weapon_name)
+	_assert(shotgun.pellet_count >= 5, "the shotgun definition must fire multiple pellets")
+	_assert(rifle.penetration >= 1, "the rifle definition must pierce at least one body")
+	# Sprite orientation contract: barrel points +X so pivot rotation aims it.
+	var pistol_texture: Texture2D = load(pistol.sprite_path)
+	_assert(pistol_texture.get_width() > pistol_texture.get_height(), "top-down weapon sprites must be drawn along +X")
+
+func _test_infinite_player_ammo_debug_flag() -> void:
+	WorldState.reset()
+	var debug_settings: Node = get_node_or_null("/root/DebugSettings")
+	_assert(debug_settings != null, "DebugSettings autoload must exist")
+	var previous: bool = debug_settings.get("infinite_player_ammo")
+	debug_settings.set("infinite_player_ammo", true)
+	var player: Player = PLAYER_SCENE.instantiate()
+	add_child(player)
+	await get_tree().process_frame
+	player.weapon.ammo_in_magazine = 1
+	player.weapon.reserve_ammo = 0
+	_assert(player.weapon.try_fire(Vector2.RIGHT), "firing with an empty magazine must auto-reload into infinite reserve")
+	player.weapon._reload_remaining = 0.001
+	await get_tree().process_frame
+	await get_tree().process_frame
+	_assert(not player.weapon.is_reloading, "auto reload must complete")
+	_assert(player.weapon.ammo_in_magazine == player.weapon.data.magazine_size - 1 or player.weapon.reserve_ammo > 0,
+		"infinite reserve must keep the player firing")
+	# Flag OFF: consumption resumes.
+	debug_settings.set("infinite_player_ammo", false)
+	player.weapon.ammo_in_magazine = 0
+	player.weapon.reserve_ammo = 0
+	player.weapon.is_reloading = false
+	_assert(not player.weapon.try_reload(), "with the flag disabled an empty reserve must refuse to reload")
+	debug_settings.set("infinite_player_ammo", previous)
+	player.queue_free()
+	WorldState.reset()
+	await get_tree().process_frame
+
+## --- base functional objects ---
+
+func _test_base_functions_use_valid_interior_spots() -> void:
+	WorldState.reset()
+	var city := ProceduralCityGenerator.new().generate_streamed_chunk(20260821, Vector2i.ZERO)
+	var claimed := SurvivorBaseService.new().claim_best_base(city, 20260821)
+	_assert(claimed != null, "fixture needs a claimed base")
+	var building_spec: Dictionary = {}
+	for building_variant in city["buildings"]:
+		var candidate: Dictionary = building_variant
+		if candidate["id"] == claimed.building_id:
+			building_spec = candidate
+			break
+	var origin: Vector2 = building_spec["position"]
+	# Every occupied interior footprint (furniture + reserves), world space.
+	var blocked: Array[Rect2] = []
+	for furniture_variant in building_spec["interior"]["furniture"]:
+		var rect: Rect2 = furniture_variant["clearance_rect"]
+		rect.position += origin
+		blocked.append(rect)
+	for reserve_variant in building_spec["interior"]["clearance_rects"]:
+		var reserve_rect: Rect2 = reserve_variant["rect"]
+		reserve_rect.position += origin
+		blocked.append(reserve_rect)
+	var settlement := Settlement.new()
+	add_child(settlement)
+	await get_tree().process_frame
+	settlement.claim_building_base(city, 20260821)
+	await get_tree().process_frame
+	var base_interior := settlement.get_node_or_null("BaseInterior")
+	_assert(base_interior != null, "a claimed base must build its BaseInterior layer")
+	if base_interior != null:
+		var containers := base_interior.get_children().filter(func(node: Node) -> bool: return node is StorageContainer)
+		_assert(containers.size() == 4, "base storage must provide all four roles")
+		for container_variant in containers:
+			var container := container_variant as Node2D
+			var footprint := Rect2(container.global_position - Vector2(16, 16), Vector2(32, 32))
+			for blocked_rect in blocked:
+				_assert(not footprint.intersects(blocked_rect),
+					"%s must not overlap generated furniture or aisles (spot %s)" % [String(container.name), container.global_position])
+		var sleep_spots := base_interior.get_children().filter(func(node: Node) -> bool: return node is SleepSpot)
+		_assert(sleep_spots.size() >= 4, "sleep spots must exist inside the base")
+	settlement.abandon_building_base()
+	settlement.free()
+	WorldState.reset()
+	await get_tree().process_frame
+
+## --- session: reactive physics lifecycle, gore anatomy, weapons ---
+
+func _test_furniture_refreezes_and_reactivates() -> void:
+	var parts := _make_reactive_fixture(&"chair", PhysicsReactionComponent.MassClass.LIGHT, Vector2(76000, 76000))
+	var reaction := parts[2] as PhysicsReactionComponent
+	_assert(reaction.apply_impulse(Vector2(90.0, 0.0)), "first hit must convert the chair")
+	await get_tree().physics_frame
+	reaction.debug_force_refreeze()
+	_assert(reaction.is_frozen(), "a settled piece must freeze to zero physics cost")
+	# Second hit on the SAME frozen body must thaw and move it again.
+	_assert(reaction.apply_impulse(Vector2(-140.0, 40.0)), "a refrozen piece must reactivate")
+	_assert(not reaction.is_frozen(), "reactivation must unfreeze the body")
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	var body := (parts[1] as Node2D).get_node("DynamicBody") as RigidBody2D
+	_assert(body != null and body.linear_velocity.length() > 0.0, "second-impact motion must be real physics, not a state flag")
+	parts[0].queue_free()
+	await get_tree().process_frame
+
+func _test_contact_shoving_moves_light_not_heavy() -> void:
+	var light_parts := _make_reactive_fixture(&"chair", PhysicsReactionComponent.MassClass.LIGHT, Vector2(77000, 77000))
+	var heavy_parts := _make_reactive_fixture(&"wardrobe", PhysicsReactionComponent.MassClass.HEAVY, Vector2(77200, 77000))
+	var light_reaction := light_parts[2] as PhysicsReactionComponent
+	var heavy_reaction := heavy_parts[2] as PhysicsReactionComponent
+	# A walking zombie's contact pressure (~19 impulse per bump).
+	for _bump in range(4):
+		light_reaction.apply_contact_impulse(Vector2(20.0, 0.0))
+	_assert(light_reaction.is_dynamic(), "repeated light contacts must accumulate into real furniture motion")
+	heavy_reaction.apply_contact_impulse(Vector2(30.0, 0.0))
+	heavy_reaction.apply_contact_impulse(Vector2(-25.0, 5.0))
+	_assert(not heavy_reaction.is_dynamic(), "ordinary actor contact must never shove heavy furniture")
+	light_parts[0].queue_free()
+	heavy_parts[0].queue_free()
+	await get_tree().process_frame
+
+func _test_moved_furniture_transform_persists() -> void:
+	WorldState.reset()
+	var city := ProceduralCityGenerator.new().generate_streamed_chunk(20260821, Vector2i.ZERO)
+	var spec: Dictionary = {}
+	for building_variant in city["buildings"]:
+		for furniture_variant in (building_variant as Dictionary)["interior"]["furniture"]:
+			var candidate: Dictionary = furniture_variant
+			if String(candidate["mode"]) == "physical" and candidate["kind"] in [&"chair", &"nightstand"]:
+				spec = candidate
+				break
+		if not spec.is_empty():
+			break
+	_assert(not spec.is_empty(), "fixture needs an ordinary physical furniture piece")
+	var first := await _instantiate_generated_building_for_piece(String(spec["id"]))
+	var built_root := _find_built_piece(first, String(spec["id"]))
+	_assert(built_root != null, "the piece must exist at runtime")
+	built_root.position += Vector2(33.0, -17.0)
+	built_root.rotation = 0.4
+	var reaction := built_root.get_node_or_null("PhysicsReactionComponent") as PhysicsReactionComponent
+	_assert(reaction != null, "physical furniture must carry a reactive-physics component")
+	# Persist exactly what the component saves on settle.
+	WorldState.set_prop_state_flag(spec["id"], &"moved_offset", built_root.position)
+	WorldState.set_prop_state_flag(spec["id"], &"moved_rotation", built_root.rotation)
+	var moved_position: Vector2 = built_root.position
+	first.free()
+	await get_tree().process_frame
+	var second := await _instantiate_generated_building_for_piece(String(spec["id"]))
+	var rebuilt := _find_built_piece(second, String(spec["id"]))
+	_assert(rebuilt != null, "rebuilt building must contain the same furniture piece")
+	if rebuilt != null:
+		_assert(rebuilt.position.distance_to(moved_position) < 2.0,
+			"moved furniture must restore its MOVED position after reconstruction (%s vs %s)" % [rebuilt.position, moved_position])
+	second.free()
+	WorldState.reset()
+	await get_tree().process_frame
+
+func _instantiate_generated_building_for_piece(piece_id: String) -> ProceduralBuilding:
+	var city := ProceduralCityGenerator.new().generate_streamed_chunk(20260821, Vector2i.ZERO)
+	for building_variant in city["buildings"]:
+		var building: Dictionary = building_variant
+		for furniture_variant in building["interior"]["furniture"]:
+			var furniture: Dictionary = furniture_variant
+			if String(furniture["id"]) == piece_id:
+				var node := ProceduralBuilding.new()
+				node.configure(building)
+				add_child(node)
+				return node
+	return null
+
+func _find_built_piece(root: Node, piece_id: String) -> Node2D:
+	var target_name := String(piece_id).get_file()
+	if String(root.name) == target_name and root is Node2D:
+		return root
+	for child in root.get_children():
+		var found := _find_built_piece(child, piece_id)
+		if found != null:
+			return found
+	return null
+
+func _test_sleeping_corpse_thrown_by_explosion() -> void:
+	WorldState.reset()
+	var fixture := Node2D.new()
+	add_child(fixture)
+	var corpse := Corpse.spawn(fixture, null, Vector2(78000, 78000), Vector2.ZERO)
+	corpse.freeze = true # simulate a long-settled sleeping corpse
+	var blaster := Node2D.new()
+	add_child(blaster)
+	blaster.global_position = corpse.global_position + Vector2(-60.0, 0.0)
+	await get_tree().physics_frame # let the corpse's shapes enter the broadphase
+	EnvironmentDamage.apply_explosion(blaster, corpse.global_position, 120.0, 4.0, 8.0, EnvironmentDamage.DamageClass.EXPLOSIVE)
+	_assert(not corpse.freeze, "a blast must wake/thaw a sleeping corpse before throwing it")
+	await get_tree().physics_frame
+	_assert(corpse.linear_velocity.length() > 2.0, "the woken corpse must actually fly")
+	blaster.queue_free()
+	corpse.free()
+	Corpse.active_count = maxi(Corpse.active_count - 1, 0)
+	WorldState.reset()
+	await get_tree().process_frame
+
+func _test_corpse_lifetime_cleanup_works() -> void:
+	WorldState.reset()
+	var fixture := Node2D.new()
+	add_child(fixture)
+	var corpse := Corpse.spawn(fixture, null, Vector2(78200, 78200), Vector2.ZERO)
+	corpse._age = Corpse.LIFETIME + 1.0
+	corpse._physics_process(0.016)
+	_assert(corpse.is_queued_for_deletion(), "corpse lifetime cleanup must free even sleeping corpses")
+	Corpse.active_count = maxi(Corpse.active_count - 1, 0)
+	fixture.queue_free()
+	WorldState.reset()
+	await get_tree().process_frame
+
 func _test_streamed_prague_quarters_are_dense_and_open_spaces_are_rare() -> void:
 	var generator := ProceduralCityGenerator.new()
 	var plaza_chunk_count := 0
@@ -1406,7 +1794,9 @@ func _test_generated_building_runtime_ids_and_state_persist() -> void:
 	var restored_loot := _find_loot_by_id(second, loot_id)
 	_assert(restored_loot != null and restored_loot.get_inventory().is_empty(), "generated loot depletion must resolve through its stable ID after reconstruction")
 	var wall_damage := _find_explosive_wall_damage(second)
-	_assert(wall_damage != null, "generated shell must contain explosive-rated destructible walls")
+	_assert(wall_damage != null, "generated shell must contain heavy-rated destructible walls")
+	if wall_damage == null:
+		return
 	var destroyed_wall_id := wall_damage.object_id
 	wall_damage.apply_damage(999.0, EnvironmentDamage.DamageClass.EXPLOSIVE)
 	await get_tree().process_frame
@@ -1521,7 +1911,9 @@ func _find_loot_by_id(root: Node, id: StringName) -> LootContainerComponent:
 func _find_explosive_wall_damage(root: Node) -> EnvironmentDamageComponent:
 	if root is EnvironmentDamageComponent:
 		var damage := root as EnvironmentDamageComponent
-		if damage.minimum_damage_class == EnvironmentDamage.DamageClass.EXPLOSIVE and "/wall_" in String(damage.object_id):
+		# Walls accept heavy-and-above structural damage since the microcell
+		# breach model (small arms still bounce off).
+		if damage.minimum_damage_class >= EnvironmentDamage.DamageClass.HEAVY and "/wall_" in String(damage.object_id):
 			return damage
 	for child in root.get_children():
 		var found := _find_explosive_wall_damage(child)
@@ -2020,19 +2412,21 @@ func _test_player_weapon_slots_preserve_independent_ammo() -> void:
 	var player: Player = PLAYER_SCENE.instantiate()
 	add_child(player)
 	await get_tree().process_frame
-	_assert(player.weapon_slots.size() == 2, "Player scene must expose the SMG and breaching charge as two real weapon slots")
+	_assert(player.weapon_slots.size() == 4, "Player scene must expose SMG, shotgun, rifle and breaching charge as four real weapon slots")
 	_assert(player.weapon.data.weapon_name == "SMG-9", "Player must start with the existing SMG equipped")
+	_assert(player.weapon_slots[1].data.weapon_name == "Pump Shotgun" and player.weapon_slots[2].data.weapon_name == "Assault Rifle",
+		"data-driven shotgun and rifle definitions must occupy their own slots")
 	player.weapon.ammo_in_magazine = 17
 	player.weapon.reserve_ammo = 91
-	_assert(player.equip_weapon_slot(1), "slot 2 must be selectable")
-	_assert(player.weapon.data.weapon_name == "Breaching Charge", "slot 2 must equip the explosive resource")
+	_assert(player.equip_weapon_slot(3), "breaching charge slot must be selectable")
+	_assert(player.weapon.data.weapon_name == "Breaching Charge", "slot 4 must equip the explosive resource")
 	_assert(player.weapon.data.environment_damage_class == EnvironmentDamage.DamageClass.EXPLOSIVE, "breaching charge must retain explosive structural classification")
 	player.weapon.ammo_in_magazine = 0
 	player.weapon.reserve_ammo = 2
-	_assert(player.equip_weapon_slot(0), "slot 1 must be selectable after using slot 2")
+	_assert(player.equip_weapon_slot(0), "slot 1 must be selectable after using another slot")
 	_assert(player.weapon.ammo_in_magazine == 17 and player.weapon.reserve_ammo == 91, "switching back must preserve the SMG magazine and reserve")
-	_assert(player.equip_weapon_slot(1), "slot 2 must remain selectable repeatedly")
-	_assert(player.weapon.ammo_in_magazine == 0 and player.weapon.reserve_ammo == 2, "the breaching charge must preserve its own ammunition independently")
+	_assert(player.equip_weapon_slot(3), "the charge slot must remain selectable repeatedly")
+	_assert(player.weapon.ammo_in_magazine == 0 and player.weapon.reserve_ammo == 2, "each weapon must preserve its own ammunition independently")
 	_assert(player.weapon.equipped and not player.weapon_slots[0].equipped, "exactly the selected Weapon node must be active")
 	var survivor: Survivor = SURVIVOR_SCENE.instantiate()
 	add_child(survivor)
@@ -2062,10 +2456,28 @@ func _test_explosion_separates_actor_and_structural_damage() -> void:
 	BuildingShellBuilder.build_perimeter_walls(fixture, Vector2(32, 32), load("res://assets/pixel/props/wall_concrete.png"))
 	await get_tree().physics_frame
 	var wall_count_before := fixture.get_child_count()
+	var walls: Array = fixture.get_children().filter(func(child: Node) -> bool: return child is StaticBody2D)
 	EnvironmentDamage.apply_explosion(source, origin, 128.0, 180.0, 10.0, EnvironmentDamage.DamageClass.EXPLOSIVE)
-	_assert(is_equal_approx(zombie.health_component.current_health, zombie.health_component.max_health - 10.0), "blast actors must receive actor damage, not the larger structural value")
+	# Anatomy contract: non-head blast damage wounds but can never kill.
+	_assert(not zombie.health_component.is_dead and zombie.health_component.current_health < zombie.health_component.max_health,
+		"blast actors must be wounded by actor damage without a headshot kill")
 	await get_tree().process_frame
-	_assert(fixture.get_child_count() < wall_count_before, "the same blast must destroy wall bodies using its structural damage")
+	# Structural contract: at least the nearest wall segment must suffer --
+	# either destroyed outright or partially breached through its microcells.
+	var structurally_damaged := 0
+	for wall_variant in walls:
+		if not is_instance_valid(wall_variant):
+			structurally_damaged += 1
+			continue
+		var component := (wall_variant as StaticBody2D).get_node_or_null("EnvironmentDamageComponent") as EnvironmentDamageComponent
+		if component == null:
+			continue
+		if WorldState.get_prop_state_flag(component.object_id, &"destroyed", false) \
+				or component.durability() < component.max_durability \
+				or component.alive_fraction() < 1.0:
+			structurally_damaged += 1
+	_assert(structurally_damaged > 0 or fixture.get_child_count() < wall_count_before,
+		"the same blast must structurally damage wall bodies using its structural value")
 	zombie.queue_free()
 	fixture.queue_free()
 	source.queue_free()

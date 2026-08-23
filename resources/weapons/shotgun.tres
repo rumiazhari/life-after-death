@@ -1,0 +1,29 @@
+[gd_resource type="Resource" script_class="WeaponData" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/combat/weapon_data.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+weapon_name = "Pump Shotgun"
+id = &"shotgun"
+weapon_type = 1
+sprite_path = "res://assets/pixel/weapons/weapon_shotgun.png"
+muzzle_offset = Vector2(20, 0)
+ammo_type = &"ammo_generic"
+damage = 11.0
+fire_rate = 1.1
+magazine_size = 6
+reload_duration = 2.2
+projectile_speed = 780
+projectile_lifetime = 0.9
+spread_degrees = 9
+automatic = false
+pellet_count = 6
+penetration = 0
+recoil = 24
+impulse = 6
+effective_range = 1000.0
+starting_reserve_ammo = 96
+environment_damage_class = 1
+environment_damage = 14.0
+explosion_radius = 0.0

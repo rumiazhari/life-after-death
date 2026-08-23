@@ -95,10 +95,15 @@ static func _maybe_wall(parent: Node2D, center: Vector2, wall_texture: Texture2D
 	var damage := EnvironmentDamageComponent.new()
 	damage.name = "EnvironmentDamageComponent"
 	damage.object_id = _derived_object_id(parent, center, &"wall")
-	damage.minimum_damage_class = EnvironmentDamage.DamageClass.EXPLOSIVE
+	# Walls resist small arms but shotguns/explosives progressively breach
+	# them through the 4x4 microcell grid; only structural failure removes
+	# the whole cell.
+	damage.minimum_damage_class = EnvironmentDamage.DamageClass.HEAVY
 	damage.max_durability = 120.0
 	damage.affected_size = Vector2(TS, TS)
 	damage.destroy_target = body
+	damage.sub_cells = 4
+	damage.fail_threshold = 0.35
 	# A breached wall cell breaks into a few physical chunks along the hit.
 	damage.debris_count = 3
 	damage.debris_texture = wall_texture
@@ -491,4 +496,5 @@ static func add_street_object(parent: Node2D, local_position: Vector2, spec: Dic
 			area.add_child(salvage)
 		root.add_child(area)
 	PhysicsReactionComponent.attach(root, PhysicsReactionComponent.mass_class_for_kind(kind))
+	PhysicsReactionComponent.restore_moved_transform(root, stable_id)
 	parent.add_child(root)

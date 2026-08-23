@@ -68,6 +68,8 @@ func _update_movement(delta: float) -> void:
 	velocity += _knockback
 	_knockback = _knockback.lerp(Vector2.ZERO, minf(9.0 * delta, 1.0))
 	move_and_slide()
+	# Players shove furniture harder than shambling zombies do.
+	PhysicsReactionComponent.contact_push(self, 0.55)
 
 func _update_firing() -> void:
 	if weapon == null or weapon.data == null:
@@ -124,7 +126,7 @@ func _emit_equipped_weapon() -> void:
 		weapon.data.magazine_size
 	)
 
-func take_damage(amount: float, source: Node = null) -> void:
+func take_damage(amount: float, source: Node = null, _hit_position: Vector2 = Vector2.INF) -> void:
 	if is_dead:
 		return
 	health_component.take_damage(amount, source)

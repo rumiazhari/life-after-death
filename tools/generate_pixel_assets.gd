@@ -645,6 +645,459 @@ func _generate_props() -> void:
 	_save(_draw_car(true), "res://assets/pixel/props/car_wreck.png")
 	_save(_draw_tree(), "res://assets/pixel/props/tree.png")
 	_save(_draw_planter(), "res://assets/pixel/props/planter.png")
+	# Expanded furniture vocabulary (variety pass): every sprite is a distinct
+	# silhouette, not a stretched copy of an existing one.
+	_save(_furniture_bed(false, false), "res://assets/pixel/props/furniture_bed_single.png")
+	_save(_furniture_bed(true, false), "res://assets/pixel/props/furniture_bed_double.png")
+	_save(_furniture_bed(false, true), "res://assets/pixel/props/furniture_mattress.png")
+	_save(_furniture_sofa(0), "res://assets/pixel/props/furniture_sofa_a.png")
+	_save(_furniture_sofa(1), "res://assets/pixel/props/furniture_sofa_b.png")
+	_save(_furniture_armchair(), "res://assets/pixel/props/furniture_armchair.png")
+	_save(_furniture_table_round(), "res://assets/pixel/props/furniture_table_round.png")
+	_save(_furniture_coffee_table(), "res://assets/pixel/props/furniture_coffee_table.png")
+	_save(_furniture_office_chair(), "res://assets/pixel/props/furniture_office_chair.png")
+	_save(_furniture_wardrobe(), "res://assets/pixel/props/furniture_wardrobe.png")
+	_save(_furniture_dresser(), "res://assets/pixel/props/furniture_dresser.png")
+	_save(_furniture_nightstand(), "res://assets/pixel/props/furniture_nightstand.png")
+	_save(_furniture_tv_stand(), "res://assets/pixel/props/furniture_tv_stand.png")
+	_save(_furniture_bookshelf(), "res://assets/pixel/props/furniture_bookshelf.png")
+	_save(_furniture_counter_corner(), "res://assets/pixel/props/furniture_counter_corner.png")
+	_save(_furniture_sink_counter(), "res://assets/pixel/props/furniture_sink_counter.png")
+	_save(_furniture_stove(), "res://assets/pixel/props/furniture_stove.png")
+	_save(_furniture_pantry_shelf(), "res://assets/pixel/props/furniture_pantry_shelf.png")
+	_save(_furniture_grocery_shelf(0), "res://assets/pixel/props/furniture_grocery_shelf_short.png")
+	_save(_furniture_grocery_shelf(1), "res://assets/pixel/props/furniture_grocery_shelf_long.png")
+	_save(_furniture_aisle_shelf(), "res://assets/pixel/props/furniture_aisle_shelf.png")
+	_save(_furniture_wall_shelving(), "res://assets/pixel/props/furniture_wall_shelving.png")
+	_save(_furniture_checkout(), "res://assets/pixel/props/furniture_checkout_counter.png")
+	_save(_furniture_display_rack(), "res://assets/pixel/props/furniture_display_rack.png")
+	_save(_furniture_fridge_display(), "res://assets/pixel/props/furniture_fridge_display.png")
+	_save(_furniture_freezer_chest(), "res://assets/pixel/props/furniture_freezer_chest.png")
+	_save(_furniture_booth(), "res://assets/pixel/props/furniture_booth.png")
+	_save(_furniture_bar_counter(), "res://assets/pixel/props/furniture_bar_counter.png")
+	_save(_furniture_trolley(false), "res://assets/pixel/props/furniture_bedside_trolley.png")
+	_save(_furniture_trolley(true), "res://assets/pixel/props/furniture_equipment_trolley.png")
+	_save(_furniture_medical_shelf(), "res://assets/pixel/props/furniture_medicine_shelf.png")
+	_save(_furniture_waiting_bench(), "res://assets/pixel/props/furniture_waiting_bench.png")
+	_save(_furniture_reception(), "res://assets/pixel/props/furniture_reception_desk.png")
+	_save(_furniture_tool_cabinet(), "res://assets/pixel/props/furniture_tool_cabinet.png")
+	_save(_furniture_pallet_rack(), "res://assets/pixel/props/furniture_pallet_rack.png")
+	_save(_furniture_locker(), "res://assets/pixel/props/furniture_locker.png")
+	_save(_furniture_barrel(), "res://assets/pixel/props/furniture_barrel.png")
+	_save(_furniture_machinery(), "res://assets/pixel/props/furniture_machinery.png")
+	# Top-down weapon sprites: distinct silhouettes at pixel-art scale.
+	_save(_weapon_sprite("pistol"), "res://assets/pixel/weapons/weapon_pistol.png")
+	_save(_weapon_sprite("shotgun"), "res://assets/pixel/weapons/weapon_shotgun.png")
+	_save(_weapon_sprite("rifle"), "res://assets/pixel/weapons/weapon_rifle.png")
+	_save(_weapon_sprite("smg"), "res://assets/pixel/weapons/weapon_smg.png")
+	_save(_shell_casing(), "res://assets/pixel/weapons/shell_casing.png")
+
+func _outline_soft(img: Image, rect: Rect2i, color: Color) -> void:
+	_outline_rect(img, rect, color)
+
+## Shared furniture helpers -------------------------------------------------
+
+func _wood_panel(img: Image, rect: Rect2i, base: Color, dark: Color) -> void:
+	img.fill_rect(rect, base)
+	img.fill_rect(Rect2i(rect.position.x, rect.position.y + rect.size.y - 3, rect.size.x, 3), dark)
+	_outline_rect(img, rect, PALETTE.outline)
+
+func _furniture_bed(double: bool, bare_mattress: bool) -> Image:
+	var width := 44 if double else 30
+	var img := _new_image(width, 62)
+	if bare_mattress:
+		img.fill_rect(Rect2i(2, 4, width - 4, 56), PALETTE.wall_plaster)
+		for y in range(8, 58, 10):
+			img.fill_rect(Rect2i(3, y, width - 6, 2), PALETTE.wall_plaster_dark)
+		_outline_rect(img, Rect2i(2, 4, width - 4, 56), PALETTE.outline)
+		return img
+	var frame := PALETTE.wood_dark
+	img.fill_rect(Rect2i(0, 0, width, 5), frame) # headboard
+	img.fill_rect(Rect2i(0, 57, width, 5), frame) # footboard
+	var sheet := Color8(206, 210, 216) if not double else Color8(222, 226, 224)
+	img.fill_rect(Rect2i(2, 5, width - 4, 52), sheet)
+	img.fill_rect(Rect2i(2, 5, width - 4, 12), Color8(238, 240, 240)) # pillow band
+	if double:
+		img.fill_rect(Rect2i(2, 36, width - 4, 6), PALETTE.roofA) # blanket band
+	else:
+		img.fill_rect(Rect2i(2, 42, width - 4, 5), PALETTE.line_yellow)
+	_outline_rect(img, Rect2i(0, 0, width, 62), PALETTE.outline)
+	return img
+
+func _furniture_sofa(variant: int) -> Image:
+	var img := _new_image(64, 28)
+	var body_color := Color8(122, 88, 70) if variant == 0 else Color8(84, 96, 118)
+	img.fill_rect(Rect2i(0, 2, 64, 24), body_color)
+	img.fill_rect(Rect2i(0, 2, 8, 24), body_color.lightened(0.15)) # left arm
+	img.fill_rect(Rect2i(56, 2, 8, 24), body_color.lightened(0.15)) # right arm
+	img.fill_rect(Rect2i(8, 2, 48, 9), body_color.darkened(0.25)) # backrest
+	for i in range(2):
+		img.fill_rect(Rect2i(12 + i * 22, 12, 18, 11), body_color.lightened(0.08)) # cushions
+		_outline_rect(img, Rect2i(12 + i * 22, 12, 18, 11), PALETTE.outline)
+	_outline_rect(img, Rect2i(0, 2, 64, 24), PALETTE.outline)
+	return img
+
+func _furniture_armchair() -> Image:
+	var img := _new_image(26, 26)
+	var body := Color8(110, 78, 60)
+	img.fill_rect(Rect2i(1, 3, 24, 22), body)
+	img.fill_rect(Rect2i(1, 3, 24, 8), body.darkened(0.3))
+	img.fill_rect(Rect2i(1, 3, 7, 22), body.lightened(0.15))
+	img.fill_rect(Rect2i(18, 3, 7, 22), body.lightened(0.15))
+	img.fill_rect(Rect2i(8, 11, 10, 12), body.lightened(0.05))
+	_outline_rect(img, Rect2i(1, 3, 24, 22), PALETTE.outline)
+	return img
+
+func _furniture_table_round() -> Image:
+	var img := _new_image(40, 40)
+	img.fill_rect(Rect2i(4, 4, 32, 32), PALETTE.wood)
+	img.fill_rect(Rect2i(4, 4, 32, 32).grow(-4), PALETTE.wood_dark)
+	img.fill_rect(Rect2i(8, 8, 24, 24), PALETTE.wood)
+	_outline_rect(img, Rect2i(4, 4, 32, 32), PALETTE.outline)
+	return img
+
+func _furniture_coffee_table() -> Image:
+	var img := _new_image(44, 22)
+	_wood_panel(img, Rect2i(1, 3, 42, 14), PALETTE.wood, PALETTE.wood_dark)
+	img.fill_rect(Rect2i(4, 17, 6, 4), PALETTE.wood_dark)
+	img.fill_rect(Rect2i(34, 17, 6, 4), PALETTE.wood_dark)
+	return img
+
+func _furniture_office_chair() -> Image:
+	var img := _new_image(20, 20)
+	img.fill_rect(Rect2i(3, 2, 14, 7), PALETTE.metal_dark) # backrest
+	img.fill_rect(Rect2i(4, 9, 12, 9), Color8(60, 60, 66)) # seat pad
+	img.fill_rect(Rect2i(9, 16, 2, 3), PALETTE.metal)
+	img.fill_rect(Rect2i(5, 17, 10, 2), PALETTE.metal) # star base hint
+	_outline_rect(img, Rect2i(4, 9, 12, 9), PALETTE.outline)
+	_outline_rect(img, Rect2i(3, 2, 14, 7), PALETTE.outline)
+	return img
+
+func _furniture_wardrobe() -> Image:
+	var img := _new_image(32, 46)
+	_wood_panel(img, Rect2i(1, 1, 30, 44), PALETTE.wood, PALETTE.wood_dark)
+	img.fill_rect(Rect2i(15, 4, 2, 38), PALETTE.wood_dark) # door split
+	for y in range(6, 40, 8):
+		img.set_pixel(13, y, PALETTE.metal)
+		img.set_pixel(19, y, PALETTE.metal)
+	return img
+
+func _furniture_dresser() -> Image:
+	var img := _new_image(36, 24)
+	_wood_panel(img, Rect2i(1, 2, 34, 20), PALETTE.wood, PALETTE.wood_dark)
+	for row in range(2):
+		img.fill_rect(Rect2i(3, 5 + row * 9, 30, 7), PALETTE.wood_dark)
+		img.fill_rect(Rect2i(16, 8 + row * 9, 4, 2), PALETTE.metal)
+		_outline_rect(img, Rect2i(3, 5 + row * 9, 30, 7), PALETTE.outline)
+	return img
+
+func _furniture_nightstand() -> Image:
+	var img := _new_image(18, 18)
+	_wood_panel(img, Rect2i(1, 2, 16, 14), PALETTE.wood, PALETTE.wood_dark)
+	img.fill_rect(Rect2i(3, 5, 12, 8), PALETTE.wood_dark)
+	img.fill_rect(Rect2i(8, 8, 2, 2), PALETTE.metal)
+	return img
+
+func _furniture_tv_stand() -> Image:
+	var img := _new_image(48, 18)
+	_wood_panel(img, Rect2i(1, 4, 46, 12), PALETTE.wood_dark, PALETTE.wood)
+	img.fill_rect(Rect2i(4, 7, 18, 6), Color8(24, 26, 30)) # dead TV
+	img.fill_rect(Rect2i(5, 8, 16, 4), Color8(40, 44, 52))
+	_outline_rect(img, Rect2i(4, 7, 18, 6), PALETTE.outline)
+	return img
+
+func _furniture_bookshelf() -> Image:
+	var img := _new_image(30, 40)
+	_wood_panel(img, Rect2i(1, 1, 28, 38), PALETTE.wood_dark, PALETTE.wood)
+	var book_colors := [PALETTE.roofA, PALETTE.roofB, PALETTE.line_yellow, PALETTE.grass_dark]
+	for shelf_row in range(3):
+		var y := 5 + shelf_row * 11
+		img.fill_rect(Rect2i(3, y + 8, 24, 2), PALETTE.wood)
+		var x := 3
+		while x < 25:
+			var w := 2 + (x + shelf_row) % 3
+			img.fill_rect(Rect2i(x, y, w, 8), book_colors[(x + shelf_row) % book_colors.size()])
+			x += w + 1
+	return img
+
+func _furniture_counter_corner() -> Image:
+	var img := _new_image(48, 48)
+	img.fill_rect(Rect2i(2, 2, 46, 46), PALETTE.floor_kitchen_a)
+	img.fill_rect(Rect2i(2, 2, 20, 20), PALETTE.floor_kitchen_b) # open corner cutout
+	img.fill_rect(Rect2i(22, 2, 26, 8), PALETTE.metal) # top run
+	img.fill_rect(Rect2i(2, 22, 8, 26), PALETTE.metal) # side run
+	_outline_rect(img, Rect2i(2, 2, 46, 46), PALETTE.outline)
+	_outline_rect(img, Rect2i(2, 2, 20, 20), PALETTE.outline)
+	return img
+
+func _furniture_sink_counter() -> Image:
+	var img := _new_image(48, 24)
+	img.fill_rect(Rect2i(1, 2, 46, 20), PALETTE.metal)
+	img.fill_rect(Rect2i(8, 6, 20, 12), PALETTE.water.darkened(0.35)) # basin
+	_outline_rect(img, Rect2i(8, 6, 20, 12), PALETTE.outline)
+	img.fill_rect(Rect2i(33, 9, 3, 6), PALETTE.metal_light if PALETTE.has("metal_light") else PALETTE.metal) # tap
+	_outline_rect(img, Rect2i(1, 2, 46, 20), PALETTE.outline)
+	return img
+
+func _furniture_stove() -> Image:
+	var img := _new_image(40, 26)
+	img.fill_rect(Rect2i(1, 2, 38, 22), PALETTE.metal_dark)
+	for burner in [Vector2i(6, 6), Vector2i(24, 6), Vector2i(6, 14), Vector2i(24, 14)]:
+		img.fill_rect(Rect2i(burner, Vector2i(10, 8)), PALETTE.outline)
+		img.fill_rect(Rect2i(burner + Vector2i(2, 2), Vector2i(6, 4)), PALETTE.crack)
+	_outline_rect(img, Rect2i(1, 2, 38, 22), PALETTE.outline)
+	return img
+
+func _furniture_pantry_shelf() -> Image:
+	var img := _new_image(26, 34)
+	_wood_panel(img, Rect2i(1, 1, 24, 32), PALETTE.wood, PALETTE.wood_dark)
+	for shelf_row in range(3):
+		var y := 4 + shelf_row * 10
+		img.fill_rect(Rect2i(3, y + 7, 20, 2), PALETTE.wood)
+		for j in range(3):
+			img.fill_rect(Rect2i(4 + j * 7, y, 5, 7), [PALETTE.food, PALETTE.line_yellow, PALETTE.grass][j])
+	return img
+
+func _furniture_grocery_shelf(long: bool) -> Image:
+	var width := 96 if long else 56
+	var img := _new_image(width, 22)
+	img.fill_rect(Rect2i(1, 2, width - 2, 18), PALETTE.metal_dark)
+	img.fill_rect(Rect2i(1, 2, width - 2, 3), PALETTE.metal)
+	for shelf_row in range(2):
+		var y := 6 + shelf_row * 7
+		img.fill_rect(Rect2i(2, y, width - 4, 6), PALETTE.metal)
+		var x := 3
+		while x < width - 5:
+			var w := 3 + (x / 4 + shelf_row) % 3
+			var colors := [PALETTE.food, PALETTE.line_yellow, PALETTE.roofB, PALETTE.grass]
+			img.fill_rect(Rect2i(x, y, w, 6), colors[(x / 4 + shelf_row) % colors.size()])
+			x += w + 1
+	_outline_rect(img, Rect2i(1, 2, width - 2, 18), PALETTE.outline)
+	return img
+
+func _furniture_aisle_shelf() -> Image:
+	var img := _new_image(84, 26)
+	# Double-sided: two back-to-back product rows with a metal spine.
+	img.fill_rect(Rect2i(39, 2, 6, 22), PALETTE.metal_dark)
+	for side in range(2):
+		var x0 := 2 if side == 0 else 45
+		img.fill_rect(Rect2i(x0, 3, 37, 20), PALETTE.metal)
+		for shelf_row in range(2):
+			var y := 6 + shelf_row * 8
+			var x := x0 + 2
+			while x < x0 + 34:
+				var w := 3 + (x + shelf_row) % 3
+				var colors := [PALETTE.food, PALETTE.line_yellow, PALETTE.roofA, PALETTE.water]
+				img.fill_rect(Rect2i(x, y, w, 6), colors[(x + shelf_row) % colors.size()])
+				x += w + 1
+	_outline_rect(img, Rect2i(1, 2, 82, 22), PALETTE.outline)
+	return img
+
+func _furniture_wall_shelving() -> Image:
+	var img := _new_image(72, 16)
+	for bracket in range(3):
+		img.fill_rect(Rect2i(4 + bracket * 26, 10, 6, 5), PALETTE.metal_dark)
+	img.fill_rect(Rect2i(0, 2, 72, 7), PALETTE.metal)
+	for x in range(4, 68, 9):
+		img.fill_rect(Rect2i(x, 0, 6, 3), PALETTE.wood) # items on the wall rack
+	_outline_rect(img, Rect2i(0, 2, 72, 7), PALETTE.outline)
+	return img
+
+func _furniture_checkout() -> Image:
+	var img := _new_image(56, 24)
+	img.fill_rect(Rect2i(1, 2, 54, 20), PALETTE.wood)
+	img.fill_rect(Rect2i(1, 2, 54, 5), PALETTE.wood_dark) # belt
+	img.fill_rect(Rect2i(40, 9, 12, 10), PALETTE.metal_dark) # register
+	img.fill_rect(Rect2i(43, 11, 6, 4), PALETTE.line_white)
+	_outline_rect(img, Rect2i(1, 2, 54, 20), PALETTE.outline)
+	_outline_rect(img, Rect2i(40, 9, 12, 10), PALETTE.outline)
+	return img
+
+func _furniture_display_rack() -> Image:
+	var img := _new_image(34, 30)
+	for peg_row in range(3):
+		var y := 3 + peg_row * 9
+		img.fill_rect(Rect2i(2, y + 6, 30, 2), PALETTE.metal)
+		for hook in range(4):
+			var color: Color = [PALETTE.roofB, PALETTE.cone_orange, PALETTE.line_yellow, PALETTE.grass][(peg_row + hook) % 4]
+			img.fill_rect(Rect2i(4 + hook * 7, y, 5, 6), color)
+	_outline_rect(img, Rect2i(1, 1, 32, 28), PALETTE.outline)
+	return img
+
+func _furniture_fridge_display() -> Image:
+	var img := _new_image(34, 40)
+	img.fill_rect(Rect2i(1, 1, 32, 38), PALETTE.metal_dark)
+	img.fill_rect(Rect2i(4, 4, 26, 32), Color8(168, 196, 208)) # glass
+	for shelf_row in range(3):
+		var y := 8 + shelf_row * 10
+		img.fill_rect(Rect2i(4, y + 8, 26, 2), PALETTE.metal)
+		for bottle in range(4):
+			img.fill_rect(Rect2i(6 + bottle * 6, y, 4, 8), [PALETTE.water, PALETTE.line_yellow, PALETTE.roofA, PALETTE.food][bottle])
+	_outline_rect(img, Rect2i(1, 1, 32, 38), PALETTE.outline)
+	_outline_rect(img, Rect2i(4, 4, 26, 32), PALETTE.outline)
+	return img
+
+func _furniture_freezer_chest() -> Image:
+	var img := _new_image(44, 26)
+	img.fill_rect(Rect2i(1, 4, 42, 20), PALETTE.line_white)
+	img.fill_rect(Rect2i(1, 4, 42, 8), Color8(214, 222, 228)) # lid
+	img.fill_rect(Rect2i(18, 7, 8, 2), PALETTE.metal)
+	_outline_rect(img, Rect2i(1, 4, 42, 20), PALETTE.outline)
+	return img
+
+func _furniture_booth() -> Image:
+	var img := _new_image(56, 26)
+	var cushion := Color8(140, 60, 54)
+	img.fill_rect(Rect2i(0, 2, 56, 10), cushion.darkened(0.3)) # backrest
+	img.fill_rect(Rect2i(0, 2, 10, 24), cushion) # left bench
+	img.fill_rect(Rect2i(46, 2, 10, 24), cushion) # right bench
+	img.fill_rect(Rect2i(10, 12, 36, 12), PALETTE.wood) # table between
+	_outline_rect(img, Rect2i(10, 12, 36, 12), PALETTE.outline)
+	_outline_rect(img, Rect2i(0, 2, 10, 24), PALETTE.outline)
+	_outline_rect(img, Rect2i(46, 2, 10, 24), PALETTE.outline)
+	return img
+
+func _furniture_bar_counter() -> Image:
+	var img := _new_image(80, 24)
+	img.fill_rect(Rect2i(1, 2, 78, 20), PALETTE.wood_dark)
+	img.fill_rect(Rect2i(1, 2, 78, 6), PALETTE.wood) # serving top
+	for stool in range(4):
+		img.fill_rect(Rect2i(8 + stool * 18, 20, 10, 3), PALETTE.metal_dark)
+	_outline_rect(img, Rect2i(1, 2, 78, 20), PALETTE.outline)
+	return img
+
+func _furniture_trolley(equipment: bool) -> Image:
+	var img := _new_image(26, 34)
+	img.fill_rect(Rect2i(2, 2, 22, 26), PALETTE.metal if equipment else PALETTE.line_white)
+	if equipment:
+		img.fill_rect(Rect2i(4, 4, 18, 6), PALETTE.medical) # defib kit
+		img.fill_rect(Rect2i(4, 12, 18, 6), PALETTE.metal_dark)
+	else:
+		img.fill_rect(Rect2i(4, 4, 18, 8), PALETTE.medical) # folded linen
+	for caster in [Vector2i(3, 29), Vector2i(20, 29)]:
+		img.fill_rect(Rect2i(caster, Vector2i(4, 4)), PALETTE.outline)
+	_outline_rect(img, Rect2i(2, 2, 22, 26), PALETTE.outline)
+	return img
+
+func _furniture_medical_shelf() -> Image:
+	var img := _new_image(28, 36)
+	_wood_panel(img, Rect2i(1, 1, 26, 34), Color8(232, 234, 232), PALETTE.metal)
+	for shelf_row in range(3):
+		var y := 5 + shelf_row * 10
+		img.fill_rect(Rect2i(3, y + 8, 22, 2), PALETTE.metal)
+		for med in range(3):
+			img.fill_rect(Rect2i(5 + med * 7, y, 5, 8), PALETTE.medical if med != 1 else PALETTE.line_white)
+	return img
+
+func _furniture_waiting_bench() -> Image:
+	var img := _new_image(64, 20)
+	img.fill_rect(Rect2i(1, 3, 62, 12), Color8(96, 108, 128))
+	img.fill_rect(Rect2i(1, 3, 62, 4), Color8(116, 128, 148))
+	img.fill_rect(Rect2i(4, 15, 5, 4), PALETTE.metal_dark)
+	img.fill_rect(Rect2i(55, 15, 5, 4), PALETTE.metal_dark)
+	_outline_rect(img, Rect2i(1, 3, 62, 12), PALETTE.outline)
+	return img
+
+func _furniture_reception() -> Image:
+	var img := _new_image(64, 26)
+	img.fill_rect(Rect2i(1, 2, 62, 22), PALETTE.wood)
+	img.fill_rect(Rect2i(1, 2, 62, 7), PALETTE.wood_dark) # raised counter lip
+	img.fill_rect(Rect2i(44, 12, 14, 8), PALETTE.metal_dark) # terminal
+	img.fill_rect(Rect2i(47, 14, 8, 4), PALETTE.water)
+	_outline_rect(img, Rect2i(1, 2, 62, 22), PALETTE.outline)
+	return img
+
+func _furniture_tool_cabinet() -> Image:
+	var img := _new_image(30, 32)
+	img.fill_rect(Rect2i(1, 2, 28, 28), PALETTE.cone_orange)
+	for drawer in range(3):
+		var y := 5 + drawer * 8
+		img.fill_rect(Rect2i(3, y, 24, 6), PALETTE.cone_orange.darkened(0.2))
+		img.fill_rect(Rect2i(12, y + 2, 6, 2), PALETTE.metal)
+		_outline_rect(img, Rect2i(3, y, 24, 6), PALETTE.outline)
+	_outline_rect(img, Rect2i(1, 2, 28, 28), PALETTE.outline)
+	return img
+
+func _furniture_pallet_rack() -> Image:
+	var img := _new_image(96, 28)
+	for upright in [Vector2i(2, 2), Vector2i(88, 2)]:
+		img.fill_rect(Rect2i(upright, Vector2i(6, 24)), PALETTE.cone_orange.darkened(0.15))
+		_outline_rect(img, Rect2i(upright, Vector2i(6, 24)), PALETTE.outline)
+	for level in range(2):
+		var y := 6 + level * 11
+		img.fill_rect(Rect2i(8, y + 8, 80, 3), PALETTE.metal)
+		var x := 10
+		while x < 84:
+			var w := 6 + (x / 6 + level) % 3
+			var colors := [PALETTE.wood, PALETTE.crate_orange if PALETTE.has("crate_orange") else PALETTE.cone_orange, PALETTE.materials]
+			img.fill_rect(Rect2i(x, y, w, 8), colors[(x / 6 + level) % colors.size()])
+			_outline_rect(img, Rect2i(x, y, w, 8), PALETTE.outline)
+			x += w + 2
+	return img
+
+func _furniture_locker() -> Image:
+	var img := _new_image(22, 34)
+	img.fill_rect(Rect2i(1, 1, 20, 32), PALETTE.roofB.darkened(0.2))
+	for vent_y in range(4, 12, 4):
+		img.fill_rect(Rect2i(5, vent_y, 12, 1), PALETTE.metal_dark)
+	img.fill_rect(Rect2i(15, 15, 2, 6), PALETTE.metal)
+	_outline_rect(img, Rect2i(1, 1, 20, 32), PALETTE.outline)
+	return img
+
+func _furniture_barrel() -> Image:
+	var img := _new_image(22, 22)
+	img.fill_rect(Rect2i(2, 2, 18, 18), PALETTE.roofC)
+	img.fill_rect(Rect2i(2, 6, 18, 2), PALETTE.metal_dark)
+	img.fill_rect(Rect2i(2, 14, 18, 2), PALETTE.metal_dark)
+	_outline_rect(img, Rect2i(2, 2, 18, 18), PALETTE.outline)
+	return img
+
+func _furniture_machinery() -> Image:
+	var img := _new_image(56, 40)
+	img.fill_rect(Rect2i(2, 6, 52, 30), PALETTE.metal_dark)
+	img.fill_rect(Rect2i(6, 2, 20, 8), PALETTE.metal) # motor housing
+	img.fill_rect(Rect2i(34, 12, 14, 10), PALETTE.cone_orange) # hazard panel
+	for bolt in [Vector2i(8, 30), Vector2i(44, 30)]:
+		img.fill_rect(Rect2i(bolt, Vector2i(4, 3)), PALETTE.outline)
+	_outline_rect(img, Rect2i(2, 6, 52, 30), PALETTE.outline)
+	_outline_rect(img, Rect2i(34, 12, 14, 10), PALETTE.outline)
+	return img
+
+func _weapon_sprite(kind: String) -> Image:
+	# Top-down guns pointing RIGHT (+X): barrel to the east, grip south.
+	var specs := {
+		"pistol": {"w": 18, "h": 8, "barrel": 10, "slide": Color8(70, 74, 82)},
+		"smg": {"w": 26, "h": 9, "barrel": 16, "slide": Color8(58, 62, 70)},
+		"rifle": {"w": 38, "h": 9, "barrel": 27, "slide": Color8(64, 68, 60)},
+		"shotgun": {"w": 36, "h": 9, "barrel": 26, "slide": Color8(96, 72, 48)},
+	}
+	var spec: Dictionary = specs[kind]
+	var w: int = spec["w"]
+	var h: int = spec["h"]
+	var img := _new_image(w, h)
+	var slide: Color = spec["slide"]
+	var mid_y := h / 2
+	# Receiver/body.
+	img.fill_rect(Rect2i(w / 5, mid_y - 2, w - w / 5 - 1, 4), slide)
+	# Barrel.
+	img.fill_rect(Rect2i(w / 5 + (spec["barrel"] as int) - 4, mid_y - 1, 6, 2), PALETTE.metal_dark)
+	# Stock/grip toward the south-west.
+	if kind == "shotgun" or kind == "rifle":
+		img.fill_rect(Rect2i(0, mid_y - 1, w / 5, 4), PALETTE.wood_dark)
+	else:
+		img.fill_rect(Rect2i(w / 3, mid_y + 1, 3, h - mid_y - 1), PALETTE.wood_dark) # grip
+	# Front sight nub.
+	img.set_pixel(w - 2, mid_y - 2, PALETTE.metal)
+	_outline_rect(img, Rect2i(w / 5, mid_y - 2, w - w / 5 - 1, 4), PALETTE.outline)
+	if kind == "shotgun":
+		img.fill_rect(Rect2i(w / 5 + 4, mid_y + 2, 10, 2), PALETTE.metal) # pump
+	return img
+
+func _shell_casing() -> Image:
+	var img := _new_image(5, 3)
+	img.fill_rect(Rect2i(0, 0, 5, 3), PALETTE.ui_ammo.darkened(0.1))
+	img.set_pixel(0, 1, PALETTE.ui_ammo)
+	return img
 
 func _draw_crate() -> Image:
 	var img := _new_image(24, 24)

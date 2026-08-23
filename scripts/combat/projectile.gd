@@ -55,7 +55,8 @@ func _on_body_entered(body: Node) -> void:
 		if environment_damage > 0.0:
 			handled_environment = EnvironmentDamage.apply_to_body(body, environment_damage, environment_damage_class, self)
 		if not handled_environment and body.has_method("take_damage"):
-			body.call("take_damage", damage, self)
+			# Exact hit position drives anatomical resolution on actors.
+			body.call("take_damage", damage, self, global_position)
 	_despawn()
 
 func _despawn() -> void:

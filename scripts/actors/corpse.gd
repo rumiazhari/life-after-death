@@ -62,23 +62,20 @@ static func _copy_visual(source: Node2D, target: AnimatedSprite2D) -> void:
 		target.scale = source.scale
 
 var _age := 0.0
-var _asleep := false
 
 func _ready() -> void:
-	sleeping_state_changed.connect(_on_sleeping_changed)
+	# Sleeping corpses freeze to zero physics cost but KEEP their collision
+	# layer: blast queries (mask includes layer 8) can still find and wake
+	# them, so a grenade can throw a week-old corpse across the room.
+	sleeping_state_changed.connect(func() -> void:
+		if sleeping:
+			freeze = true)
 
 func _physics_process(delta: float) -> void:
+	# Lifetime cleanup runs regardless of sleep state: every corpse
+	# eventually frees itself so the population cannot grow without bound.
 	_age += delta
-	# Cheap lifetime handling only while awake; sleeping corpses are frozen
-	# by the engine and need no per-frame work until cleanup.
-	if _age >= LIFETIME and not _asleep:
-		freeze = true
+	if _age >= LIFETIME:
+		active_count = maxi(active_count - 1, 0)
+		queue_free()
 		set_physics_process(false)
-
-func _on_sleeping_changed() -> void:
-	if sleeping:
-		# Sleeping corpses stop colliding entirely: zero physics cost and no
-		# chance of blocking anything, while the visual remains.
-		collision_layer = 0
-		collision_mask = 0
-		_asleep = true

@@ -5,6 +5,14 @@
 [resource]
 script = ExtResource("1")
 weapon_name = "Sidearm Pistol"
+id = &"pistol"
+weapon_type = 0
+sprite_path = "res://assets/pixel/weapons/weapon_pistol.png"
+muzzle_offset = Vector2(16, 0)
+pellet_count = 1
+penetration = 0
+recoil = 2.5
+impulse = 80.0
 damage = 16.0
 fire_rate = 2.5
 magazine_size = 10

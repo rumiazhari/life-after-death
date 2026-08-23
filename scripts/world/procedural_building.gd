@@ -163,6 +163,26 @@ func _build_furniture(interior: Dictionary, rooms_by_id: Dictionary) -> void:
 		var built := room.get_child(room.get_child_count() - 1) as Node2D
 		if built != null:
 			PhysicsReactionComponent.attach(built, PhysicsReactionComponent.mass_class_for_kind(furniture["kind"]))
+			PhysicsReactionComponent.restore_moved_transform(built, furniture["id"])
+			# Chunky furniture breaks quarter-by-quarter before collapsing.
+			if furniture["kind"] in [&"dining_table", &"round_table", &"coffee_table", &"desk", &"sofa", &"sofa_b", &"armchair",
+					&"wardrobe", &"dresser", &"shelf_row", &"grocery_shelf_short", &"grocery_shelf_long",
+					&"aisle_shelf", &"industrial_shelf", &"workbench", &"cabinet", &"bed_single", &"bed_double",
+					&"exam_bed", &"bookshelf", &"locker", &"bar_counter", &"checkout_counter", &"reception_desk",
+					&"tv_stand", &"tool_cabinet", &"pallet_rack", &"machinery", &"fridge_display", &"freezer_chest"]:
+				var piece_damage := _find_damage_component(built)
+				if piece_damage != null:
+					piece_damage.sub_cells = 2
+					piece_damage.fail_threshold = 0.5
+
+func _find_damage_component(root: Node) -> EnvironmentDamageComponent:
+	if root.name == "EnvironmentDamageComponent":
+		return root as EnvironmentDamageComponent
+	for child in root.get_children():
+		var found := _find_damage_component(child)
+		if found != null:
+			return found
+	return null
 
 func _node_name(stable_id: StringName) -> String:
 	return String(stable_id).get_file().to_pascal_case()

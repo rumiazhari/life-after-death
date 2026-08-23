@@ -1,0 +1,29 @@
+[gd_resource type="Resource" script_class="WeaponData" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/combat/weapon_data.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+weapon_name = "Assault Rifle"
+id = &"rifle"
+weapon_type = 3
+sprite_path = "res://assets/pixel/weapons/weapon_rifle.png"
+muzzle_offset = Vector2(20, 0)
+ammo_type = &"ammo_generic"
+damage = 11.0
+fire_rate = 8
+magazine_size = 30
+reload_duration = 1.9
+projectile_speed = 1150
+projectile_lifetime = 1.3
+spread_degrees = 2.4
+automatic = true
+pellet_count = 1
+penetration = 1
+recoil = 30
+impulse = 2.2
+effective_range = 1000.0
+starting_reserve_ammo = 96
+environment_damage_class = 1
+environment_damage = 14.0
+explosion_radius = 0.0

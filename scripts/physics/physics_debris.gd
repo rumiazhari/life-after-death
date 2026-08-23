@@ -35,9 +35,14 @@ static func spawn(container: Node, world_position: Vector2, texture: Texture2D, 
 	collider.shape = shape
 	debris.add_child(collider)
 	var sprite := Sprite2D.new()
-	sprite.texture = texture
-	if texture != null and texture.get_size().x > 0.0:
+	if texture == null:
+		var flat := Image.create(4, 4, false, Image.FORMAT_RGBA8)
+		flat.fill(Color.WHITE)
+		texture = ImageTexture.create_from_image(flat)
+		sprite.scale = chunk_size / Vector2(4, 4)
+	elif texture.get_size().x > 0.0:
 		sprite.scale = chunk_size * 1.6 / texture.get_size()
+	sprite.texture = texture
 	sprite.modulate = tint.darkened(0.25)
 	debris.add_child(sprite)
 	container.add_child(debris)

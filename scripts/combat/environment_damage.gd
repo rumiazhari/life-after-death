@@ -25,9 +25,11 @@ static func impulse_for(amount: float, damage_class: int) -> float:
 static func apply_to_body(body: Node, amount: float, damage_class: int, source: Node = null) -> bool:
 	if body == null or not is_instance_valid(body):
 		return false
-	var component: EnvironmentDamageComponent = body.get_node_or_null("EnvironmentDamageComponent")
+	# Duck-typed on purpose: a hard type reference here would close a parse
+	# cycle with EnvironmentDamageComponent (which calls back into this class).
+	var component: Node = body.get_node_or_null("EnvironmentDamageComponent")
 	var applied := false
-	if component:
+	if component != null:
 		applied = component.apply_damage(amount, damage_class, source)
 	# Physical reaction regardless of whether structural damage applied.
 	dispatch_reaction(body, impact_origin(source), impact_direction(body, source), impulse_for(amount, damage_class))
@@ -52,9 +54,10 @@ static func impact_direction(body: Node, source: Node) -> Vector2:
 static func dispatch_reaction(body: Node, origin: Vector2, direction: Vector2, strength: float) -> void:
 	if body == null or not is_instance_valid(body):
 		return
-	var reaction := body.get_node_or_null("PhysicsReactionComponent") as PhysicsReactionComponent
+	# Duck-typed: same parse-cycle avoidance as apply_to_body().
+	var reaction: Node = body.get_node_or_null("PhysicsReactionComponent")
 	if reaction == null and body.get_parent() != null:
-		reaction = body.get_parent().get_node_or_null("PhysicsReactionComponent") as PhysicsReactionComponent
+		reaction = body.get_parent().get_node_or_null("PhysicsReactionComponent")
 	if reaction != null:
 		# Off-center spin derived deterministically from the hit direction so
 		# props visibly tumble instead of sliding like pucks.
@@ -65,7 +68,16 @@ static func dispatch_reaction(body: Node, origin: Vector2, direction: Vector2, s
 		body.call("apply_knockback", direction * strength * 0.9)
 		return
 	if body is RigidBody2D:
-		(body as RigidBody2D).apply_central_impulse(direction * strength * 0.8)
+		var rigid := body as RigidBody2D
+		# Frozen/sleeping rigid remains (corpses, moved furniture) thaw and
+		# wake so blasts can throw them again. Velocity is set directly: an
+		# impulse applied on the same frame as a thaw can be discarded by the
+		# physics server flush.
+		if rigid.freeze:
+			rigid.freeze = false
+		if rigid.sleeping:
+			rigid.sleeping = false
+		rigid.linear_velocity += direction * (strength * 0.8 / maxf(rigid.mass, 0.1))
 
 ## Applies a radial hit once per physics body. The linear falloff never drops
 ## below 25%, so an explosive touching a reinforced wall still applies a
@@ -95,11 +107,12 @@ static func apply_explosion(source_node: Node2D, origin: Vector2, radius: float,
 		var body_position: Vector2 = body.global_position if body is Node2D else origin
 		var falloff := clampf(1.0 - origin.distance_to(body_position) / radius, 0.25, 1.0)
 		var direction := (body_position - origin).normalized() if body_position.distance_to(origin) > 1.0 else Vector2.RIGHT
-		var component: EnvironmentDamageComponent = body.get_node_or_null("EnvironmentDamageComponent")
-		if component:
+		var component: Node = body.get_node_or_null("EnvironmentDamageComponent")
+		if component != null:
 			component.apply_damage(structural_amount * falloff, damage_class, source_node)
 		elif body.has_method("take_damage"):
-			body.call("take_damage", actor_amount * falloff, source_node)
+			# Hit geometry passed through so anatomy resolves the struck zone.
+			body.call("take_damage", actor_amount * falloff, source_node, body_position - direction * 4.0)
 		# Radial push: reactive props convert/budge, actors get knocked back,
 		# corpses and debris fly -- all with identical distance falloff.
 		dispatch_reaction(body, origin, direction, impulse_for(maxf(structural_amount, actor_amount), damage_class) * falloff * 1.6)

@@ -93,11 +93,17 @@ func _physics_process(delta: float) -> void:
 	perception.update(delta, velocity)
 	var steering: Vector2 = _seek_current_goal() + _separation()
 	if steering.length() > 0.0:
-		velocity = steering.normalized() * move_speed
+		velocity = steering.normalized() * move_speed * anatomy.movement_factor()
 	else:
 		velocity = Vector2.ZERO
+	if _stagger_remaining > 0.0:
+		_stagger_remaining -= delta
+		velocity *= 0.25
 	velocity += _consume_knockback(delta)
 	move_and_slide()
+	# Bounded contact shoving: a walking zombie pressures furniture it
+	# actually collides with; crowds combine into real pushing force.
+	PhysicsReactionComponent.contact_push(self, 0.28)
 	body_visual.update_from_velocity(velocity)
 
 ## Physical impulse state: added on top of steering this frame, then decays.
@@ -109,14 +115,63 @@ func _consume_knockback(delta: float) -> Vector2:
 	_knockback = _knockback.lerp(Vector2.ZERO, minf(9.0 * delta, 1.0))
 	return applied
 
-func take_damage(amount: float, source: Node = null) -> void:
+## External physical pushes (explosions, heavy impacts) layered onto steering
+## and decaying quickly -- the actor stays a CharacterBody2D; no ragdoll.
+var _last_hit_position := Vector2.ZERO
+## Anatomical state: only head destruction kills (see ZombieAnatomy).
+var anatomy := ZombieAnatomy.new()
+var _stagger_remaining := 0.0
+
+func take_damage(amount: float, source: Node = null, hit_position: Vector2 = Vector2.INF) -> void:
 	_last_hit_source = source
-	health_component.take_damage(amount, source)
+	_last_hit_position = hit_position if hit_position != Vector2.INF else global_position
+	var zone := ZombieAnatomy.resolve_zone(_last_hit_position, global_position)
+	var effect := anatomy.apply_zone_damage(zone, amount)
+	var container := get_tree().get_first_node_in_group("entity_container")
+	if container == null:
+		container = get_parent()
+	var wound_direction: Vector2 = (_last_hit_position - global_position).normalized()
+	if wound_direction == Vector2.ZERO:
+		wound_direction = Vector2.RIGHT
+	if effect["severed"]:
+		# Detached limb flies along the impact; stump + gore at the wound.
+		GoreSystem.blood_spray(container, _last_hit_position, wound_direction, amount)
+		GoreSystem.blood_splat(container, _last_hit_position, wound_direction, amount * 1.5)
+		GoreSystem.gore_chunk(container, _last_hit_position, wound_direction * 120.0)
+		_sever_visual(zone)
+	elif effect["head_destroyed"]:
+		GoreSystem.blood_spray(container, global_position, -wound_direction, amount)
+	else:
+		GoreSystem.blood_splat(container, _last_hit_position, -wound_direction, amount * 0.6)
+	if effect["head_destroyed"]:
+		# The ONLY true death: head destroyed.
+		health_component.take_damage(99999.0, source)
+		return
+	# Non-head damage cripples but can never kill while the head lives.
+	if zone == &"torso" and anatomy.integrity[&"torso"] <= 30.0:
+		_stagger_remaining = 0.8
+	health_component.current_health = maxf(health_component.current_health - amount * 0.25, 1.0)
+	_on_damaged(amount)
 	# A hit shoves the zombie along the impact direction even if it survives.
 	if source is Node2D:
 		var direction: Vector2 = global_position - (source as Node2D).global_position
 		if direction.length_squared() > 1.0:
 			apply_knockback(direction.normalized() * amount * 6.0)
+
+func _sever_visual(zone: StringName) -> void:
+	# Dark red stump marker where the part used to be.
+	var stump := StumpMarker.new()
+	stump.name = "Stump_%s" % String(zone)
+	stump.position = _zone_offset(zone)
+	add_child(stump)
+
+func _zone_offset(zone: StringName) -> Vector2:
+	match zone:
+		&"arm_l": return Vector2(-9, -3)
+		&"arm_r": return Vector2(9, 3)
+		&"leg_l": return Vector2(-4, 9)
+		&"leg_r": return Vector2(4, -9)
+		_: return Vector2.ZERO
 
 ## Off by default (ZombiePerceptionComponent.debug_draw_enabled) -- see
 ## docs/perception_system.md "Debug visualization".
@@ -274,9 +329,12 @@ func _tick_contact_damage(delta: float) -> void:
 		return
 	if _contact_targets.is_empty():
 		return
+	var attack := contact_damage * anatomy.attack_factor()
+	if attack <= 0.0:
+		return # both arms gone: cannot grab or bite
 	for target in _contact_targets:
 		if is_instance_valid(target) and target.has_method("take_damage"):
-			target.call("take_damage", contact_damage, self)
+			target.call("take_damage", attack, self)
 	_damage_tick_remaining = contact_damage_interval
 
 func _on_attack_area_body_entered(body: Node) -> void:

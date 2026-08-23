@@ -1,4 +1,4 @@
-extends Node
+﻿extends Node
 ## Headless diagnostic: streams a corpus of seeds/coordinates across every
 ## regional profile and prints any generation/validation failure with the
 ## full per-road connectivity detail. Run from the project root:

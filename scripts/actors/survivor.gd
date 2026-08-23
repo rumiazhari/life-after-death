@@ -139,12 +139,14 @@ func move_toward_point(point: Vector2, delta: float) -> bool:
 		velocity = velocity.move_toward(Vector2.ZERO, steer_acceleration * delta)
 		velocity += _consume_knockback(delta)
 		move_and_slide()
+		PhysicsReactionComponent.contact_push(self, 0.3)
 		return true
 	var dir: Vector2 = _seek_direction(point, to_point, distance)
 	_face(dir)
 	velocity = velocity.move_toward(dir * speed, steer_acceleration * delta)
 	velocity += _consume_knockback(delta)
 	move_and_slide()
+	PhysicsReactionComponent.contact_push(self, 0.3)
 	return false
 
 func _seek_direction(point: Vector2, to_point: Vector2, distance: float) -> Vector2:
@@ -253,7 +255,7 @@ func _face(dir: Vector2) -> void:
 	aim_direction = dir
 	weapon_pivot.rotation = dir.angle()
 
-func take_damage(amount: float, source: Node = null) -> void:
+func take_damage(amount: float, source: Node = null, _hit_position: Vector2 = Vector2.INF) -> void:
 	if is_dead:
 		return
 	health_component.take_damage(amount, source)

@@ -4,14 +4,28 @@ extends Resource
 ## Weapon (weapon.gd) reads from this at runtime and never hard-codes stats.
 
 @export var weapon_name: String = "Weapon"
+@export var id: StringName = &"weapon"
+@export_enum("Handgun", "Shotgun", "Rifle", "SMG", "Launcher", "Tool") var weapon_type: int = 0
+## Top-down sprite drawn along +X (barrel east); rotated to the aim direction.
+@export_file("*.png") var sprite_path: String = ""
+## Local offset of the muzzle from the weapon origin in sprite space.
+@export var muzzle_offset: Vector2 = Vector2.ZERO
+@export var ammo_type: StringName = &"ammo_generic"
 @export var damage: float = 10.0
-@export var fire_rate: float = 10.0 ## shots per second
+@export var fire_rate: float = 10.0 ## rounds per minute / shots per second scale
 @export var magazine_size: int = 30
 @export var reload_duration: float = 1.5 ## seconds
 @export var projectile_speed: float = 900.0 ## px/sec
 @export var projectile_lifetime: float = 1.2 ## seconds
 @export var spread_degrees: float = 3.0 ## +/- half-angle random spread
 @export var automatic: bool = true ## true = held fire, false = one shot per press
+@export_range(1, 12) var pellet_count: int = 1 ## shotgun spreads multiple pellets per shot
+@export_range(0, 6) var penetration: int = 0 ## extra bodies a pellet pierces (damage decays each pierce)
+## Visual kick applied to the weapon sprite on fire, and physical push passed
+## into the shared impact system.
+@export var recoil: float = 3.0
+@export var impulse: float = 90.0
+@export var effective_range: float = 900.0
 @export var starting_reserve_ammo: int = 180
 ## Static-environment impact is separate from actor damage. Ordinary firearm
 ## rounds remain SMALL_ARMS; a future heavy weapon or bomb can opt into the

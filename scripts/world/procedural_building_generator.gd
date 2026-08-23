@@ -671,67 +671,73 @@ func _candidate_positions(rect: Rect2, size: Vector2) -> Array[Vector2]:
 ## Role-driven furniture compositions. Rules are tried in order; each piece
 ## is placed only where it keeps door aisles and earlier pieces clear, so a
 ## composition degrades gracefully in small rooms instead of blocking paths.
+## Variant picks are deterministic per building seed so identical archetypes
+## still furnish differently across a street.
 func _rules_for_role(role: StringName) -> Array[Dictionary]:
 	match role:
 		&"living_room":
 			return [
-				_furniture_rule(&"sofa", &"physical"),
-				_furniture_rule(&"dining_table", &"physical"),
+				_furniture_rule(_pick([&"sofa", &"sofa_b", &"armchair"]), &"physical"),
+				_furniture_rule(_pick([&"coffee_table", &"dining_table"]), &"physical"),
 				_furniture_rule(&"chair", &"physical"),
-				_furniture_rule(&"chair", &"physical"),
-				_furniture_rule(&"cabinet", &"loot", {"materials": 2, "water_bottle": 1}),
+				_furniture_rule(&"armchair", &"physical"),
+				_furniture_rule(_pick([&"bookshelf", &"tv_stand"]), &"loot", {"materials": 2, "water_bottle": 1}),
+				_furniture_rule(&"cabinet", &"loot", {"materials": 1}),
 			]
 		&"kitchen":
 			return [
 				_furniture_rule(&"counter", &"physical"),
-				_furniture_rule(&"counter", &"physical"),
-				_furniture_rule(&"counter", &"physical"),
+				_furniture_rule(&"counter_corner", &"physical"),
+				_furniture_rule(&"sink_counter", &"physical"),
+				_furniture_rule(&"stove", &"physical"),
 				_furniture_rule(&"fridge", &"loot", {"food_ration": 3, "water_bottle": 2}),
+				_furniture_rule(_pick([&"pantry_shelf", &"shelf_row"]), &"loot", {"materials": 2, "food_ration": 2}),
 				_furniture_rule(&"dining_table", &"physical"),
 				_furniture_rule(&"chair", &"physical"),
-				_furniture_rule(&"chair", &"physical"),
-				_furniture_rule(&"shelf_row", &"loot", {"materials": 2, "food_ration": 2}),
 			]
 		&"bedroom":
-			var bedroom: Array[Dictionary] = [_furniture_rule(&"bed_single", &"physical")]
-			if _rng.randi_range(0, 2) == 0:
-				bedroom[0] = _furniture_rule(&"bed_double", &"physical")
+			var bedroom: Array[Dictionary] = [_furniture_rule(_pick([&"bed_single", &"bed_double"]), &"physical")]
 			bedroom.append_array([
-				_furniture_rule(&"wardrobe", &"loot", {"materials": 2, "medical_supplies": 1}),
+				_furniture_rule(_pick([&"wardrobe", &"dresser"]), &"loot", {"materials": 2, "medical_supplies": 1}),
 				_furniture_rule(&"nightstand", &"loot", {"food_ration": 1}),
 				_furniture_rule(&"desk", &"physical"),
-				_furniture_rule(&"chair", &"physical"),
+				_furniture_rule(_pick([&"office_chair", &"chair"]), &"physical"),
+				_furniture_rule(_pick([&"bookshelf", &"mattress"]), &"physical"),
 			])
 			return bedroom
 		&"bathroom":
 			return [
 				_furniture_rule(&"cabinet", &"loot", {"medical_supplies": 1, "water_bottle": 1}),
-				_furniture_rule(&"counter", &"physical"),
+				_furniture_rule(&"sink_counter", &"physical"),
 			]
 		&"retail_floor":
 			return [
-				_furniture_rule(&"shelf_row", &"loot", {"food_ration": 3, "materials": 2}),
-				_furniture_rule(&"shelf_row", &"loot", {"water_bottle": 3}),
-				_furniture_rule(&"shelf_row", &"loot", {}),
-				_furniture_rule(&"shelf_row", &"loot", {"materials": 4}),
-				_furniture_rule(&"counter", &"physical"),
+				_furniture_rule(_pick([&"grocery_shelf_short", &"grocery_shelf_long"]), &"loot", {"food_ration": 3, "materials": 2}),
+				_furniture_rule(_pick([&"grocery_shelf_long", &"aisle_shelf"]), &"loot", {"water_bottle": 3}),
+				_furniture_rule(_pick([&"aisle_shelf", &"wall_shelving"]), &"loot", {}),
+				_furniture_rule(&"grocery_shelf_short", &"loot", {"materials": 4}),
+				_furniture_rule(&"checkout_counter", &"physical"),
+				_furniture_rule(&"display_rack", &"loot", {"medical_supplies": 1, "materials": 1}),
+				_furniture_rule(&"fridge_display", &"loot", {"water_bottle": 4, "food_ration": 2}),
+				_furniture_rule(&"freezer_chest", &"loot", {"food_ration": 4}),
 				_furniture_rule(&"crate", &"salvage", {}, 2),
 			]
 		&"stock_room":
 			return [
-				_furniture_rule(&"industrial_shelf", &"loot", {"food_ration": 2, "water_bottle": 3, "materials": 2}),
-				_furniture_rule(&"industrial_shelf", &"loot", {"materials": 5}),
-				_furniture_rule(&"fridge", &"loot", {"food_ration": 2, "water_bottle": 3}),
+				_furniture_rule(_pick([&"pallet_rack", &"industrial_shelf"]), &"loot", {"food_ration": 2, "water_bottle": 3, "materials": 2}),
+				_furniture_rule(_pick([&"wall_shelving", &"industrial_shelf"]), &"loot", {"materials": 5}),
+				_furniture_rule(&"freezer_chest", &"loot", {"food_ration": 3}),
+				_furniture_rule(&"barrel", &"salvage", {}, 2),
 				_furniture_rule(&"crate", &"salvage", {}, 3),
 				_furniture_rule(&"pallet", &"physical"),
 			]
 		&"dining_room":
 			return [
-				_furniture_rule(&"dining_table", &"physical"),
+				_furniture_rule(_pick([&"dining_table", &"round_table"]), &"physical"),
 				_furniture_rule(&"chair", &"physical"),
 				_furniture_rule(&"chair", &"physical"),
-				_furniture_rule(&"dining_table", &"physical"),
-				_furniture_rule(&"chair", &"physical"),
+				_furniture_rule(_pick([&"round_table", &"dining_table"]), &"physical"),
+				_furniture_rule(&"booth", &"physical"),
 				_furniture_rule(&"chair", &"physical"),
 				_furniture_rule(&"dining_table", &"physical"),
 				_furniture_rule(&"chair", &"physical"),
@@ -739,70 +745,78 @@ func _rules_for_role(role: StringName) -> Array[Dictionary]:
 			]
 		&"pantry":
 			return [
-				_furniture_rule(&"shelf_row", &"loot", {"food_ration": 4, "water_bottle": 2}),
-				_furniture_rule(&"shelf_row", &"loot", {"food_ration": 3}),
-				_furniture_rule(&"crate", &"salvage", {}, 2),
+				_furniture_rule(&"pantry_shelf", &"loot", {"food_ration": 4, "water_bottle": 2}),
+				_furniture_rule(&"pantry_shelf", &"loot", {"food_ration": 3}),
+				_furniture_rule(&"wall_shelving", &"loot", {"materials": 2}),
+				_furniture_rule(&"barrel", &"salvage", {}, 2),
 				_furniture_rule(&"counter", &"physical"),
 			]
 		&"waiting_area":
 			return [
+				_furniture_rule(&"waiting_bench", &"physical"),
 				_furniture_rule(&"chair", &"physical"),
 				_furniture_rule(&"chair", &"physical"),
-				_furniture_rule(&"chair", &"physical"),
-				_furniture_rule(&"counter", &"physical"),
-				_furniture_rule(&"cabinet", &"loot", {"medical_supplies": 1, "materials": 1}),
+				_furniture_rule(&"reception_desk", &"physical"),
+				_furniture_rule(&"medicine_shelf", &"loot", {"medical_supplies": 2}),
 			]
 		&"exam_room":
 			return [
 				_furniture_rule(&"exam_bed", &"physical"),
-				_furniture_rule(&"exam_table", &"physical"),
+				_furniture_rule(&"bedside_trolley", &"physical"),
+				_furniture_rule(&"equipment_trolley", &"loot", {"medical_supplies": 2}),
 				_furniture_rule(&"cabinet", &"loot", {"medical_supplies": 2}),
-				_furniture_rule(&"chair", &"physical"),
+				_furniture_rule(&"medicine_shelf", &"loot", {"medical_supplies": 3}),
 			]
 		&"medical_storage":
 			return [
-				_furniture_rule(&"cabinet", &"loot", {"medical_supplies": 5}),
-				_furniture_rule(&"cabinet", &"loot", {"medical_supplies": 3, "materials": 2}),
+				_furniture_rule(&"medicine_shelf", &"loot", {"medical_supplies": 5}),
+				_furniture_rule(&"locker", &"loot", {"medical_supplies": 3, "materials": 2}),
 				_furniture_rule(&"shelf_row", &"loot", {"medical_supplies": 2, "materials": 2}),
 				_furniture_rule(&"crate", &"salvage", {}, 2),
 			]
 		&"work_floor":
 			return [
 				_furniture_rule(&"workbench", &"physical"),
-				_furniture_rule(&"workbench", &"physical"),
-				_furniture_rule(&"industrial_shelf", &"loot", {"materials": 4, "ammunition": 2}),
-				_furniture_rule(&"crate", &"salvage", {}, 2),
+				_furniture_rule(&"machinery", &"physical"),
+				_furniture_rule(&"tool_cabinet", &"loot", {"materials": 4, "ammunition": 2}),
+				_furniture_rule(&"industrial_shelf", &"loot", {"materials": 3}),
 				_furniture_rule(&"desk", &"physical"),
-				_furniture_rule(&"chair", &"physical"),
+				_furniture_rule(&"office_chair", &"physical"),
 			]
 		&"loading_bay":
 			return [
+				_furniture_rule(&"pallet_rack", &"physical"),
 				_furniture_rule(&"pallet", &"physical"),
 				_furniture_rule(&"pallet", &"physical"),
+				_furniture_rule(&"barrel", &"salvage", {}, 3),
 				_furniture_rule(&"crate", &"salvage", {}, 3),
-				_furniture_rule(&"industrial_shelf", &"loot", {"materials": 4}),
 			]
 		&"storage":
 			return [
-				_furniture_rule(&"industrial_shelf", &"loot", {"materials": 5, "ammunition": 3}),
-				_furniture_rule(&"shelf_row", &"loot", {"materials": 3}),
+				_furniture_rule(_pick([&"industrial_shelf", &"pallet_rack"]), &"loot", {"materials": 5, "ammunition": 3}),
+				_furniture_rule(_pick([&"locker", &"tool_cabinet"]), &"loot", {"materials": 4}),
 				_furniture_rule(&"crate", &"salvage", {}, 4),
 				_furniture_rule(&"pallet", &"physical"),
 			]
 		&"office":
 			return [
 				_furniture_rule(&"desk", &"physical"),
-				_furniture_rule(&"chair", &"physical"),
-				_furniture_rule(&"wardrobe", &"loot", {"materials": 2, "ammunition": 2}),
-				_furniture_rule(&"nightstand", &"loot", {"food_ration": 1}),
+				_furniture_rule(&"office_chair", &"physical"),
+				_furniture_rule(&"bookshelf", &"loot", {"materials": 2, "ammunition": 2}),
+				_furniture_rule(_pick([&"dresser", &"nightstand"]), &"loot", {"food_ration": 1}),
+				_furniture_rule(&"cabinet", &"loot", {"materials": 1}),
 			]
 		&"service_annex":
 			return [
 				_furniture_rule(&"workbench", &"physical"),
 				_furniture_rule(&"crate", &"salvage", {}, 2),
-				_furniture_rule(&"shelf_row", &"loot", {"materials": 2}),
+				_furniture_rule(_pick([&"pantry_shelf", &"wall_shelving"]), &"loot", {"materials": 2}),
 			]
 	return [_furniture_rule(&"crate", &"salvage", {}, 2)]
+
+## Deterministic variant pick consumed from the seeded stream in rule order.
+func _pick(options: Array) -> StringName:
+	return options[_rng.randi_range(0, options.size() - 1)]
 
 func _furniture_rule(kind: StringName, mode: StringName, items: Dictionary = {}, material_yield: int = 1) -> Dictionary:
 	var data := _furniture_data(kind)
@@ -819,25 +833,60 @@ func _furniture_rule(kind: StringName, mode: StringName, items: Dictionary = {},
 	}
 
 func _furniture_data(kind: StringName) -> Dictionary:
-	match kind:
-		&"bed_single": return {"texture": "res://assets/pixel/props/bed.png", "size": Vector2(32, 64), "visual_size": Vector2(36, 68)}
-		&"bed_double": return {"texture": "res://assets/pixel/props/bed.png", "size": Vector2(56, 64), "visual_size": Vector2(60, 68)}
-		&"exam_bed": return {"texture": "res://assets/pixel/props/bed.png", "size": Vector2(32, 64), "visual_size": Vector2(36, 68)}
-		&"exam_table": return {"texture": "res://assets/pixel/props/table.png", "size": Vector2(32, 64), "visual_size": Vector2(34, 66)}
-		&"dining_table": return {"texture": "res://assets/pixel/props/table.png", "size": Vector2(64, 40), "visual_size": Vector2(68, 44)}
-		&"desk": return {"texture": "res://assets/pixel/props/table.png", "size": Vector2(48, 24), "visual_size": Vector2(52, 28)}
-		&"sofa": return {"texture": "res://assets/pixel/props/bench.png", "size": Vector2(64, 28), "visual_size": Vector2(68, 32)}
-		&"wardrobe": return {"texture": "res://assets/pixel/props/medical_cabinet.png", "size": Vector2(32, 48), "visual_size": Vector2(36, 52)}
-		&"nightstand": return {"texture": "res://assets/pixel/props/crate.png", "size": Vector2(20, 20), "visual_size": Vector2(24, 24)}
-		&"chair": return {"texture": "res://assets/pixel/props/chair.png", "size": Vector2(16, 18), "visual_size": Vector2(18, 20)}
-		&"counter": return {"texture": "res://assets/pixel/props/counter.png", "size": Vector2(48, 24), "visual_size": Vector2(52, 26)}
-		&"fridge": return {"texture": "res://assets/pixel/props/fridge.png", "size": Vector2(28, 32), "visual_size": Vector2(30, 34)}
-		&"shelf_row": return {"texture": "res://assets/pixel/props/shelf.png", "size": Vector2(80, 20), "visual_size": Vector2(84, 22)}
-		&"industrial_shelf": return {"texture": "res://assets/pixel/props/shelf.png", "size": Vector2(96, 24), "visual_size": Vector2(100, 26)}
-		&"workbench": return {"texture": "res://assets/pixel/props/table.png", "size": Vector2(80, 28), "visual_size": Vector2(84, 30)}
-		&"cabinet": return {"texture": "res://assets/pixel/props/medical_cabinet.png", "size": Vector2(22, 30), "visual_size": Vector2(26, 34)}
-		&"pallet": return {"texture": "res://assets/pixel/props/pallet.png", "size": Vector2(28, 20), "visual_size": Vector2(32, 22)}
-		&"crate": return {"texture": "res://assets/pixel/props/crate.png", "size": Vector2(26, 22), "visual_size": Vector2(28, 24)}
+	const FURNITURE := {
+		&"bed_single": {"texture": "res://assets/pixel/props/furniture_bed_single.png", "size": Vector2(32, 64), "visual_size": Vector2(34, 64)},
+		&"bed_double": {"texture": "res://assets/pixel/props/furniture_bed_double.png", "size": Vector2(44, 64), "visual_size": Vector2(46, 64)},
+		&"mattress": {"texture": "res://assets/pixel/props/furniture_mattress.png", "size": Vector2(30, 62), "visual_size": Vector2(32, 64)},
+		&"exam_bed": {"texture": "res://assets/pixel/props/furniture_bed_single.png", "size": Vector2(32, 64), "visual_size": Vector2(34, 64)},
+		&"sofa": {"texture": "res://assets/pixel/props/furniture_sofa_a.png", "size": Vector2(64, 28), "visual_size": Vector2(66, 30)},
+		&"sofa_b": {"texture": "res://assets/pixel/props/furniture_sofa_b.png", "size": Vector2(64, 28), "visual_size": Vector2(66, 30)},
+		&"armchair": {"texture": "res://assets/pixel/props/furniture_armchair.png", "size": Vector2(26, 26), "visual_size": Vector2(28, 28)},
+		&"dining_table": {"texture": "res://assets/pixel/props/table.png", "size": Vector2(64, 40), "visual_size": Vector2(68, 44)},
+		&"round_table": {"texture": "res://assets/pixel/props/furniture_table_round.png", "size": Vector2(40, 40), "visual_size": Vector2(42, 42)},
+		&"coffee_table": {"texture": "res://assets/pixel/props/furniture_coffee_table.png", "size": Vector2(44, 22), "visual_size": Vector2(46, 24)},
+		&"desk": {"texture": "res://assets/pixel/props/table.png", "size": Vector2(48, 24), "visual_size": Vector2(52, 28)},
+		&"chair": {"texture": "res://assets/pixel/props/chair.png", "size": Vector2(16, 18), "visual_size": Vector2(18, 20)},
+		&"office_chair": {"texture": "res://assets/pixel/props/furniture_office_chair.png", "size": Vector2(20, 20), "visual_size": Vector2(22, 22)},
+		&"wardrobe": {"texture": "res://assets/pixel/props/furniture_wardrobe.png", "size": Vector2(32, 46), "visual_size": Vector2(34, 48)},
+		&"dresser": {"texture": "res://assets/pixel/props/furniture_dresser.png", "size": Vector2(36, 24), "visual_size": Vector2(38, 26)},
+		&"nightstand": {"texture": "res://assets/pixel/props/furniture_nightstand.png", "size": Vector2(18, 18), "visual_size": Vector2(20, 20)},
+		&"tv_stand": {"texture": "res://assets/pixel/props/furniture_tv_stand.png", "size": Vector2(48, 18), "visual_size": Vector2(50, 20)},
+		&"bookshelf": {"texture": "res://assets/pixel/props/furniture_bookshelf.png", "size": Vector2(30, 38), "visual_size": Vector2(32, 40)},
+		&"counter": {"texture": "res://assets/pixel/props/counter.png", "size": Vector2(48, 24), "visual_size": Vector2(52, 26)},
+		&"counter_corner": {"texture": "res://assets/pixel/props/furniture_counter_corner.png", "size": Vector2(46, 46), "visual_size": Vector2(48, 48)},
+		&"sink_counter": {"texture": "res://assets/pixel/props/furniture_sink_counter.png", "size": Vector2(48, 24), "visual_size": Vector2(50, 26)},
+		&"stove": {"texture": "res://assets/pixel/props/furniture_stove.png", "size": Vector2(40, 26), "visual_size": Vector2(42, 28)},
+		&"pantry_shelf": {"texture": "res://assets/pixel/props/furniture_pantry_shelf.png", "size": Vector2(26, 34), "visual_size": Vector2(28, 36)},
+		&"grocery_shelf_short": {"texture": "res://assets/pixel/props/furniture_grocery_shelf_short.png", "size": Vector2(56, 22), "visual_size": Vector2(58, 24)},
+		&"grocery_shelf_long": {"texture": "res://assets/pixel/props/furniture_grocery_shelf_long.png", "size": Vector2(96, 22), "visual_size": Vector2(98, 24)},
+		&"aisle_shelf": {"texture": "res://assets/pixel/props/furniture_aisle_shelf.png", "size": Vector2(84, 26), "visual_size": Vector2(86, 28)},
+		&"wall_shelving": {"texture": "res://assets/pixel/props/furniture_wall_shelving.png", "size": Vector2(72, 16), "visual_size": Vector2(74, 18)},
+		&"shelf_row": {"texture": "res://assets/pixel/props/shelf.png", "size": Vector2(80, 20), "visual_size": Vector2(84, 22)},
+		&"industrial_shelf": {"texture": "res://assets/pixel/props/shelf.png", "size": Vector2(96, 24), "visual_size": Vector2(100, 26)},
+		&"checkout_counter": {"texture": "res://assets/pixel/props/furniture_checkout_counter.png", "size": Vector2(56, 24), "visual_size": Vector2(58, 26)},
+		&"display_rack": {"texture": "res://assets/pixel/props/furniture_display_rack.png", "size": Vector2(34, 30), "visual_size": Vector2(36, 32)},
+		&"fridge_display": {"texture": "res://assets/pixel/props/furniture_fridge_display.png", "size": Vector2(34, 40), "visual_size": Vector2(36, 42)},
+		&"freezer_chest": {"texture": "res://assets/pixel/props/furniture_freezer_chest.png", "size": Vector2(44, 26), "visual_size": Vector2(46, 28)},
+		&"booth": {"texture": "res://assets/pixel/props/furniture_booth.png", "size": Vector2(56, 26), "visual_size": Vector2(58, 28)},
+		&"bar_counter": {"texture": "res://assets/pixel/props/furniture_bar_counter.png", "size": Vector2(80, 24), "visual_size": Vector2(82, 26)},
+		&"bedside_trolley": {"texture": "res://assets/pixel/props/furniture_bedside_trolley.png", "size": Vector2(26, 32), "visual_size": Vector2(28, 34)},
+		&"equipment_trolley": {"texture": "res://assets/pixel/props/furniture_equipment_trolley.png", "size": Vector2(26, 32), "visual_size": Vector2(28, 34)},
+		&"medicine_shelf": {"texture": "res://assets/pixel/props/furniture_medicine_shelf.png", "size": Vector2(28, 36), "visual_size": Vector2(30, 38)},
+		&"waiting_bench": {"texture": "res://assets/pixel/props/furniture_waiting_bench.png", "size": Vector2(64, 20), "visual_size": Vector2(66, 22)},
+		&"reception_desk": {"texture": "res://assets/pixel/props/furniture_reception_desk.png", "size": Vector2(64, 26), "visual_size": Vector2(66, 28)},
+		&"tool_cabinet": {"texture": "res://assets/pixel/props/furniture_tool_cabinet.png", "size": Vector2(30, 30), "visual_size": Vector2(32, 32)},
+		&"pallet_rack": {"texture": "res://assets/pixel/props/furniture_pallet_rack.png", "size": Vector2(96, 28), "visual_size": Vector2(98, 30)},
+		&"locker": {"texture": "res://assets/pixel/props/furniture_locker.png", "size": Vector2(22, 32), "visual_size": Vector2(24, 34)},
+		&"barrel": {"texture": "res://assets/pixel/props/furniture_barrel.png", "size": Vector2(22, 22), "visual_size": Vector2(24, 24)},
+		&"machinery": {"texture": "res://assets/pixel/props/furniture_machinery.png", "size": Vector2(56, 38), "visual_size": Vector2(58, 40)},
+		&"cabinet": {"texture": "res://assets/pixel/props/medical_cabinet.png", "size": Vector2(22, 30), "visual_size": Vector2(26, 34)},
+		&"fridge": {"texture": "res://assets/pixel/props/fridge.png", "size": Vector2(28, 32), "visual_size": Vector2(30, 34)},
+		&"workbench": {"texture": "res://assets/pixel/props/table.png", "size": Vector2(80, 28), "visual_size": Vector2(84, 30)},
+		&"pallet": {"texture": "res://assets/pixel/props/pallet.png", "size": Vector2(28, 20), "visual_size": Vector2(32, 22)},
+		&"crate": {"texture": "res://assets/pixel/props/crate.png", "size": Vector2(26, 22), "visual_size": Vector2(28, 24)},
+	}
+	if FURNITURE.has(kind):
+		return FURNITURE[kind]
 	return {"texture": "res://assets/pixel/props/crate.png", "size": Vector2(26, 22), "visual_size": Vector2(28, 24)}
 
 func _floor_for(archetype: StringName, role: StringName) -> StringName:

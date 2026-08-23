@@ -156,9 +156,9 @@ func claim_building_base(city_model: Dictionary, world_seed: int, entity_parent:
 	return claimed
 
 ## Locates the settlement's functionality inside the claimed building's
-## ACTUAL rooms: storage containers, sleep spots and guard posts are placed
-## at deterministic positions inside generated rooms. No walls, roof or shell
-## is ever created -- the ordinary generated building remains the structure.
+## ACTUAL rooms: sleep spots sit ON generated beds, guard posts stand at the
+## entrance bay/windows, and storage containers take validated free spots
+## near real cabinets/shelving. Nothing is placed over existing furniture.
 func _setup_base_interior(building: Dictionary) -> void:
 	if _base_interior != null:
 		_base_interior.queue_free()
@@ -166,40 +166,84 @@ func _setup_base_interior(building: Dictionary) -> void:
 	_base_interior.name = "BaseInterior"
 	add_child(_base_interior)
 	var building_origin: Vector2 = building.get("position", Vector2.ZERO)
-	var rooms: Array = building.get("interior", {}).get("rooms", [])
+	var interior: Dictionary = building.get("interior", {})
+	var rooms: Array = interior.get("rooms", [])
 	if rooms.is_empty():
 		return
-	# Room roles drive placement; fallback order keeps every function inside
-	# a real room even when an archetype lacks a dedicated bedroom/pantry.
-	var storage_room := _find_room(rooms, [&"storage", &"pantry", &"stock_room", &"kitchen", &"medical_storage"])
-	if storage_room.is_empty():
-		storage_room = rooms[0]
-	var sleep_room := _find_room(rooms, [&"bedroom", &"living_room", &"exam_room"])
-	if sleep_room.is_empty():
-		sleep_room = rooms[mini(1, rooms.size() - 1)]
-	var watch_room: Dictionary = rooms[0]
+	# World-space occupied footprints so functional placement can prove a
+	# spot is genuinely free before a node lands there.
+	var blocked: Array[Rect2] = []
+	for furniture_variant in interior.get("furniture", []):
+		var furniture: Dictionary = furniture_variant
+		var rect: Rect2 = furniture["clearance_rect"]
+		rect.position += building_origin
+		blocked.append(rect)
+	for reserve_variant in interior.get("clearance_rects", []):
+		var reserve: Dictionary = reserve_variant
+		var reserve_rect: Rect2 = reserve["rect"]
+		reserve_rect.position += building_origin
+		blocked.append(reserve_rect)
+
+	# --- storage: near real cabinets/shelving in service rooms ---
+	var storage_anchors := _furniture_centers(interior.get("furniture", []),
+		[&"cabinet", &"locker", &"shelf_row", &"industrial_shelf", &"pantry_shelf",
+		&"medicine_shelf", &"tool_cabinet", &"bookshelf"],
+		[&"storage", &"medical_storage", &"stock_room", &"pantry", &"kitchen"], building_origin)
+	if storage_anchors.is_empty():
+		storage_anchors = _room_centers(rooms, [&"storage", &"pantry", &"kitchen", &"stock_room"], building_origin)
+	if storage_anchors.is_empty():
+		storage_anchors = [(rooms[0]["rect"] as Rect2).get_center() + building_origin]
 	var roles := ["general", "food", "water", "medical"]
+	var used_spots: Array[Vector2] = []
 	for role_index in range(roles.size()):
 		var container := StorageContainer.new()
 		container.name = "BaseStorage%s" % String(roles[role_index]).capitalize()
 		container.storage_role = roles[role_index]
 		container.structure_id = StringName("%s/base_storage_%s" % [String(data.building_id), roles[role_index]])
 		container.physical_interaction_enabled = true
-		var slot_offset := Vector2(-40.0 + float(role_index) * 27.0, -24.0)
+		var anchor: Vector2 = storage_anchors[role_index % storage_anchors.size()]
+		var spot := _find_free_spot_near(anchor, used_spots, blocked, 56.0, 24.0)
+		used_spots.append(spot)
 		_base_interior.add_child(container)
-		container.global_position = building_origin + (storage_room["rect"] as Rect2).get_center() + slot_offset
+		container.global_position = spot
+
+	# --- sleep spots: ON the generated beds themselves ---
+	var bed_spots := _furniture_centers(interior.get("furniture", []),
+		[&"bed_single", &"bed_double", &"mattress", &"exam_bed"], [], building_origin)
+	var sleep_room := _find_room(rooms, [&"bedroom", &"living_room"])
 	for spot_index in range(4):
-		var spot := SleepSpot.new()
-		spot.name = "BaseSleepSpot%d" % (spot_index + 1)
-		_base_interior.add_child(spot)
-		spot.global_position = building_origin + (sleep_room["rect"] as Rect2).get_center() \
-			+ Vector2(-48.0 + float(spot_index % 2) * 96.0, -32.0 + float(spot_index / 2) * 56.0)
-	for post_index in range(2):
+		var spot_node := SleepSpot.new()
+		spot_node.name = "BaseSleepSpot%d" % (spot_index + 1)
+		_base_interior.add_child(spot_node)
+		if spot_index < bed_spots.size():
+			spot_node.global_position = bed_spots[spot_index]
+		elif not sleep_room.is_empty():
+			spot_node.global_position = building_origin + (sleep_room["rect"] as Rect2).get_center() \
+				+ Vector2(-40.0 + float(spot_index % 2) * 80.0, -20.0 + float(spot_index / 2) * 44.0)
+		else:
+			spot_node.global_position = building_origin + (rooms[0]["rect"] as Rect2).get_center()
+
+	# --- guard posts: entrance bay inner edge + windows of the front room ---
+	var watch_room: Dictionary = rooms[0]
+	var post_positions: Array[Vector2] = []
+	for door_variant in interior.get("doors", []):
+		var door: Dictionary = door_variant
+		if bool(door["exterior"]):
+			post_positions.append(building_origin + (door["position"] as Vector2) + Vector2(0.0, -26.0))
+	for window_variant in interior.get("windows", []):
+		var window: Dictionary = window_variant
+		if window["room_id"] == watch_room["id"]:
+			post_positions.append(building_origin + (window["position"] as Vector2) + Vector2(0.0, 22.0))
+			if post_positions.size() >= 2:
+				break
+	while post_positions.size() < 2:
+		var offset_x := -64.0 if post_positions.size() == 0 else 64.0
+		post_positions.append(building_origin + (watch_room["rect"] as Rect2).get_center() + Vector2(offset_x, 28.0))
+	for post_index in range(mini(post_positions.size(), 2)):
 		var post := GuardPost.new()
 		post.name = "BaseGuardPost%d" % (post_index + 1)
 		_base_interior.add_child(post)
-		post.global_position = building_origin + (watch_room["rect"] as Rect2).get_center() \
-			+ Vector2(-64.0 if post_index == 0 else 64.0, 40.0)
+		post.global_position = post_positions[post_index]
 
 func _find_room(rooms: Array, preferred_roles: Array) -> Dictionary:
 	for role_variant in preferred_roles:
@@ -209,6 +253,52 @@ func _find_room(rooms: Array, preferred_roles: Array) -> Dictionary:
 			if room["role"] == role:
 				return room
 	return {}
+
+func _furniture_centers(furniture_list: Array, kinds: Array, preferred_roles: Array, origin: Vector2) -> Array[Vector2]:
+	var centers: Array[Vector2] = []
+	for furniture_variant in furniture_list:
+		var furniture: Dictionary = furniture_variant
+		if String(furniture["mode"]) == "decal":
+			continue
+		if not kinds.is_empty() and not kinds.has(furniture["kind"]):
+			continue
+		if not preferred_roles.is_empty() and not preferred_roles.has(furniture["role"]):
+			continue
+		centers.append((furniture["position"] as Vector2) + origin)
+	return centers
+
+func _room_centers(rooms: Array, preferred_roles: Array, origin: Vector2) -> Array[Vector2]:
+	var centers: Array[Vector2] = []
+	for role_variant in preferred_roles:
+		var room := _find_room(rooms, [role_variant])
+		if not room.is_empty():
+			centers.append((room["rect"] as Rect2).get_center() + origin)
+	return centers
+
+## Deterministic ring search around an anchor for a spot clear of used base
+## positions and every interior footprint. Falls back to the anchor itself.
+func _find_free_spot_near(anchor: Vector2, used: Array[Vector2], blocked: Array[Rect2], search_radius: float, clearance: float) -> Vector2:
+	for ring in range(0, 4):
+		var ring_radius := float(ring) * (search_radius * 0.34)
+		var steps := 1 if ring == 0 else 8 * ring
+		for step in range(steps):
+			var angle := TAU * float(step) / float(steps)
+			var candidate := anchor + Vector2.RIGHT.rotated(angle) * ring_radius
+			var footprint := Rect2(candidate - Vector2(clearance, clearance), Vector2(clearance, clearance) * 2.0)
+			var free := true
+			for used_position in used:
+				if footprint.has_point(used_position):
+					free = false
+					break
+			if not free:
+				continue
+			for blocked_rect in blocked:
+				if footprint.intersects(blocked_rect):
+					free = false
+					break
+			if free:
+				return candidate
+	return anchor
 
 ## State-driven dressing around the claimed entrance: crates, sandbags and a
 ## sign grouped by the door. The approach corridor itself stays clear so the
