@@ -1234,6 +1234,14 @@ func _test_breach_syncs_roof_and_facade() -> void:
 	await get_tree().process_frame
 	await get_tree().physics_frame
 	_assert(not roof.get_used_cells().has(expected_cell), "destroying a perimeter wall must open the roof above it")
+	# The unsupported bay collapses inward: more than one tile must fall.
+	var strip_erased := 0
+	for cell in roof.get_used_cells():
+		if cell.y == expected_cell.y:
+			strip_erased += 1
+	var row_cells_before_estimate := floori((building_spec["interior"]["half_extent"].x * 2.0) / PixelAtlasMap.TILE_SIZE)
+	_assert(row_cells_before_estimate - strip_erased >= 2,
+		"the whole unsupported roof bay along the breached wall must collapse (only %d of ~%d left)" % [strip_erased, row_cells_before_estimate])
 	var facade := first.projected_facade()
 	_assert(facade != null and facade.ground_breaches.has(breach_x), "the south facade must notch at the breached segment")
 	first.free()
@@ -1248,6 +1256,46 @@ func _test_breach_syncs_roof_and_facade() -> void:
 	var rebuilt_facade := second.projected_facade()
 	_assert(rebuilt_facade != null and rebuilt_facade.ground_breaches.has(breach_x), "persisted breaches must re-notch the rebuilt facade")
 	second.free()
+
+	# Interior partitions collapse a localized ceiling patch instead.
+	var third := ProceduralBuilding.new()
+	third.configure(city["buildings"][0])
+	add_child(third)
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	var interior_roof := third.get_node("Roof") as TileMapLayer
+	var rects: Array = building_spec["interior"]["perimeter_rects"]
+	var partition_comp: EnvironmentDamageComponent = null
+	for child in third.get_children():
+		if child is StaticBody2D:
+			var candidate := child.get_node_or_null("EnvironmentDamageComponent") as EnvironmentDamageComponent
+			if candidate == null or not "/wall_" in String(candidate.object_id):
+				continue
+			var pos: Vector2 = (child as Node2D).position
+			var on_edge := false
+			for rect_variant in rects:
+				var rect: Rect2 = rect_variant
+				var margin: float = PixelAtlasMap.TILE_SIZE * 0.5 + 1.0
+				if absf(pos.y - rect.position.y) <= margin or absf(pos.y - rect.end.y) <= margin \
+						or absf(pos.x - rect.position.x) <= margin or absf(pos.x - rect.end.x) <= margin:
+					on_edge = true
+					break
+			if not on_edge:
+				partition_comp = candidate
+				break
+	if partition_comp != null:
+		var p_body := partition_comp.get_parent() as Node2D
+		var base_cell := Vector2i(floori(p_body.position.x / PixelAtlasMap.TILE_SIZE), floori(p_body.position.y / PixelAtlasMap.TILE_SIZE))
+		var had_center: bool = interior_roof.get_used_cells().has(base_cell)
+		partition_comp.apply_damage(9999.0, EnvironmentDamage.DamageClass.EXPLOSIVE, null)
+		await get_tree().process_frame
+		await get_tree().physics_frame
+		if had_center:
+			_assert(not interior_roof.get_used_cells().has(base_cell),
+				"an interior wall failure must collapse its localized ceiling patch")
+	else:
+		pass # this archetype has no mid-building partition; edge case tolerated
+	third.free()
 	WorldState.reset()
 	await get_tree().process_frame
 

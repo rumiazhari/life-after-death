@@ -164,24 +164,34 @@ func _draw_span(world_local_span: Rect2, span_index: int) -> void:
 	_draw_prague_details(rect, palette, span_index)
 	_draw_breach_openings(rect)
 
-## Dark ground-level openings where south wall segments were destroyed.
+## Dark openings where south wall segments were destroyed. A breach is a
+## FULL-HEIGHT shaft: losing a ground-floor load-bearing segment brings the
+## whole elevation column above it down with it -- every storey shows the
+## wound, with only broken slab lips left at each floor line.
 func _draw_breach_openings(rect: Rect2) -> void:
 	if ground_breaches.is_empty():
 		return
-	var opening_height := minf(projection_height * 0.62, 52.0)
+	var shaft_height := projection_height * 0.94
+	var floor_height := projection_height / float(maxi(storeys, 1))
+	var opening_width := 30.0
 	for breach_x in ground_breaches:
-		if breach_x < rect.position.x - 12.0 or breach_x > rect.end.x + 12.0:
+		if breach_x < rect.position.x - 14.0 or breach_x > rect.end.x + 14.0:
 			continue
-		var width := 30.0
-		var opening := Rect2(Vector2(breach_x - width * 0.5, rect.end.y - opening_height), Vector2(width, opening_height))
-		draw_rect(opening, Color8(16, 14, 13))
-		# Jagged remaining edges.
-		for edge_y in range(int(opening.position.y), int(opening.end.y) - 4, 9):
-			var jitter := 3.0 + float((int(breach_x) + edge_y) % 5)
-			draw_rect(Rect2(opening.position.x - 2.0, float(edge_y), jitter, 5.0), Color(0.08, 0.07, 0.06, 0.9))
-			draw_rect(Rect2(opening.end.x - jitter + 2.0, float(edge_y), jitter, 5.0), Color(0.08, 0.07, 0.06, 0.9))
+		var top := rect.end.y - shaft_height
+		draw_rect(Rect2(Vector2(breach_x - opening_width * 0.5, top), Vector2(opening_width, shaft_height)), Color8(16, 14, 13))
+		# Jagged vertical edges the whole way up.
+		var edge_y := top
+		while edge_y < rect.end.y - 4.0:
+			var jitter := 3.0 + float((int(breach_x) + int(edge_y)) % 5)
+			draw_rect(Rect2(rect.position.x + 0.0 + (breach_x - rect.position.x) - opening_width * 0.5 - 2.0, edge_y, jitter, 6.0), Color(0.08, 0.07, 0.06, 0.9))
+			draw_rect(Rect2(breach_x + opening_width * 0.5 - jitter + 2.0, edge_y, jitter, 6.0), Color(0.08, 0.07, 0.06, 0.9))
+			edge_y += 7.0
+		# Broken slab lips remain at each storey line.
+		for floor_index in range(1, maxi(storeys, 1)):
+			var lip_y := rect.end.y - floor_height * float(floor_index)
+			draw_rect(Rect2(Vector2(breach_x - opening_width * 0.5 - 2.0, lip_y - 3.0), Vector2(opening_width + 4.0, 5.0)), Color8(58, 50, 44))
 		# Debris spill on the ground line.
-		draw_rect(Rect2(opening.position.x - 6.0, rect.end.y - 4.0, opening.size.x + 12.0, 4.0), Color(0.1, 0.09, 0.08, 0.8))
+		draw_rect(Rect2(Vector2(breach_x - opening_width * 0.5 - 6.0, rect.end.y - 4.0), Vector2(opening_width + 12.0, 4.0)), Color(0.1, 0.09, 0.08, 0.85))
 
 func _draw_masonry(rect: Rect2, palette: Dictionary, span_index: int) -> void:
 	if facade_style not in [&"masonry_industrial", &"exposed_brick_infill"]:

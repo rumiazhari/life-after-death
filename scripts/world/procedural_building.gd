@@ -140,17 +140,99 @@ func _apply_wall_breach(comp: EnvironmentDamageComponent) -> void:
 	if body == null:
 		return
 	var local := body.position
+	var interior: Dictionary = specification.get("interior", {})
+	var edge := _perimeter_edge_for(local, interior.get("perimeter_rects", []))
 	var roof := get_node_or_null(roof_node_path) as TileMapLayer
 	if roof != null:
-		# Roof tiles were painted using building-local footprint coordinates
-		# as layer cells; erasing that same cell opens the roof exactly where
-		# the interior wall segment used to stand (the whole layer is drawn
-		# displaced north by the projection, like every roof tile).
-		var cell := Vector2i(floori(local.x / PixelAtlasMap.TILE_SIZE), floori(local.y / PixelAtlasMap.TILE_SIZE))
-		roof.erase_cell(cell)
-	var half_extent: Vector2 = specification.get("interior", {}).get("half_extent", Vector2.ZERO)
-	if half_extent.y > 0.0 and local.y >= half_extent.y - PixelAtlasMap.TILE_SIZE and _facade_visual != null:
+		if edge == &"none":
+			# Interior partition failure: the ceiling around it loses a
+			# localized patch (the cell itself plus its four neighbors).
+			_collapse_roof_patch(roof, local)
+		else:
+			# Perimeter load-bearing failure: the whole unsupported roof bay
+			# along that wall line collapses inward down to the floor.
+			_collapse_roof_bay(roof, local, edge, interior.get("perimeter_rects", []), comp)
+	if edge == &"south" and _facade_visual != null:
 		_facade_visual.add_ground_breach(local.x)
+
+## Which outer face (if any) this wall segment sits on.
+func _perimeter_edge_for(p: Vector2, rects: Array) -> StringName:
+	var margin := PixelAtlasMap.TILE_SIZE * 0.5 + 1.0
+	for rect_variant in rects:
+		var rect: Rect2 = rect_variant
+		if absf(p.y - rect.position.y) <= margin:
+			return &"north"
+		if absf(p.y - rect.end.y) <= margin:
+			return &"south"
+		if absf(p.x - rect.position.x) <= margin:
+			return &"west"
+		if absf(p.x - rect.end.x) <= margin:
+			return &"east"
+	return &"none"
+
+## Erases the full straight run of roof cells from the breached edge across
+## the footprint -- the span that lost its support falls down to the floor.
+## Bounded to cells the roof actually painted (compound notches stop it).
+func _collapse_roof_bay(roof: TileMapLayer, p: Vector2, edge: StringName, rects: Array, comp: EnvironmentDamageComponent) -> void:
+	var target := Rect2()
+	var best := INF
+	for rect_variant in rects:
+		var rect: Rect2 = rect_variant
+		var distance: float = absf(p.x - rect.get_center().x) + absf(p.y - rect.get_center().y)
+		if distance < best:
+			best = distance
+			target = rect
+	if target.size == Vector2.ZERO:
+		return
+	var ts := PixelAtlasMap.TILE_SIZE
+	var cells: Array[Vector2i] = []
+	if edge == &"north" or edge == &"south":
+		var cy := floori(p.y / ts)
+		var x0 := floori((target.position.x + 8.0) / ts)
+		var x1 := floori((target.end.x - 8.0) / ts)
+		for cx in range(x0, x1 + 1):
+			cells.append(Vector2i(cx, cy))
+	else:
+		var cx := floori(p.x / ts)
+		var y0 := floori((target.position.y + 8.0) / ts)
+		var y1 := floori((target.end.y - 8.0) / ts)
+		for cy in range(y0, y1 + 1):
+			cells.append(Vector2i(cx, cy))
+	var erased_positions: Array[Vector2] = []
+	var erased := 0
+	for cell in cells:
+		if not roof.get_used_cells().has(cell):
+			continue
+		roof.erase_cell(cell)
+		erased += 1
+		if erased <= 3:
+			erased_positions.append(Vector2(cell) * ts + Vector2(ts * 0.5, ts * 0.5))
+		if erased >= 64:
+			break
+	_spawn_falling_roof_debris(roof, comp, erased_positions)
+
+## A few roof pieces rain into the rooms below the collapsed bay.
+func _spawn_falling_roof_debris(roof: TileMapLayer, comp: EnvironmentDamageComponent, positions: Array[Vector2]) -> void:
+	if positions.is_empty():
+		return
+	var debris_script: Script = load("res://scripts/physics/physics_debris.gd")
+	var container := get_tree().get_first_node_in_group("entity_container")
+	if container == null:
+		container = self
+	var texture := comp.debris_texture
+	var rng := RandomNumberGenerator.new()
+	rng.seed = int(String(comp.object_id).hash())
+	for i in range(positions.size()):
+		var world_position := roof.to_global(positions[i])
+		debris_script.spawn(container, world_position, texture, Vector2(12, 8),
+			Vector2(rng.randf_range(-60, 60), rng.randf_range(-20, 40)), Color(0.85, 0.82, 0.78))
+
+func _collapse_roof_patch(roof: TileMapLayer, p: Vector2) -> void:
+	var base := Vector2i(floori(p.x / PixelAtlasMap.TILE_SIZE), floori(p.y / PixelAtlasMap.TILE_SIZE))
+	for offset in [Vector2i.ZERO, Vector2i.UP, Vector2i.DOWN, Vector2i.LEFT, Vector2i.RIGHT]:
+		var cell: Vector2i = base + offset
+		if roof.get_used_cells().has(cell):
+			roof.erase_cell(cell)
 
 func _build_furniture(interior: Dictionary, rooms_by_id: Dictionary) -> void:
 	for furniture in interior["furniture"]:
