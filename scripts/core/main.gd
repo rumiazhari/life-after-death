@@ -85,6 +85,24 @@ func _ready() -> void:
 	_setup_settlement_jobs()
 	_spawn_survivors()
 
+	# Story & dialogue: one controller + one UI for the session. Gameplay
+	# hooks (interactables, triggers) call controller.start(id).
+	var dialogue_controller := DialogueController.new()
+	dialogue_controller.name = "DialogueController"
+	add_child(dialogue_controller)
+	var dialogue_ui := DialogueUI.new()
+	dialogue_ui.name = "DialogueUI"
+	add_child(dialogue_ui)
+	dialogue_ui.bind(dialogue_controller)
+	GameEvents.player_died.connect(dialogue_controller.cancel)
+
+	# 2.5D building layer: real stacked geometry for generated buildings,
+	# rendered through a subviewport camera matched to the 2D camera.
+	var world_25d := BuildingWorld3D.new()
+	world_25d.name = "BuildingWorld3D"
+	add_child(world_25d)
+	world_25d.track(camera_rig)
+
 	GameEvents.player_died.connect(_on_player_died)
 	death_overlay.restart_requested.connect(_restart_game)
 	pause_menu.quit_requested.connect(_on_quit_requested)

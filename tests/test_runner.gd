@@ -122,6 +122,140 @@ func _run_all() -> void:
 	await _run_test("breach_syncs_roof_and_facade", _test_breach_syncs_roof_and_facade)
 	await _run_test("headshots_kill_fast_and_limbs_sever", _test_headshots_kill_fast_and_limbs_sever)
 	await _run_test("zombie_gait_animation_states", _test_zombie_gait_animation_states)
+	await _run_test("dialogue_database_is_coherent", _test_dialogue_database_is_coherent)
+	await _run_test("dialogue_controller_flow_branch_and_flags", _test_dialogue_controller_flow_branch_and_flags)
+	await _run_test("dialogue_ui_shows_lines_and_choices", _test_dialogue_ui_shows_lines_and_choices)
+	await _run_test("building_world_25d_mirrors_destruction", _test_building_world_25d_mirrors_destruction)
+
+## --- story & dialogue ---
+
+func _test_dialogue_database_is_coherent() -> void:
+	var errors := DialogueDatabase.validate()
+	_assert(errors.is_empty(), "authored dialogue must be referentially coherent: %s" % str(errors))
+	for required_id in [&"safehouse_first_night", &"trader_vaclav_greeting", &"survivor_plea"]:
+		_assert(DialogueDatabase.has(required_id), "campaign must author the %s conversation" % String(required_id))
+	var greeting := DialogueDatabase.get_entry(&"trader_vaclav_greeting")
+	_assert((greeting["choices"] as Array).size() >= 2, "the trader greeting must offer branching choices")
+
+func _test_dialogue_controller_flow_branch_and_flags() -> void:
+	WorldState.reset()
+	var controller := DialogueController.new()
+	add_child(controller)
+	var seen_lines: Array[String] = []
+	var finished_ids: Array[StringName] = []
+	var captured_options: Array = []
+	controller.line_started.connect(func(_id: StringName, _index: int, _speaker: StringName, text: String) -> void:
+		seen_lines.append(text))
+	controller.choices_available.connect(func(_id: StringName, options: Array) -> void:
+		captured_options.clear()
+		for option in options:
+			captured_options.append(option))
+	controller.dialogue_finished.connect(func(id: StringName) -> void: finished_ids.append(id))
+	_assert(not controller.is_active(), "controller starts idle")
+	_assert(controller.start(&"does_not_exist") == false, "unknown dialogue ids must be rejected")
+	_assert(controller.start(&"safehouse_first_night"), "starting an authored dialogue must succeed")
+	_assert(seen_lines.size() == 1, "start() must present the first line immediately")
+	controller.advance()
+	_assert(captured_options.is_empty(), "choices stay hidden while lines remain")
+	controller.advance() # presents choices (returns false), controller waits for choose()
+	_assert(captured_options.size() == 2, "choices must be presented exactly once for selection")
+	_assert(controller.choose(99) == false, "out-of-range choice indices must be rejected")
+	_assert(controller.choose(1), "choosing the dawn-plan branch must succeed")
+	_assert(bool(WorldState.world_flags.get(&"story_moving_on", false)), "choice effects must set their world flag")
+	_assert(String(controller.active_id) == &"safehouse_dawn_plan", "branch target must become the active dialogue")
+	var depth := 0
+	while controller.is_active() and depth < 10:
+		controller.advance()
+		depth += 1
+	_assert(finished_ids.has(&"safehouse_dawn_plan") or not controller.is_active(),
+		"exhausting a branch line list must finish the conversation")
+	controller.cancel()
+	WorldState.reset()
+
+func _test_building_world_25d_mirrors_destruction() -> void:
+	var failures := 0
+	var world: Node = load("res://scripts/world/building_world_3d.gd").new()
+	world.name = "World25D"
+	add_child(world)
+	var city: Dictionary = ProceduralCityGenerator.new().generate_streamed_chunk(20260821, Vector2i.ZERO)
+	var spec: Dictionary = city["buildings"][0]
+	var building := ProceduralBuilding.new()
+	building.configure(spec)
+	add_child(building)
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	world.register_building(building)
+
+	var half: Vector2 = spec["interior"]["half_extent"]
+	# Collect two south segments up front (before anything dies).
+	var south: Array[Dictionary] = []
+	for child in building.get_children():
+		if child is StaticBody2D:
+			var c := child.get_node_or_null("EnvironmentDamageComponent") as EnvironmentDamageComponent
+			if c != null and "/wall_" in String(c.object_id):
+				var body := child as Node2D
+				if body.position.y >= half.y - PixelAtlasMap.TILE_SIZE:
+					south.append({"comp": c, "pos": body.position})
+	print("south_segments=", south.size())
+
+	var first: Dictionary = south[1]
+	var second: Dictionary = south[2]
+	var cell_a := Vector2i(floori((first["pos"] as Vector2).x / 32.0), floori((first["pos"] as Vector2).y / 32.0))
+	var column_before: int = world.get_column_mesh_count(cell_a)
+	var roof_before: int = world.get_roof_tile_count()
+	var cascade_x := floori(((second["pos"] as Vector2).x) / 32.0)
+	var cascade_before: int = world.count_meshes_in_column_x(cascade_x)
+
+	(first["comp"] as EnvironmentDamageComponent).apply_damage(9999.0, EnvironmentDamage.DamageClass.EXPLOSIVE, null)
+	await get_tree().process_frame
+	await get_tree().physics_frame
+	var column_after: int = world.get_column_mesh_count(cell_a)
+	var roof_mid: int = world.get_roof_tile_count()
+	failures += 0 if column_after < column_before else 1
+	failures += 0 if roof_mid < roof_before else 1
+	print("column ", column_before, "->", column_after, " | roof ", roof_before, "->", roof_mid)
+
+	(second["comp"] as EnvironmentDamageComponent).apply_damage(9999.0, EnvironmentDamage.DamageClass.EXPLOSIVE, null)
+	await get_tree().process_frame
+	await get_tree().physics_frame
+	var cascade_after: int = world.count_meshes_in_column_x(cascade_x)
+	failures += 0 if cascade_after < cascade_before else 1
+	print("cascade x=", cascade_x, " ", cascade_before, "->", cascade_after)
+
+	print("FAILURES ", failures)
+	_assert(failures == 0, "2.5D destruction mirror must track every event (%d failures)" % failures)
+	world.queue_free()
+	building.queue_free()
+	WorldState.reset()
+	await get_tree().process_frame
+
+
+func _test_dialogue_ui_shows_lines_and_choices() -> void:
+	WorldState.reset()
+	var controller := DialogueController.new()
+	add_child(controller)
+	var ui := DialogueUI.new()
+	ui.bind(controller)
+	add_child(ui)
+	await get_tree().process_frame
+	controller.start(&"trader_vaclav_greeting")
+	await get_tree().process_frame
+	_assert(ui.displayed_text().length() > 0, "the UI must display the active line text")
+	# Exhaust lines to surface the choice buttons.
+	controller.advance()
+	controller.advance()
+	await get_tree().process_frame
+	var choices := ui.displayed_choice_texts()
+	_assert(choices.size() == 2, "the UI must render one button per presented choice")
+	_assert(choices.any(func(text: String) -> bool: return text.contains("rifle")), "choice buttons must show authored text")
+	# Choosing through the UI path applies flags.
+	controller.choose(1)
+	_assert(bool(WorldState.world_flags.get(&"story_snubbed_vaclav", false)), "UI-driven selection must apply choice effects")
+	controller.cancel()
+	ui.queue_free()
+	controller.queue_free()
+	WorldState.reset()
+	await get_tree().process_frame
 	await _run_test("streamed_prague_quarters_are_dense_and_open_spaces_are_rare", _test_streamed_prague_quarters_are_dense_and_open_spaces_are_rare)
 	await _run_test("procedural_seed_corpus_is_deterministic_valid_and_bounded", _test_procedural_seed_corpus_is_deterministic_valid_and_bounded)
 	await _run_test("procedural_generation_retries_and_fails_explicitly", _test_procedural_generation_retries_and_fails_explicitly)

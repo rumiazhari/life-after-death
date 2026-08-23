@@ -115,6 +115,16 @@ func _build_shell(interior: Dictionary) -> void:
 	var exterior_nodes := BuildingExteriorRenderer.build(self, specification, interior)
 	_facade_visual = exterior_nodes["facade"]
 	_wire_wall_destruction_sync()
+	# 2.5D: when the shared 3D building layer exists, it becomes the visual
+	# truth (real stacked geometry); the flat facade/roof step aside.
+	var world_25d: Node = _world_25d()
+	if world_25d != null:
+		world_25d.register_building(self)
+		if _facade_visual != null:
+			_facade_visual.visible = false
+		var roof := get_node_or_null(roof_node_path) as TileMapLayer
+		if roof != null:
+			roof.visible = false
 
 ## Logical spatial sync between interior wall destruction and the projected
 ## exterior: destroying a perimeter wall segment erases the roof tile(s)
@@ -171,11 +181,13 @@ func _apply_wall_breach(comp: EnvironmentDamageComponent) -> void:
 			_collapse_roof_patch(roof, local)
 		else:
 			_collapse_roof_bay(roof, local, edge, interior.get("perimeter_rects", []), comp)
+			_forward_roof_to_25d(_bay_cells_for(interior, local, edge))
 	if edge == &"south":
 		if _facade_visual != null:
 			_facade_visual.add_ground_breach(local.x)
 		_record_south_breach(local.x)
 		_refresh_south_facade_state()
+	_forward_wall_to_25d(local)
 func _perimeter_edge_for(p: Vector2, rects: Array) -> StringName:
 	var margin := PixelAtlasMap.TILE_SIZE * 0.5 + 1.0
 	for rect_variant in rects:
@@ -411,6 +423,7 @@ func _refresh_south_facade_state() -> void:
 				if not _facade_visual.collapse_columns.has(x):
 					_spawn_cascade_debris(x, half_extent.y)
 				_facade_visual.add_collapse_column(x)
+				_forward_cascade_to_25d(x)
 			else:
 				_facade_visual.set_upper_damage(x, clampi(run.size(), 1, 3))
 	for run in runs:
@@ -419,6 +432,57 @@ func _refresh_south_facade_state() -> void:
 		for entry_variant in run:
 			var entry: Dictionary = entry_variant
 			_facade_visual.set_upper_damage(entry["x"], clampi(run.size(), 1, 3))
+## --- 2.5D bridge -------------------------------------------------------
+## When a BuildingWorld3D layer exists (Main creates it), destruction events
+## are mirrored into real stacked geometry. Without it (standalone fixtures,
+## tests) these are silent no-ops.
+func _world_25d() -> Node:
+	return get_tree().get_first_node_in_group("building_world_25d") if is_inside_tree() else null
+
+func _forward_wall_to_25d(local: Vector2) -> void:
+	var world: Node = _world_25d()
+	if world != null:
+		world.remove_wall_column(local)
+
+func _forward_roof_to_25d(cells: Array) -> void:
+	var world: Node = _world_25d()
+	if world != null:
+		world.collapse_roof_tiles(cells)
+
+func _forward_cascade_to_25d(local_x: float) -> void:
+	var world: Node = _world_25d()
+	if world != null:
+		world.collapse_column(local_x)
+
+func _bay_cells_for(interior: Dictionary, local: Vector2, edge: StringName) -> Array:
+	var ts := PixelAtlasMap.TILE_SIZE
+	var target := target_of_rect(interior, local)
+	var cells: Array = []
+	if edge == &"north" or edge == &"south":
+		var cy := floori(local.y / ts)
+		var x0 := floori((target.position.x + 8.0) / ts)
+		var x1 := floori((target.end.x - 8.0) / ts)
+		for cx in range(x0, x1 + 1):
+			cells.append(Vector2i(cx, cy))
+	else:
+		var cx := floori(local.x / ts)
+		var y0 := floori((target.position.y + 8.0) / ts)
+		var y1 := floori((target.end.y - 8.0) / ts)
+		for cy in range(y0, y1 + 1):
+			cells.append(Vector2i(cx, cy))
+	return cells
+
+func target_of_rect(interior: Dictionary, local: Vector2) -> Rect2:
+	var best := Rect2()
+	var best_distance := INF
+	for rect_variant in interior.get("perimeter_rects", []):
+		var rect: Rect2 = rect_variant
+		var distance: float = absf(local.x - rect.get_center().x) + absf(local.y - rect.get_center().y)
+		if distance < best_distance:
+			best_distance = distance
+			best = rect
+	return best
+
 func attach_exterior_sort_parent(sort_parent: Node2D) -> BuildingFacadeVisual:
 	if _facade_visual == null or sort_parent == null or _facade_visual.get_parent() == sort_parent:
 		return _facade_visual
