@@ -405,3 +405,78 @@ static func _make_interact_area(collision_size: Vector2) -> Area2D:
 	interact_collider.shape = interact_shape
 	area.add_child(interact_collider)
 	return area
+
+## Builds one composed street object from a generator prop spec. Unlike the
+## plain furniture builders above, a street object separates five concerns:
+## world position (the Y-sort base), visual dimensions, collision footprint,
+## visual anchor (tall visuals extend upward/north from the base) and an
+## optional local light source. A tall visual therefore never needs an
+## equally large collision box -- trees keep trunk-sized collision while
+## their crowns span several tiles purely visually.
+static func add_street_object(parent: Node2D, local_position: Vector2, spec: Dictionary) -> void:
+	var kind: StringName = spec.get("kind", &"prop")
+	var requested_id: StringName = spec.get("id", &"")
+	var stable_id := requested_id if requested_id != &"" else _derived_object_id(parent, local_position, kind)
+	var collision_size: Vector2 = spec.get("size", Vector2(16, 16))
+	var root := Node2D.new()
+	root.position = local_position
+	root.name = String(stable_id).get_file()
+
+	# --- visual layer ---
+	if spec.has("procedural_kind"):
+		root.add_child(StreetObjectVisual.make(spec))
+	else:
+		var sprite := Sprite2D.new()
+		sprite.texture = load(spec.get("texture", ""))
+		var visual_size: Vector2 = spec.get("visual_size", collision_size)
+		var texture_size := sprite.texture.get_size() if sprite.texture != null else visual_size
+		if texture_size.x > 0.0 and texture_size.y > 0.0:
+			sprite.scale = visual_size / texture_size
+		# Visual anchor: bottom of the artwork sits on the object's ground
+		# line so the drawn object grows upward/north from its base.
+		sprite.position = Vector2(0.0, collision_size.y * 0.5 - visual_size.y * 0.5 + 4.0)
+		root.add_child(sprite)
+
+	# --- physical footprint ---
+	var body := StaticBody2D.new()
+	body.collision_layer = 1
+	body.collision_mask = 0
+	var shape := RectangleShape2D.new()
+	shape.size = collision_size
+	var collider := CollisionShape2D.new()
+	collider.name = "CollisionShape2D"
+	collider.shape = shape
+	body.add_child(collider)
+	var damage := EnvironmentDamageComponent.new()
+	damage.name = "EnvironmentDamageComponent"
+	damage.object_id = stable_id
+	damage.minimum_damage_class = int(spec.get("minimum_damage_class", EnvironmentDamage.DamageClass.SMALL_ARMS))
+	damage.max_durability = maxf(18.0, collision_size.length() * 0.75)
+	damage.affected_size = collision_size
+	damage.destroy_target = root
+	body.add_child(damage)
+	root.add_child(body)
+
+	# --- interaction footprint ---
+	var interaction: StringName = spec.get("interaction", &"salvage")
+	if interaction != &"":
+		var area := _make_interact_area(collision_size)
+		var interactable := InteractableComponent.new()
+		interactable.name = "InteractableComponent"
+		interactable.interact_label = "Search" if interaction == &"loot" else "Salvage"
+		area.add_child(interactable)
+		if interaction == &"loot":
+			var loot := LootContainerComponent.new()
+			loot.name = "LootContainerComponent"
+			loot.prop_id = stable_id
+			loot.capacity_weight = 80.0
+			loot.starting_items = spec.get("items", {})
+			area.add_child(loot)
+		else:
+			var salvage := SalvageableComponent.new()
+			salvage.name = "SalvageableComponent"
+			salvage.prop_id = stable_id
+			salvage.material_yield = maxi(int(spec.get("yield", 1)), 1)
+			area.add_child(salvage)
+		root.add_child(area)
+	parent.add_child(root)

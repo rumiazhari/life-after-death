@@ -76,6 +76,9 @@ func register_settlement(data: SettlementData) -> int:
 func get_settlement(id: int) -> SettlementData:
 	return settlements.get(id)
 
+func unregister_settlement(id: int) -> void:
+	settlements.erase(id)
+
 func register_container(inventory: Inventory) -> int:
 	var id: int = _next_container_id
 	_next_container_id += 1

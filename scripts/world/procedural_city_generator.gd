@@ -861,27 +861,33 @@ func _make_exterior_props(seed_value: int, blocks: Array[Dictionary], buildings:
 	var building_by_block: Dictionary = {}
 	for building in buildings:
 		building_by_block[building["block_id"]] = building
+	var apocalypse := int(morphology.get("apocalypse_level", 1))
 	for block in blocks:
 		var block_id: StringName = block["id"]
 		serial_by_block[block_id] = 0
 		var rect: Rect2 = block["rect"]
-		# Lamps belong to pedestrian frontage, independent of land-use props.
-		for x in [rect.position.x + 64.0, rect.end.x - 64.0]:
-			_append_prop(result, serial_by_block, seed_value, block, &"lamp", &"sidewalk", Vector2(x, rect.end.y - 16.0))
 		var local_zones: Array = zones_by_block.get(block_id, [])
 		for exterior in local_zones:
 			var zone_rect: Rect2 = exterior["rect"]
 			match exterior["kind"]:
 				&"park":
-					_append_prop(result, serial_by_block, seed_value, block, &"tree", &"public", zone_rect.get_center() + Vector2(-72, -36))
+					# A pocket park reads as planted, not decorated: a small
+					# deterministic grove plus seats facing the green.
+					var grove_seed := _hash_scatter(seed_value, block, 11)
+					for tree_index in range(3 + grove_seed % 3):
+						var angle := TAU * float(tree_index) / 5.0 + float(grove_seed % 10) * 0.1
+						var grove_position: Vector2 = zone_rect.get_center() + Vector2(cos(angle), sin(angle)) * 72.0
+						_append_tree(result, serial_by_block, seed_value, block, grove_position)
 					_append_prop(result, serial_by_block, seed_value, block, &"bench", &"public", zone_rect.get_center() + Vector2(64, 32))
+					_append_prop(result, serial_by_block, seed_value, block, &"bench", &"public", zone_rect.get_center() + Vector2(-88, 40))
 				&"courtyard":
 					# Keep the central passage clear while giving the enclosed
 					# Prague block a small communal garden and resting edge.
-					_append_prop(result, serial_by_block, seed_value, block, &"tree", &"public", zone_rect.get_center() + Vector2(-80, -40))
+					_append_tree(result, serial_by_block, seed_value, block, zone_rect.get_center() + Vector2(-80, -40))
 					_append_prop(result, serial_by_block, seed_value, block, &"bench", &"public", zone_rect.get_center() + Vector2(72, 40))
 				&"parking":
-					var car_kind: StringName = &"wreck" if block["zone"] == &"industrial" and _rng.randf() < 0.55 else &"car"
+					var wreck_chance := 0.55 if block["zone"] == &"industrial" else (0.3 if apocalypse >= 1 else 0.0)
+					var car_kind: StringName = &"wreck" if _rng.randf() < wreck_chance else &"car"
 					_append_prop(result, serial_by_block, seed_value, block, car_kind, &"parking", zone_rect.get_center())
 					if block["zone"] == &"civic":
 						# Keep medical supply crates on the parking side of the zone.
@@ -891,58 +897,98 @@ func _make_exterior_props(seed_value: int, blocks: Array[Dictionary], buildings:
 				&"alley":
 					var alley_kind: StringName = &"dumpster" if block["zone"] in [&"commercial", &"civic"] else (&"crate" if block["zone"] == &"industrial" else &"trash")
 					_append_prop(result, serial_by_block, seed_value, block, alley_kind, &"alley", zone_rect.get_center())
+					# Bins cluster: service alleys collect a second bag or crate.
+					if apocalypse >= 1 or block["zone"] in [&"commercial", &"industrial"]:
+						_append_prop(result, serial_by_block, seed_value, block, &"trash", &"alley", zone_rect.get_center() + Vector2(36.0, 12.0))
 		if block["zone"] == &"residential" and building_by_block.has(block_id):
 			var building: Dictionary = building_by_block[block_id]
 			var position: Vector2 = building["approach_position"] + Vector2(72.0 if _rng.randi_range(0, 1) == 0 else -72.0, -24.0)
-			_append_prop(result, serial_by_block, seed_value, block, &"tree", &"front_yard", position)
+			_append_tree(result, serial_by_block, seed_value, block, position)
 		elif block["zone"] == &"industrial":
 			_append_prop(result, serial_by_block, seed_value, block, &"cone", &"service", Vector2(rect.end.x - 48.0, rect.end.y - 48.0))
-		_make_profile_street_dressing(result, serial_by_block, seed_value, block, rect, morphology)
+		_make_street_composition(result, serial_by_block, seed_value, block, building_by_block.get(block_id, {}), rect, morphology)
 	return result
 
-## Profile-driven sidewalk dressing: tram furniture on the transit axis,
-## bollards/planters in the historic core, avenue trees in the inner city,
-## sparse hillside clutter and industrial yard fragments -- plus a
-## deterministic apocalypse scatter (rubble, trash, sandbag barricades,
-## abandoned vehicles) whose density scales with the regional level.
-func _make_profile_street_dressing(output: Array[Dictionary], serials: Dictionary, seed_value: int, block: Dictionary, rect: Rect2, morphology: Dictionary) -> void:
+## Composed street dressing for one urban quarter: lamps following the
+## sidewalk rhythm, tree lines on residential/commercial frontages, benches
+## and bins grouped by land use, wrecks and rubble only where the regional
+## apocalypse level earns them. Everything is deterministic from the seed and
+## keeps the pedestrian band, door approaches and road connectivity clear --
+## collisions stay on the sidewalk, tall visuals may overlap the roadway.
+func _make_street_composition(output: Array[Dictionary], serials: Dictionary, seed_value: int, block: Dictionary, building: Dictionary, rect: Rect2, morphology: Dictionary) -> void:
 	var profile: StringName = morphology["profile"]
 	var apocalypse := int(morphology.get("apocalypse_level", 1))
-	var tram_axis: StringName = morphology["tram_axis"]
-	var slots := clampi(int(rect.size.x / 192.0), 2, 8)
+	var zone: StringName = block["zone"]
+	var center_x := rect.get_center().x
+
+	# --- lamp spacing follows the sidewalk ---
+	var lamp_positions: Array[float] = []
+	var lamp_x := rect.position.x + 144.0
+	while lamp_x <= rect.end.x - 96.0:
+		if absf(lamp_x - center_x) >= 56.0:
+			lamp_positions.append(lamp_x)
+		lamp_x += 288.0
+	for lamp_position in lamp_positions:
+		_append_lamp(output, serials, seed_value, block, Vector2(lamp_position, rect.end.y - 16.0), apocalypse)
+
+	# --- tree-lined frontages (never on industrial yards) ---
+	var tree_density: float = {&"historic_core": 0.45, &"inner_city": 0.7, &"hillside_residential": 0.85, &"industrial_transition": 0.2}.get(profile, 0.5)
+	var tree_x := rect.position.x + 96.0
+	while tree_x <= rect.end.x - 64.0:
+		var near_lamp := false
+		for lamp_position in lamp_positions:
+			if absf(tree_x - lamp_position) < 48.0:
+				near_lamp = true
+				break
+		var tree_roll := float(_hash_scatter(seed_value, block, 500 + int(tree_x)) % 100)
+		if not near_lamp and absf(tree_x - center_x) >= 72.0 and tree_roll < tree_density * 100.0:
+			_append_tree(output, serials, seed_value, block, Vector2(tree_x, rect.end.y - 16.0))
+		tree_x += 192.0
+
+	# --- benches where people actually sit: fronts and greens ---
+	if zone == &"commercial" and float(_hash_scatter(seed_value, block, 61) % 100) < 35.0:
+		var side := 1.0 if _hash_scatter(seed_value, block, 62) % 2 == 0 else -1.0
+		_append_prop(output, serials, seed_value, block, &"bench", &"frontage", Vector2(center_x + side * 128.0, rect.end.y - 16.0))
+
+	# --- garbage gathers around commerce and service doors ---
+	if zone in [&"commercial", &"civic"]:
+		var bags := 1 + int(_hash_scatter(seed_value, block, 71) % (2 if apocalypse >= 1 else 1))
+		for bag_index in range(bags):
+			var side := 1.0 if bag_index % 2 == 0 else -1.0
+			_append_prop(output, serials, seed_value, block, &"trash", &"frontage", Vector2(center_x + side * (152.0 + float(bag_index) * 20.0), rect.end.y - 14.0))
+
+	# --- rubble belongs to visibly damaged buildings ---
+	if apocalypse >= 1 and not building.is_empty():
+		var rubble_count := apocalypse
+		for rubble_index in range(rubble_count):
+			var side := 1.0 if rubble_index % 2 == 0 else -1.0
+			var footprint: Rect2 = building["footprint"]
+			var rubble_x: float = clampf(footprint.get_center().x + side * (footprint.size.x * 0.5 + 28.0), rect.position.x + 32.0, rect.end.x - 32.0)
+			_append_prop(output, serials, seed_value, block, &"rubble", &"damage", Vector2(rubble_x, footprint.get_center().y + 24.0))
+			if apocalypse >= 2:
+				_append_prop(output, serials, seed_value, block, &"trash", &"damage", Vector2(rubble_x - side * 24.0, footprint.get_center().y + 40.0))
+
+	# --- low-key per-profile sidewalk character (kept off the south anchor) ---
+	var slots := clampi(int(rect.size.x / 320.0), 1, 4)
 	for i in range(slots):
-		var x := rect.position.x + 96.0 + float(i) * ((rect.size.x - 192.0) / float(maxi(slots - 1, 1)))
-		var y := rect.end.y - 16.0 # south sidewalk band, matching lamp placement
-		# Keep the residential frontage anchor (block-center approach, where
-		# the semantic frontage spawn region samples) clear of physical props:
-		# a dressing item parked on that anchor leaves its spawn region no
-		# full-footprint-valid candidate.
-		if absf(x - rect.get_center().x) < 56.0:
+		var slot_x := rect.position.x + 120.0 + float(i) * ((rect.size.x - 240.0) / float(maxi(slots, 1)))
+		if absf(slot_x - center_x) < 56.0:
 			continue
 		match profile:
 			&"historic_core":
-				var historic_kind: StringName = [&"bollard", &"planter", &"trash", &"bollard"][i % 4]
-				_append_prop(output, serials, seed_value, block, historic_kind, &"sidewalk", Vector2(x, y))
-				if i % 3 == 0:
-					_append_prop(output, serials, seed_value, block, &"sign_post", &"frontage", Vector2(x + 32.0, y))
+				var historic_kind: StringName = [&"bollard", &"planter"][i % 2]
+				_append_prop(output, serials, seed_value, block, historic_kind, &"sidewalk", Vector2(slot_x, rect.end.y - 16.0))
 			&"inner_city":
-				var inner_kind: StringName = &"tree"
-				if i % 3 == 2:
-					inner_kind = &"bench"
-				elif i % 3 == 1:
-					inner_kind = &"bollard"
-				_append_prop(output, serials, seed_value, block, inner_kind, &"avenue", Vector2(x, y))
-				if i % 4 == 0:
-					_append_prop(output, serials, seed_value, block, &"utility_box", &"service", Vector2(x, rect.position.y + 16.0))
+				if i % 2 == 0:
+					_append_prop(output, serials, seed_value, block, &"utility_box", &"service", Vector2(slot_x, rect.position.y + 16.0))
 			&"hillside_residential":
 				if i % 2 == 0:
-					_append_prop(output, serials, seed_value, block, &"trash", &"sidewalk", Vector2(x, y))
-				else:
-					_append_prop(output, serials, seed_value, block, &"planter", &"sidewalk", Vector2(x, y))
+					_append_prop(output, serials, seed_value, block, &"planter", &"sidewalk", Vector2(slot_x, rect.end.y - 16.0))
 			&"industrial_transition":
-				var industrial_kind: StringName = [&"pallet", &"utility_box", &"rubble", &"crate"][i % 4]
-				_append_prop(output, serials, seed_value, block, industrial_kind, &"yard_edge", Vector2(x, y))
-	# Tram stop pair beside whichever block edge the tram axis runs along.
+				var industrial_kind: StringName = [&"pallet", &"crate"][i % 2]
+				_append_prop(output, serials, seed_value, block, industrial_kind, &"yard_edge", Vector2(slot_x, rect.position.y + 16.0))
+	# Tram stop group beside whichever block edge the tram axis runs along.
+	var tram_axis: StringName = morphology["tram_axis"]
 	if profile in [&"historic_core", &"inner_city"] and _rng.randf() < 0.6:
 		var stop_position: Vector2 = rect.get_center()
 		if tram_axis == &"horizontal":
@@ -950,25 +996,98 @@ func _make_profile_street_dressing(output: Array[Dictionary], serials: Dictionar
 		else:
 			stop_position = Vector2(rect.end.x - 16.0, rect.position.y + 128.0)
 		_append_prop(output, serials, seed_value, block, &"tram_stop", &"transit", stop_position)
-		_append_prop(output, serials, seed_value, block, &"bench", &"transit", stop_position + Vector2(48.0, 8.0))
-	# Apocalypse scatter: rubble/trash everywhere it is earned, sandbag
-	# barricades from level 1, wrecked vehicles crowding curbs at level 2.
+		_append_prop(output, serials, seed_value, block, &"bench", &"transit", stop_position + Vector2(52.0, 6.0))
+		_append_prop(output, serials, seed_value, block, &"trash", &"transit", stop_position + Vector2(-40.0, 10.0))
+	# Apocalypse scatter and barricades: denser chaos only where earned.
 	if apocalypse >= 1:
 		var scatter_count := apocalypse * 2
 		for i in range(scatter_count):
-			var x := rect.position.x + 64.0 + float(int(_hash_scatter(seed_value, block, i)) % maxi(int(rect.size.x - 128.0), 1))
-			var y := rect.position.y + 64.0 + float(int(_hash_scatter(seed_value, block, i + 97)) % maxi(int(rect.size.y - 128.0), 1))
+			var scatter_x := rect.position.x + 64.0 + float(int(_hash_scatter(seed_value, block, i)) % maxi(int(rect.size.x - 128.0), 1))
+			var scatter_y := rect.position.y + 64.0 + float(int(_hash_scatter(seed_value, block, i + 97)) % maxi(maxi(int(rect.size.y - 160.0), 1), 1))
 			var scatter_kind: StringName = &"rubble" if i % 2 == 0 else &"trash"
-			_append_prop(output, serials, seed_value, block, scatter_kind, &"debris", Vector2(x, y))
-		if _rng.randf() < 0.5:
+			_append_prop(output, serials, seed_value, block, scatter_kind, &"debris", Vector2(scatter_x, scatter_y))
+		if apocalypse >= 1 and float(_hash_scatter(seed_value, block, 91) % 100) < 50.0:
 			var corner: Vector2 = Vector2(rect.position.x + 40.0, rect.end.y - 40.0)
 			_append_prop(output, serials, seed_value, block, &"sandbags", &"barricade", corner)
+		if apocalypse >= 2 and zone in [&"residential", &"safehouse"]:
+			# Survivor-held streets barricade their approaches.
+			_append_prop(output, serials, seed_value, block, &"sandbags", &"barricade", Vector2(center_x + 96.0, rect.end.y - 24.0))
+			_append_prop(output, serials, seed_value, block, &"sandbags", &"barricade", Vector2(center_x - 104.0, rect.end.y - 24.0))
+
+func _lamp_state(apocalypse: int, hash_value: int) -> StringName:
+	var roll := hash_value % 100
+	match apocalypse:
+		0:
+			return &"dead" if roll >= 85 else &"steady"
+		1:
+			if roll < 45:
+				return &"steady"
+			return &"flicker" if roll < 65 else &"dead"
+		_:
+			if roll < 15:
+				return &"steady"
+			return &"flicker" if roll < 40 else &"dead"
+
+## Keeps any physical street object out of the semantic frontage anchor zone
+## (the block-center south band where the residential frontage spawn region
+## samples full zombie footprints). South-band objects within the protected
+## radius are nudged deterministically outward; everything off the south
+## band passes through untouched.
+func _frontage_cleared_position(block: Dictionary, position: Vector2, footprint_half_width: float) -> Vector2:
+	var rect: Rect2 = block["rect"]
+	if position.y < rect.end.y - 48.0:
+		return position
+	var center_x := rect.get_center().x
+	var minimum := 56.0 + footprint_half_width
+	if absf(position.x - center_x) >= minimum:
+		return position
+	var side := 1.0 if position.x >= center_x else -1.0
+	return Vector2(center_x + side * (minimum + 16.0), position.y)
+
+func _append_lamp(output: Array[Dictionary], serials: Dictionary, seed_value: int, block: Dictionary, position: Vector2, apocalypse: int) -> void:
+	position = _frontage_cleared_position(block, position, 5.0)
+	var state_hash := _hash_scatter(seed_value, block, 300 + int(position.x))
+	var mode := _lamp_state(apocalypse, state_hash)
+	var damaged := mode == &"dead" and apocalypse >= 1 and state_hash % 3 == 0
+	output.append({
+		"id": _prop_id(serials, seed_value, block),
+		"block_id": block["id"], "zone": block["zone"], "kind": &"lamp",
+		"placement_role": &"sidewalk", "position": position,
+		"texture": PROP_TEXTURES[&"lamp"], "size": Vector2(10, 10),
+		"visual_size": Vector2(20, 84), "procedural_kind": &"lamp",
+		"variant": state_hash % 4, "damaged": damaged, "light_mode": mode,
+		"yield": 1, "minimum_damage_class": EnvironmentDamage.DamageClass.SMALL_ARMS,
+		"interaction": &"salvage", "items": {},
+	})
+
+func _append_tree(output: Array[Dictionary], serials: Dictionary, seed_value: int, block: Dictionary, position: Vector2) -> void:
+	position = _frontage_cleared_position(block, position, 12.0)
+	var tree_hash := _hash_scatter(seed_value, block, 400 + int(position.x) * 7 + int(position.y))
+	var damaged := tree_hash % 100 < 12
+	var spread := 80.0 + float(tree_hash % 4) * 12.0
+	output.append({
+		"id": _prop_id(serials, seed_value, block),
+		"block_id": block["id"], "zone": block["zone"], "kind": &"tree",
+		"placement_role": &"street_tree", "position": position,
+		"texture": PROP_TEXTURES[&"tree"], "size": Vector2(24, 24),
+		"visual_size": Vector2(spread, spread * 1.2), "procedural_kind": &"tree",
+		"variant": tree_hash % 3, "damaged": damaged,
+		"yield": 1, "minimum_damage_class": EnvironmentDamage.DamageClass.SMALL_ARMS,
+		"interaction": &"salvage", "items": {},
+	})
+
+func _prop_id(serials: Dictionary, seed_value: int, block: Dictionary) -> StringName:
+	var block_id: StringName = block["id"]
+	var serial: int = serials.get(block_id, 0)
+	serials[block_id] = serial + 1
+	return StringName("city_%d/%s/exterior_%02d" % [seed_value, String(block_id), serial])
 
 func _hash_scatter(seed_value: int, block: Dictionary, index: int) -> int:
 	return abs(int((seed_value ^ String(block["id"]).hash() ^ (index + 1) * 2654435761) & 0x7FFFFFFF))
 
 func _append_prop(output: Array[Dictionary], serials: Dictionary, seed_value: int, block: Dictionary, kind: StringName, placement_role: StringName, position: Vector2) -> void:
 	var block_id: StringName = block["id"]
+	position = _frontage_cleared_position(block, position, _prop_size(kind).x * 0.5)
 	var serial: int = serials.get(block_id, 0)
 	serials[block_id] = serial + 1
 	var impact_class := EnvironmentDamage.DamageClass.HEAVY if kind in [&"car", &"wreck"] else EnvironmentDamage.DamageClass.SMALL_ARMS
@@ -985,28 +1104,63 @@ func _append_prop(output: Array[Dictionary], serials: Dictionary, seed_value: in
 		items = {"materials": 2}
 		if block["zone"] == &"civic":
 			items["medical_supplies"] = 1
-	output.append({
+	var record := {
 		"id": StringName("city_%d/%s/exterior_%02d" % [seed_value, String(block_id), serial]),
 		"block_id": block_id, "zone": block["zone"], "kind": kind, "placement_role": placement_role,
 		"position": position, "texture": PROP_TEXTURES[kind], "size": _prop_size(kind),
 		"yield": 3 if impact_class == EnvironmentDamage.DamageClass.HEAVY else 1,
 		"minimum_damage_class": impact_class, "interaction": interaction, "items": items,
-	})
+	}
+	_apply_street_object_dimensions(record)
+	output.append(record)
+
+## Per-kind street-object dimensions. `size` is the PHYSICAL collision
+## footprint (validators and spawn clearance measure against it); visual_size
+## is how much world space the drawn object occupies, which may be far larger
+## (tall lamp posts, wide benches) without ever blocking more of the street.
+func _apply_street_object_dimensions(record: Dictionary) -> void:
+	match record["kind"]:
+		&"bench":
+			record["visual_size"] = Vector2(60, 24)
+		&"bollard":
+			record["visual_size"] = Vector2(12, 22)
+		&"planter":
+			record["visual_size"] = Vector2(28, 20)
+		&"tram_stop":
+			record["visual_size"] = Vector2(28, 60)
+		&"sign_post":
+			record["visual_size"] = Vector2(16, 46)
+		&"utility_box":
+			record["visual_size"] = Vector2(30, 36)
+		&"dumpster":
+			record["visual_size"] = Vector2(44, 32)
+		&"trash":
+			record["visual_size"] = Vector2(20, 16)
+		&"pallet":
+			record["visual_size"] = Vector2(34, 22)
+		&"sandbags":
+			record["visual_size"] = Vector2(40, 20)
+		&"rubble":
+			record["visual_size"] = Vector2(32, 16)
+		&"car", &"wreck":
+			record["visual_size"] = Vector2(62, 34)
+		_:
+			pass
 
 func _prop_size(kind: StringName) -> Vector2:
 	match kind:
-		&"tree": return Vector2(20, 20)
-		&"bench": return Vector2(32, 12)
-		&"dumpster": return Vector2(36, 24)
+		&"tree": return Vector2(24, 24)
+		&"bench": return Vector2(56, 18)
+		&"dumpster": return Vector2(40, 26)
 		&"crate": return Vector2(24, 20)
 		&"car", &"wreck": return Vector2(58, 28)
 		&"lamp", &"hydrant", &"cone", &"bollard": return Vector2(10, 10)
 		&"medical_cache": return Vector2(20, 20)
-		&"tram_stop": return Vector2(16, 24)
+		&"tram_stop": return Vector2(20, 26)
 		&"sign_post": return Vector2(12, 22)
 		&"utility_box": return Vector2(28, 20)
 		&"planter": return Vector2(24, 16)
-		&"rubble": return Vector2(28, 18)
+		&"rubble": return Vector2(24, 14)
 		&"sandbags": return Vector2(36, 16)
 		&"pallet": return Vector2(32, 24)
 	return Vector2(16, 16)

@@ -259,7 +259,11 @@ func _build_exterior_props() -> void:
 	for spec in city_model["props"]:
 		var first_new_child: int = prop_parent.get_child_count()
 		var local_position: Vector2 = prop_parent.to_local(to_global(spec["position"]))
-		if spec["interaction"] == &"loot":
+		if spec.has("visual_size") or spec.has("procedural_kind"):
+			# Composed street object: independent visual dimensions,
+			# collision footprint, base anchor and optional light.
+			BuildingShellBuilder.add_street_object(prop_parent, local_position, spec)
+		elif spec["interaction"] == &"loot":
 			BuildingShellBuilder.add_loot_furniture(
 				prop_parent, local_position, load(spec["texture"]), spec["size"], spec["id"], 80.0,
 				spec["items"], "Search", spec["minimum_damage_class"]

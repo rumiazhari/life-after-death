@@ -73,6 +73,15 @@ func _ready() -> void:
 		spawn_manager.set_world_seed(int(world.get("resolved_seed")), player.global_position if player else Vector2.ZERO)
 	spawn_manager.begin()
 
+	# Survivor groups occupy ordinary generated buildings: deterministically
+	# claim the best eligible building from the origin chunk as the group's
+	# base. The dedicated safehouse reservation now only bootstraps the
+	# player spawn; the settlement itself lives in a generic building.
+	var origin_model := _origin_city_model()
+	if not origin_model.is_empty():
+		var seed_value := int(world.get("resolved_seed")) if "resolved_seed" in world else 0
+		settlement.claim_building_base(origin_model, seed_value, survivor_container)
+
 	_setup_settlement_jobs()
 	_spawn_survivors()
 
@@ -88,6 +97,17 @@ func _setup_settlement_jobs() -> void:
 	settlement.setup_jobs(job_board)
 	for point in get_tree().get_nodes_in_group("scavenge_point"):
 		job_board.create_job(Job.Type.SCAVENGE, 2.0, &"", 1, point)
+
+## The generated semantic model of the origin chunk (or the whole legacy
+## district) -- the pool ordinary survivor bases are claimed from.
+func _origin_city_model() -> Dictionary:
+	var world_node := world
+	if world_node is StreamingWorld:
+		var chunk := (world_node as StreamingWorld).get_chunk(Vector2i.ZERO)
+		return chunk.city_model if chunk != null else {}
+	if world_node is ProceduralDistrict:
+		return (world_node as ProceduralDistrict).city_model
+	return {}
 
 func _spawn_survivors() -> void:
 	for i in range(SURVIVOR_PROFILES.size()):

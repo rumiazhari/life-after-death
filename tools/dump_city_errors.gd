@@ -19,6 +19,7 @@ func _ready() -> void:
 func _run() -> void:
 	var generator := ProceduralCityGenerator.new()
 	var failures := 0
+	var cases := 0
 	var profiles_seen := {}
 	var coordinates := COORDINATES
 	if WIDE_SWEEP:
@@ -27,7 +28,8 @@ func _run() -> void:
 			for x in range(-8, 9):
 				coordinates.append(Vector2i(x, y))
 	for seed_value in SEED_CORPUS:
-		for coordinate in COORDINATES:
+		for coordinate in coordinates:
+			cases += 1
 			var city := generator.generate_streamed_chunk(seed_value, coordinate)
 			profiles_seen[city.get("district_profile", "?")] = true
 			if not String(city.get("generation_error", "")).is_empty():
@@ -36,5 +38,6 @@ func _run() -> void:
 				for e in city.get("validation_errors", []):
 					print("   ", e)
 	print("PROFILE_COVERAGE ", profiles_seen.keys())
+	print("CASES ", cases)
 	print("FAILURES ", failures)
 	get_tree().quit(1 if failures > 0 else 0)

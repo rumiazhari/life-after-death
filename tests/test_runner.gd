@@ -89,6 +89,9 @@ func _run_all() -> void:
 	await _run_test("projected_exterior_runtime_is_visual_only_and_sortable", _test_projected_exterior_runtime_is_visual_only_and_sortable)
 	await _run_test("local_occlusion_fade_engages_and_releases", _test_local_occlusion_fade_engages_and_releases)
 	await _run_test("local_occlusion_fade_survives_player_removal", _test_local_occlusion_fade_survives_player_removal)
+	await _run_test("street_objects_separate_visual_collision_and_light", _test_street_objects_separate_visual_collision_and_light)
+	await _run_test("generic_generated_buildings_can_be_claimed_as_bases", _test_generic_generated_buildings_can_be_claimed_as_bases)
+	await _run_test("abandoning_base_preserves_building_and_clears_state", _test_abandoning_base_preserves_building_and_clears_state)
 	await _run_test("streamed_prague_quarters_are_dense_and_open_spaces_are_rare", _test_streamed_prague_quarters_are_dense_and_open_spaces_are_rare)
 	await _run_test("procedural_seed_corpus_is_deterministic_valid_and_bounded", _test_procedural_seed_corpus_is_deterministic_valid_and_bounded)
 	await _run_test("procedural_generation_retries_and_fails_explicitly", _test_procedural_generation_retries_and_fails_explicitly)
@@ -623,6 +626,126 @@ func _test_local_occlusion_fade_survives_player_removal() -> void:
 
 	building.queue_free()
 	await get_tree().process_frame
+
+## Street objects must keep visual dimensions, collision footprint and light
+## state independent: tall visuals (trees, lamps) sit on trunk/pole-sized
+## physical footprints, and functioning/dead/flickering lamp states decide
+## whether a real PointLight2D pool is generated.
+func _test_street_objects_separate_visual_collision_and_light() -> void:
+	var generator := ProceduralCityGenerator.new()
+	var tree_specs := 0
+	var lamp_specs := 0
+	var lamp_modes := {}
+	for coordinate in [Vector2i.ZERO, Vector2i(-3, 4), Vector2i(5, -5)]:
+		var city := generator.generate_streamed_chunk(20260821, coordinate)
+		for prop_spec in city["props"]:
+			var kind: StringName = prop_spec.get("kind", &"")
+			if kind == &"tree":
+				tree_specs += 1
+				var collision: Vector2 = prop_spec["size"]
+				_assert(collision.x <= 32.0 and collision.y <= 32.0, "tree trunks must keep their collision at one tile or smaller")
+				var crown: Vector2 = prop_spec["visual_size"]
+				_assert(crown.x >= 64.0 and crown.y >= 64.0, "tree crowns must visually span multiple tiles (%s)" % str(crown))
+			elif kind == &"lamp":
+				lamp_specs += 1
+				lamp_modes[prop_spec.get("light_mode", &"steady")] = true
+				var pole_collision: Vector2 = prop_spec["size"]
+				var pole_visual: Vector2 = prop_spec["visual_size"]
+				_assert(pole_collision.x <= 12.0 and pole_collision.y <= 12.0, "lamp poles must keep a narrow base collision footprint")
+				_assert(pole_visual.y >= 64.0, "street lamps must read as tall multi-tile objects")
+	_assert(tree_specs > 0 and lamp_specs > 1, "composed street dressing must place both trees and multiple spaced lamps (trees=%d lamps=%d)" % [tree_specs, lamp_specs])
+	_assert(lamp_modes.size() >= 2, "not every street lamp may share the same functional state (modes=%s)" % str(lamp_modes.keys()))
+
+	# Runtime construction: base-anchored tall visuals, real lights.
+	var fixture := Node2D.new()
+	fixture.name = "StreetObjectFixture"
+	add_child(fixture)
+	var tree_spec: Dictionary = {"id": &"test/street_tree", "kind": &"tree", "procedural_kind": &"tree",
+		"size": Vector2(24, 24), "visual_size": Vector2(96, 112), "variant": 1, "damaged": false,
+		"interaction": &"", "yield": 1, "minimum_damage_class": EnvironmentDamage.DamageClass.SMALL_ARMS}
+	BuildingShellBuilder.add_street_object(fixture, Vector2.ZERO, tree_spec)
+	var tree_root := fixture.get_child(fixture.get_child_count() - 1) as Node2D
+	_assert(tree_root.position == Vector2.ZERO, "a street object's origin must stay on its ground base for y-sorting")
+	var tree_visual := _first_descendant_of_type(tree_root, StreetObjectVisual) as StreetObjectVisual
+	_assert(tree_visual != null and tree_visual.visual_size.y >= 96.0, "tall tree visuals must extend upward from the base as visual-only layers")
+	var tree_body := _first_descendant_of_type(tree_root, StaticBody2D) as StaticBody2D
+	var tree_shape := tree_body.get_node("CollisionShape2D").shape as RectangleShape2D
+	_assert(tree_shape.size == Vector2(24, 24), "the physical footprint of a tree must remain its trunk, never its crown")
+
+	var steady_lamp: Dictionary = {"id": &"test/lamp_steady", "kind": &"lamp", "procedural_kind": &"lamp",
+		"size": Vector2(10, 10), "visual_size": Vector2(20, 84), "light_mode": &"steady",
+		"interaction": &"", "yield": 1, "minimum_damage_class": EnvironmentDamage.DamageClass.SMALL_ARMS}
+	BuildingShellBuilder.add_street_object(fixture, Vector2(200, 0), steady_lamp)
+	var steady_root := fixture.get_child(fixture.get_child_count() - 1) as Node2D
+	await get_tree().process_frame
+	var steady_light := _first_descendant_of_type(steady_root, PointLight2D) as PointLight2D
+	_assert(steady_light != null and steady_light.enabled, "functioning street lamps must generate a real local light pool")
+
+	var dead_lamp: Dictionary = {"id": &"test/lamp_dead", "kind": &"lamp", "procedural_kind": &"lamp",
+		"size": Vector2(10, 10), "visual_size": Vector2(20, 84), "light_mode": &"dead",
+		"interaction": &"", "yield": 1, "minimum_damage_class": EnvironmentDamage.DamageClass.SMALL_ARMS}
+	BuildingShellBuilder.add_street_object(fixture, Vector2(400, 0), dead_lamp)
+	var dead_root := fixture.get_child(fixture.get_child_count() - 1) as Node2D
+	await get_tree().process_frame
+	_assert(_first_descendant_of_type(dead_root, PointLight2D) == null, "dead street lamps must not emit light")
+
+	fixture.queue_free()
+	await get_tree().process_frame
+
+## Survivor groups claim ordinary generated buildings -- apartments, stores,
+## workshops, clinics alike -- with occupancy stored purely as state.
+func _test_generic_generated_buildings_can_be_claimed_as_bases() -> void:
+	var service := SurvivorBaseService.new()
+	var claimed_types := {}
+	var generator := ProceduralCityGenerator.new()
+	for world_seed in [7, 1024, 8801, 20260821, 65535, 2147483646]:
+		for coordinate in [Vector2i.ZERO, Vector2i(-3, 4), Vector2i(5, -5)]:
+			WorldState.reset()
+			var city := generator.generate_streamed_chunk(world_seed, coordinate)
+			var claimed := service.claim_best_base(city, world_seed)
+			_assert(claimed != null, "every generated city must offer an eligible ordinary base building (seed %d)" % world_seed)
+			if claimed == null:
+				continue
+			var claimed_building: Dictionary = {}
+			for building_variant in city["buildings"]:
+				var candidate: Dictionary = building_variant
+				if candidate["id"] == claimed.building_id:
+					claimed_building = candidate
+					break
+			_assert(not claimed_building.is_empty(), "claimed base %s must be a normal generated building" % String(claimed.building_id))
+			_assert((claimed_building["interior"]["rooms"] as Array).size() > 0, "claimed bases must have usable interiors")
+			claimed_types[claimed.base_type] = true
+			# Occupation dressing stays clear of the entrance approach so the
+			# claimed base always keeps at least one usable entrance.
+			var corridor: Rect2 = claimed_building["access_corridor"]
+			var entrance: Vector2 = claimed_building["approach_position"]
+			for offset in [Vector2(64, 20), Vector2(-72, 24), Vector2(120, 12), Vector2(88, 28)]:
+				var dressing_point := entrance + Vector2(offset.x * (-1.0 if posmod(world_seed + int(abs(entrance.x)), 2) else 1.0), offset.y)
+				_assert(not corridor.has_point(dressing_point) or dressing_point.distance_to(entrance) < 4.0,
+					"base dressing must not block the claimed building's entrance approach")
+	_assert(claimed_types.size() >= 3, "different building archetypes must be claimable as bases (claimed=%s)" % str(claimed_types.keys()))
+	WorldState.reset()
+
+## Removing base state must free the occupation dressing but never touch the
+## generated building itself.
+func _test_abandoning_base_preserves_building_and_clears_state() -> void:
+	WorldState.reset()
+	var city := ProceduralCityGenerator.new().generate_streamed_chunk(20260821, Vector2i.ZERO)
+	var signature_before := ProceduralCityGenerator.new().signature(city)
+	var settlement := Settlement.new()
+	add_child(settlement)
+	await get_tree().process_frame
+	settlement.claim_building_base(city, 20260821)
+	_assert(settlement.data != null and settlement.data.building_id != &"", "fixture must claim a base before abandoning it")
+	settlement.abandon_building_base()
+	_assert(settlement.data.building_id == &"" and settlement.data.base_type == &"", "abandoning a base must clear the occupancy state on its record")
+	_assert(WorldState.settlements.is_empty(), "abandoning a base must clear its occupancy registration")
+	var service := SurvivorBaseService.new()
+	_assert(SurvivorBaseService.select_building(city, 20260821) != {} and not service.building_already_claimed(SurvivorBaseService.select_building(city, 20260821)["id"]), "an abandoned building pool must allow claiming again")
+	var signature_after := ProceduralCityGenerator.new().signature(city)
+	_assert(signature_before == signature_after, "claim/abandon cycles must never alter generated building geometry")
+	WorldState.reset()
+	settlement.free()
 
 func _test_streamed_prague_quarters_are_dense_and_open_spaces_are_rare() -> void:
 	var generator := ProceduralCityGenerator.new()
@@ -1258,7 +1381,16 @@ func _test_procedural_full_main_landmarks_rooms_and_safehouse_are_navigable() ->
 	_assert(world.generation_duration_ms < 15000, "full streamed runtime generation must remain below the initial-chunk activation ceiling")
 	var origin_chunk := world.get_chunk(Vector2i.ZERO)
 	var settlement := main_instance.get_node("Settlement") as Settlement
-	_assert(settlement.global_position.is_equal_approx(world.get_safehouse_position()), "safehouse must be positioned at the generated seed before navigation sampling")
+	_assert(settlement.data != null and settlement.data.building_id != &"", "survivor groups must claim an ordinary generated building as their base")
+	var claimed_entrance := Vector2.ZERO
+	for building_variant in origin_chunk.city_model["buildings"]:
+		var claimed_candidate: Dictionary = building_variant
+		if claimed_candidate["id"] == settlement.data.building_id:
+			claimed_entrance = claimed_candidate["approach_position"]
+			break
+	_assert(settlement.data.base_type != &"", "a claimed base must record its ordinary building archetype")
+	_assert(not claimed_entrance.is_equal_approx(Vector2.ZERO), "the claimed survivor base must resolve to a generated building")
+	_assert(settlement.global_position.is_equal_approx(claimed_entrance), "the settlement must occupy its claimed generated building's entrance")
 	for layer_name in ["Ground", "Roads", "Sidewalks", "RoadMarkings"]:
 		var tile_layer := origin_chunk.get_node("GroundLayers/%s" % layer_name) as TileMapLayer
 		_assert(tile_layer != null and not tile_layer.get_used_cells().is_empty(), "procedural renderer must rasterize the semantic %s layer" % layer_name)
