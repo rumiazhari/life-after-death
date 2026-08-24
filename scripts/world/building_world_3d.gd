@@ -13,7 +13,7 @@ extends Node3D
 ## structural cascades flatten whole x-columns. Gameplay collision stays on
 ## the 2D plane (ground floor); this layer is presentation truth.
 
-const STOREY_HEIGHT := 40.0
+const STOREY_HEIGHT := 34.0
 const CELL := 32.0
 const WALL_COLOR := Color(0.78, 0.70, 0.55)
 const WALL_SIDING := Color(0.66, 0.58, 0.46)
@@ -26,12 +26,17 @@ const ROOF_COLORS := {
 }
 const CAMERA_PITCH_DEG := 55.0
 const CAMERA_DISTANCE := 900.0
-## Ground-plane depth compresses by sin(pitch) on screen; used for framing.
+## Ground-plane depth compresses by sin(pitch) on screen; the geometry root
+## is stretched by the inverse so the footprint aligns 1:1 with the 2D map.
+const GROUND_Z_COMPENSATION := 1.0 / sin(deg_to_rad(CAMERA_PITCH_DEG))
+## Vertical faces compress by cos(pitch); storey boxes are boosted so the
+## projected storey height reads close to the flat facade's.
+const STOREY_VISUAL_HEIGHT := 50.0
 const PAD_X := 28.0
 const PAD_TOP := 26.0
 const PAD_BOTTOM := 14.0
 
-## building_id -> record {viewport, container, camera, cells, roof, spec, details}
+## building_id -> record {viewport, container, camera, scene_root, cells, roof, spec, details}
 var _buildings: Dictionary = {}
 
 ## Mapping: 2D (x, y) -> 3D (x, up=height, z=y).
@@ -48,60 +53,77 @@ func register_building(building: ProceduralBuilding) -> Dictionary:
 	var storeys: int = clampi(int(spec.get("storeys", 3)), 2, 6)
 
 	var ground_depth := half_extent.y * 2.0
-	var wall_stack := STOREY_HEIGHT * float(storeys)
+	var wall_stack_projected := STOREY_VISUAL_HEIGHT * float(storeys) * cos(deg_to_rad(CAMERA_PITCH_DEG))
 	var view_w := half_extent.x * 2.0 + PAD_X * 2.0
-	var view_h := ground_depth * 0.82 + wall_stack * 0.60 + PAD_TOP + PAD_BOTTOM
+	var view_h := ground_depth + wall_stack_projected + PAD_TOP + PAD_BOTTOM
 
-	var viewport := SubViewport.new()
-	viewport.name = String(id).get_file() + "_25D"
-	viewport.transparent_bg = true
-	viewport.own_world_3d = true
-	viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
-	viewport.msaa_3d = Viewport.MSAA_2X
-	viewport.size = Vector2i(maxi(int(view_w), 64), maxi(int(view_h), 64))
+	var headless := DisplayServer.get_name() == "headless"
+	var viewport: SubViewport = null
+	var container: SubViewportContainer = null
+	var camera: Camera3D = null
+	var scene_root: Node3D
 
-	var container := SubViewportContainer.new()
-	container.name = String(id).get_file() + "_Display"
-	container.stretch = true
-	container.size = Vector2(view_w, view_h)
-	container.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(container)
-	container.add_child(viewport)
+	if not headless:
+		viewport = SubViewport.new()
+		viewport.name = String(id).get_file() + "_25D"
+		viewport.transparent_bg = true
+		viewport.own_world_3d = true
+		viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+		viewport.msaa_3d = Viewport.MSAA_2X
+		viewport.size = Vector2i(maxi(int(view_w), 64), maxi(int(view_h), 64))
 
-	var light := DirectionalLight3D.new()
-	light.rotation_degrees = Vector3(-52.0, 18.0, 0.0)
-	light.light_energy = 1.15
-	viewport.add_child(light)
+		container = SubViewportContainer.new()
+		container.name = String(id).get_file() + "_Display"
+		container.stretch = true
+		container.size = Vector2(view_w, view_h)
+		container.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		add_child(container)
+		container.add_child(viewport)
 
-	var camera := Camera3D.new()
-	camera.projection = Camera3D.PROJECTION_ORTHOGONAL
-	camera.size = maxf(view_h, 100.0)
-	camera.current = true
-	var target := Vector3(0.0, wall_stack * 0.32, half_extent.y * 0.35)
-	var pitch := deg_to_rad(CAMERA_PITCH_DEG)
-	camera.position = target + Vector3(0.0, sin(pitch) * CAMERA_DISTANCE, cos(pitch) * CAMERA_DISTANCE)
-	camera.look_at(target, Vector3.UP)
-	viewport.add_child(camera)
+		var light := DirectionalLight3D.new()
+		light.rotation_degrees = Vector3(-52.0, 18.0, 0.0)
+		light.light_energy = 1.15
+		viewport.add_child(light)
+
+		camera = Camera3D.new()
+		camera.projection = Camera3D.PROJECTION_ORTHOGONAL
+		camera.size = maxf(view_h, 100.0)
+		camera.current = true
+		var target := Vector3(0.0, STOREY_VISUAL_HEIGHT * float(storeys) * 0.32, half_extent.y * 0.35)
+		var pitch := deg_to_rad(CAMERA_PITCH_DEG)
+		camera.position = target + Vector3(0.0, sin(pitch) * CAMERA_DISTANCE, cos(pitch) * CAMERA_DISTANCE)
+		camera.look_at(target, Vector3.UP)
+		viewport.add_child(camera)
+		scene_root = Node3D.new()
+		scene_root.name = "Geometry"
+		scene_root.scale = Vector3(1.0, 1.0, GROUND_Z_COMPENSATION)
+		viewport.add_child(scene_root)
+	else:
+		scene_root = Node3D.new()
+		scene_root.name = "Geometry"
+		add_child(scene_root)
 
 	var record := {
 		"viewport": viewport, "container": container, "camera": camera,
-		"spec": spec, "storeys": storeys, "half_extent": half_extent,
-		"cells": {}, "roof": {}, "details": 0,
+		"scene_root": scene_root, "spec": spec, "storeys": storeys,
+		"half_extent": half_extent, "cells": {}, "roof": {}, "details": 0,
 	}
 	_buildings[id] = record
 
 	_build_geometry(record, building, interior, storeys)
 	return record
 
+
+
 func _build_geometry(record: Dictionary, building: ProceduralBuilding, interior: Dictionary, storeys: int) -> void:
-	var viewport: SubViewport = record["viewport"]
+	var scene_root: Node3D = record["scene_root"]
 	var half_extent: Vector2 = record["half_extent"]
 
 	for rect_variant in interior.get("perimeter_rects", []):
 		var rect: Rect2 = rect_variant
 		var slab := _box(Vector3(rect.size.x, 4.0, rect.size.y), FLOOR_COLOR)
 		slab.position = to3d(rect.get_center(), 0.0)
-		viewport.add_child(slab)
+		scene_root.add_child(slab)
 
 	# Entrance x (world-local) for the ground-floor door inset.
 	var entrance_x := INF
@@ -121,10 +143,10 @@ func _build_geometry(record: Dictionary, building: ProceduralBuilding, interior:
 		var cell := Vector2i(floori(local.x / CELL), floori(local.y / CELL))
 		var south_face := local.y >= half_extent.y - CELL
 		for storey in range(storeys):
-			var mesh := _box(Vector3(CELL, STOREY_HEIGHT * 0.96, CELL),
+			var mesh := _box(Vector3(CELL, STOREY_VISUAL_HEIGHT * 0.96, CELL),
 				WALL_COLOR if storey % 2 == 0 else WALL_SIDING)
-			mesh.position = to3d(local, STOREY_HEIGHT * float(storey) + STOREY_HEIGHT * 0.5)
-			viewport.add_child(mesh)
+			mesh.position = to3d(local, STOREY_VISUAL_HEIGHT * float(storey) + STOREY_VISUAL_HEIGHT * 0.5)
+			scene_root.add_child(mesh)
 			if south_face:
 				record["details"] += _add_street_face_details(mesh, storeys, storey, entrance_x, local.x)
 			if not record["cells"].has(cell):
@@ -136,8 +158,8 @@ func _build_geometry(record: Dictionary, building: ProceduralBuilding, interior:
 		var roof_color: Color = ROOF_COLORS.get(String(interior.get("roof_material", "A")), Color(0.5, 0.3, 0.3))
 		for cell in roof_layer.get_used_cells():
 			var tile := _box(Vector3(CELL, 6.0, CELL), roof_color.darkened(0.08 * float(absi(cell.x + cell.y) % 3)))
-			tile.position = to3d(Vector2(cell) * CELL + Vector2(CELL * 0.5, CELL * 0.5), STOREY_HEIGHT * float(storeys))
-			viewport.add_child(tile)
+			tile.position = to3d(Vector2(cell) * CELL + Vector2(CELL * 0.5, CELL * 0.5), STOREY_VISUAL_HEIGHT * float(storeys))
+			scene_root.add_child(tile)
 			record["roof"][cell] = tile
 
 ## Windows on every above-ground storey + a door inset beside the entrance
@@ -149,11 +171,11 @@ func _add_street_face_details(wall_mesh: MeshInstance3D, total_storeys: int, sto
 	if storey == 0:
 		if absf(cell_center_x - entrance_x) <= CELL * 0.75:
 			var door := _box(Vector3(20.0, 26.0, 2.4), DOOR_COLOR)
-			door.position = Vector3(0.0, -STOREY_HEIGHT * 0.18, face_z)
+			door.position = Vector3(0.0, -STOREY_VISUAL_HEIGHT * 0.18, face_z)
 			wall_mesh.add_child(door)
 			added += 1
 		return added
-	var window_y := STOREY_HEIGHT * 0.08
+	var window_y := STOREY_VISUAL_HEIGHT * 0.08
 	for offset_x in [-8.0, 8.0]:
 		var window := _box(Vector3(11.0, 10.0, 2.2), GLASS_COLOR)
 		window.position = Vector3(offset_x, window_y, face_z)
@@ -229,7 +251,7 @@ func _drop_and_free(mesh: MeshInstance3D) -> void:
 		return
 	var tween := mesh.create_tween()
 	tween.set_parallel(true)
-	tween.tween_property(mesh, "position:y", mesh.position.y - STOREY_HEIGHT * 1.5, 0.8)
+	tween.tween_property(mesh, "position:y", mesh.position.y - STOREY_VISUAL_HEIGHT * 1.5, 0.8)
 	tween.tween_property(mesh, "rotation:x", randf_range(-0.7, 0.7), 0.8)
 	tween.tween_property(mesh, "rotation:z", randf_range(-0.7, 0.7), 0.8)
 	tween.chain().tween_callback(mesh.queue_free)

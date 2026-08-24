@@ -164,6 +164,10 @@ func _find_best_visible_candidate(origin: Vector2) -> Node2D:
 	for node in _owner_actor.get_tree().get_nodes_in_group("attackable"):
 		if not is_instance_valid(node):
 			continue
+		# Floor gate: zombies never take stairs, so targets on an upper
+		# floor are invisible to ground-level perception.
+		if "current_floor" in node and int(node.get("current_floor")) != 0:
+			continue
 		var n2d: Node2D = node as Node2D
 		var offset: Vector2 = n2d.global_position - origin
 		var dist_sq: float = offset.length_squared()

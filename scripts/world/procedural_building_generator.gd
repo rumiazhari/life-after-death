@@ -85,6 +85,7 @@ func generate(building_id: StringName, archetype: StringName, size: Vector2, see
 		"windows": windows,
 		"clearance_rects": clearance_rects,
 		"furniture": furniture,
+		"stairs_up": _stairs_up_position(rooms, clearance_rects, furniture),
 	}
 
 ## Deterministic per-building collapse state: some interiors remain mostly
@@ -888,6 +889,55 @@ func _furniture_data(kind: StringName) -> Dictionary:
 	if FURNITURE.has(kind):
 		return FURNITURE[kind]
 	return {"texture": "res://assets/pixel/props/crate.png", "size": Vector2(26, 22), "visual_size": Vector2(28, 24)}
+
+## Deterministic stairwell spot for multistory buildings: inside the
+## entrance room, against its north wall band, clear of reserved aisles and
+## already-placed furniture. Empty when no free cell exists (single-storey
+## play only for that building).
+func _stairs_up_position(rooms: Array[Dictionary], clearance_rects: Array[Dictionary], furniture: Array[Dictionary]) -> Dictionary:
+	if rooms.is_empty():
+		return {}
+	var entrance_room: Dictionary = rooms[0]
+	var room_rect: Rect2 = entrance_room["rect"]
+	var reserves: Array[Rect2] = []
+	for reserve in clearance_rects:
+		if reserve["room_id"] == entrance_room["id"]:
+			reserves.append(reserve["rect"])
+	var occupied: Array[Rect2] = []
+	for furn in furniture:
+		if furn["room_id"] == entrance_room["id"]:
+			occupied.append(furn["clearance_rect"])
+	var size := Vector2(32, 32)
+	var candidates: Array[Vector2] = [
+		Vector2(room_rect.get_center().x, room_rect.position.y + 24.0),
+		Vector2(room_rect.position.x + 28.0, room_rect.position.y + 24.0),
+		Vector2(room_rect.end.x - 28.0, room_rect.position.y + 24.0),
+		room_rect.get_center(),
+	]
+	for candidate in candidates:
+		var collision := Rect2(candidate - size * 0.5, size)
+		var clear := collision.grow(FURNITURE_CLEARANCE)
+		if not room_rect.encloses(clear):
+			continue
+		var blocked := false
+		for reserve in reserves:
+			if clear.intersects(reserve):
+				blocked = true
+				break
+		if blocked:
+			continue
+		for other in occupied:
+			if clear.intersects(other):
+				blocked = true
+				break
+		if blocked:
+			continue
+		return {
+			"position": candidate,
+			"room_id": entrance_room["id"],
+			"size": size,
+		}
+	return {}
 
 func _floor_for(archetype: StringName, role: StringName) -> StringName:
 	if archetype == &"clinic":

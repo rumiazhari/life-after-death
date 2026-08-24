@@ -28,6 +28,96 @@ func _ready() -> void:
 		push_error("ProceduralBuilding entered the tree before configure()")
 		return
 	super._ready()
+	call_deferred("_build_stairs")
+
+## --- upper-floor gameplay ------------------------------------------------
+## Multistory buildings expose a stairwell: interacting toggles the ACTIVE
+## floor for everyone on this 2D plane. Movement code never changes -- only
+## which collision set is live (ground: full shell + furniture vs. upper:
+## perimeter shell only) and a floor tag actors' perception respects.
+## Zombies never take stairs, so going up breaks pursuit.
+
+var current_floor: int = 0
+var _ground_colliders: Array[CollisionShape2D] = []
+var _upper_colliders: Array[CollisionShape2D] = []
+var _floor_sets_built := false
+
+func _build_stairs() -> void:
+	var stairs: Dictionary = specification.get("interior", {}).get("stairs_up", {})
+	if stairs.is_empty():
+		return
+	var area := Area2D.new()
+	area.name = "Stairs"
+	area.collision_layer = 64 # Interactable
+	area.collision_mask = 0
+	var shape := RectangleShape2D.new()
+	shape.size = stairs["size"] + Vector2(24, 24)
+	var collider := CollisionShape2D.new()
+	collider.shape = shape
+	area.add_child(collider)
+	add_child(area)
+	area.position = stairs["position"]
+	var interactable := InteractableComponent.new()
+	interactable.interact_label = "Take the Stairs"
+	interactable.interacted.connect(_on_stairs_used)
+	area.add_child(interactable)
+
+func _on_stairs_used(actor: Node) -> void:
+	set_floor(1 - current_floor)
+	# Tag the actor so perception respects the floor change.
+	if "current_floor" in actor:
+		actor.set("current_floor", current_floor)
+
+func set_floor(floor_index: int) -> void:
+	floor_index = clampi(floor_index, 0, 1)
+	if floor_index == current_floor:
+		return
+	current_floor = floor_index
+	_ensure_floor_sets()
+	var enable_upper := current_floor == 1
+	for collider in _ground_colliders:
+		collider.set_deferred("disabled", enable_upper)
+	for collider in _upper_colliders:
+		collider.set_deferred("disabled", not enable_upper)
+	GameEvents.building_floor_changed.emit(self, current_floor)
+
+## Splits wall-cell colliders into perimeter (both floors) vs interior
+## partition + furniture (ground only). Built once, cached.
+func _ensure_floor_sets() -> void:
+	if _floor_sets_built:
+		return
+	_floor_sets_built = true
+	var rects: Array = specification["interior"]["perimeter_rects"]
+	var margin := PixelAtlasMap.TILE_SIZE * 0.5 + 1.0
+	for child in get_children():
+		if not (child is StaticBody2D):
+			continue
+		var pos: Vector2 = (child as Node2D).position
+		var is_perimeter := false
+		for rect_variant in rects:
+			var rect: Rect2 = rect_variant
+			if absf(pos.y - rect.position.y) <= margin or absf(pos.y - rect.end.y) <= margin \
+					or absf(pos.x - rect.position.x) <= margin or absf(pos.x - rect.end.x) <= margin:
+				is_perimeter = true
+				break
+		for collider in child.get_children():
+			if collider is CollisionShape2D:
+				if is_perimeter:
+					_ground_colliders.append(collider)
+				else:
+					_upper_colliders.append(collider)
+	# Furniture lives inside Rooms; its bodies are ground-floor clutter.
+	var rooms_container := get_node_or_null("Rooms")
+	if rooms_container != null:
+		for room in rooms_container.get_children():
+			for child in room.get_children():
+				if child is StaticBody2D:
+					for collider in child.get_children():
+						if collider is CollisionShape2D:
+							_ground_colliders.append(collider)
+
+func has_stairs() -> bool:
+	return not specification.get("interior", {}).get("stairs_up", {}).is_empty()
 
 func _construct_subtree() -> void:
 	var interior: Dictionary = specification["interior"]

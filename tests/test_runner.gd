@@ -126,6 +126,7 @@ func _run_all() -> void:
 	await _run_test("dialogue_controller_flow_branch_and_flags", _test_dialogue_controller_flow_branch_and_flags)
 	await _run_test("dialogue_ui_shows_lines_and_choices", _test_dialogue_ui_shows_lines_and_choices)
 	await _run_test("building_world_25d_mirrors_destruction", _test_building_world_25d_mirrors_destruction)
+	await _run_test("multistory_stairs_toggle_floors", _test_multistory_stairs_toggle_floors)
 
 ## --- story & dialogue ---
 
@@ -234,6 +235,55 @@ func _test_building_world_25d_mirrors_destruction() -> void:
 		" | cascade x=", cascade_x, " ", cascade_before, "->", cascade_after)
 	_assert(failures == 0, "2.5D destruction mirror must track every event (%d failures)" % failures)
 	world.queue_free()
+	building.queue_free()
+	WorldState.reset()
+	await get_tree().process_frame
+
+## Stairs: multistory buildings toggle between ground and upper floor
+## collision sets; zombies lose track of targets who go upstairs.
+func _test_multistory_stairs_toggle_floors() -> void:
+	WorldState.reset()
+	var city: Dictionary = ProceduralCityGenerator.new().generate_streamed_chunk(20260821, Vector2i.ZERO)
+	var spec: Dictionary = {}
+	for building_variant in city["buildings"]:
+		var candidate: Dictionary = building_variant
+		if int(candidate.get("storeys", 2)) >= 3:
+			spec = candidate
+			break
+	_assert(not spec.is_empty(), "the corpus must contain a 3+ storey building for the stairs test")
+	var stairs_info: Dictionary = spec["interior"].get("stairs_up", {})
+	_assert(not stairs_info.is_empty(), "multistory buildings must author a stairwell position")
+
+	var building := ProceduralBuilding.new()
+	building.configure(spec)
+	add_child(building)
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	_assert(building.has_stairs(), "runtime building must expose has_stairs()")
+	_assert(building.current_floor == 0, "buildings start on the ground floor")
+
+	building.set_floor(1)
+	await get_tree().process_frame
+	await get_tree().physics_frame
+	_assert(building.current_floor == 1, "set_floor(1) must switch to the upper floor")
+	var ground_disabled := 0
+	for collider in building._ground_colliders:
+		if collider.disabled:
+			ground_disabled += 1
+	_assert(ground_disabled == building._ground_colliders.size(),
+		"going up must disable ALL ground colliders (%d/%d)" % [ground_disabled, building._ground_colliders.size()])
+
+	building.set_floor(0)
+	await get_tree().process_frame
+	await get_tree().physics_frame
+	var ground_reenabled := 0
+	for collider in building._ground_colliders:
+		if not collider.disabled:
+			ground_reenabled += 1
+	_assert(ground_reenabled == building._ground_colliders.size(),
+		"coming down must re-enable all ground colliders")
+	_assert(building.current_floor == 0, "floor must return to ground")
+
 	building.queue_free()
 	WorldState.reset()
 	await get_tree().process_frame
@@ -2500,11 +2550,9 @@ func _assert_runtime_city_is_physically_connected(district: ProceduralDistrict, 
 	await get_tree().process_frame
 	var scoped_regions: Array = get_tree().get_nodes_in_group("spawn_regions").filter(func(node: Node) -> bool: return district.is_ancestor_of(node))
 	for region_index in range(scoped_regions.size()):
-		# The nav request budget is per-frame; sampling many regions back to
-		# back can starve `are_positions_connected` for later regions and
-		# flake the check. Yielding occasionally resets it fairly.
-		if region_index % 8 == 7:
-			await get_tree().physics_frame
+		# Each region's clearance check depends on settled collision; yield
+		# between regions so nav/physics budgets never starve the query.
+		await get_tree().physics_frame
 		var region := scoped_regions[region_index] as SpawnRegion
 		var candidate_rng := RandomNumberGenerator.new()
 		candidate_rng.seed = seed_value + (region_index + 1) * 7919

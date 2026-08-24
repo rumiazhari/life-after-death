@@ -1,4 +1,4 @@
-﻿class_name ProceduralCityGenerator
+class_name ProceduralCityGenerator
 extends RefCounted
 ## Deterministic semantic city generator. It owns gameplay geometry and IDs;
 ## ProceduralDistrict only rasterizes and instantiates this validated model.
@@ -26,6 +26,9 @@ const PRAGUE_COURTYARD_REAR_RESERVE := 192.0
 ## overlap -- and therefore graph adjacency -- never depends on extension
 ## heuristics guessing a street band width.
 const CONNECTOR_ROAD_OVERLAP := 32.0
+## Grown exterior-zone rects populated during _make_exterior_props; consumed
+## by the prop-placement guard so physical objects never land inside zones.
+var _zone_clear_rects: Array[Rect2] = []
 
 const BUILDING_ARCHETYPES := {
 	&"apartment": {"minimum_size": Vector2(256, 256)},
@@ -862,6 +865,9 @@ func _make_exterior_props(seed_value: int, blocks: Array[Dictionary], buildings:
 	for building in buildings:
 		building_by_block[building["block_id"]] = building
 	var apocalypse := int(morphology.get("apocalypse_level", 1))
+	_zone_clear_rects.clear()
+	for zone_entry in exterior_zones:
+		_zone_clear_rects.append((zone_entry["rect"] as Rect2).grow(GENERATED_SPAWN_CLEARANCE))
 	for block in blocks:
 		var block_id: StringName = block["id"]
 		serial_by_block[block_id] = 0
@@ -881,8 +887,6 @@ func _make_exterior_props(seed_value: int, blocks: Array[Dictionary], buildings:
 					_append_prop(result, serial_by_block, seed_value, block, &"bench", &"public", zone_rect.get_center() + Vector2(64, 32))
 					_append_prop(result, serial_by_block, seed_value, block, &"bench", &"public", zone_rect.get_center() + Vector2(-88, 40))
 				&"courtyard":
-					# Keep the central passage clear while giving the enclosed
-					# Prague block a small communal garden and resting edge.
 					_append_tree(result, serial_by_block, seed_value, block, zone_rect.get_center() + Vector2(-80, -40))
 					_append_prop(result, serial_by_block, seed_value, block, &"bench", &"public", zone_rect.get_center() + Vector2(72, 40))
 				&"parking":
@@ -890,16 +894,10 @@ func _make_exterior_props(seed_value: int, blocks: Array[Dictionary], buildings:
 					var car_kind: StringName = &"wreck" if _rng.randf() < wreck_chance else &"car"
 					_append_prop(result, serial_by_block, seed_value, block, car_kind, &"parking", zone_rect.get_center())
 					if block["zone"] == &"civic":
-						# Keep medical supply crates on the parking side of the zone.
-						# An upward offset can overlap the rear wall when a compound
-						# building consumes the block's northern frontage.
 						_append_prop(result, serial_by_block, seed_value, block, &"medical_cache", &"medical", zone_rect.get_center() + Vector2(0, 16))
 				&"alley":
 					var alley_kind: StringName = &"dumpster" if block["zone"] in [&"commercial", &"civic"] else (&"crate" if block["zone"] == &"industrial" else &"trash")
 					_append_prop(result, serial_by_block, seed_value, block, alley_kind, &"alley", zone_rect.get_center())
-					# Bins cluster: a second bag beside the alley mouth on the
-					# sidewalk strip (never inside the zone, where semantic
-					# spawn regions need their full clearance).
 					if apocalypse >= 1 or block["zone"] in [&"commercial", &"industrial"]:
 						var bag_x: float = clampf(zone_rect.get_center().x + zone_rect.size.x * 0.5 + 16.0, rect.position.x + 20.0, rect.end.x - 20.0)
 						_append_prop(result, serial_by_block, seed_value, block, &"trash", &"alley", Vector2(bag_x, zone_rect.get_center().y + 8.0))
@@ -909,8 +907,52 @@ func _make_exterior_props(seed_value: int, blocks: Array[Dictionary], buildings:
 			_append_tree(result, serial_by_block, seed_value, block, position)
 		elif block["zone"] == &"industrial":
 			_append_prop(result, serial_by_block, seed_value, block, &"cone", &"service", Vector2(rect.end.x - 48.0, rect.end.y - 48.0))
-		_make_street_composition(result, serial_by_block, seed_value, block, building_by_block.get(block_id, {}), rect, morphology)
+		_make_street_composition(result, serial_by_block, seed_value, block, building_by_block.get(block_id, {}), rect, morphology, local_zones)
+	# Post-pass: guarantee every exterior-zone spawn region retains at least
+	# one full-footprint-clear cell by removing composition props that crowd
+	# it. Zone-internal functional props (dumpsters, cars) are never removed.
+	_validate_exterior_zone_spawns(result, exterior_zones, blocks)
 	return result
+
+## For each exterior zone that will host a spawn region, verifies a clear
+## cell still exists after ALL dressing passes. If not, removes the nearest
+## non-functional composition props until one does.
+func _validate_exterior_zone_spawns(props: Array[Dictionary], exterior_zones: Array[Dictionary], _blocks: Array[Dictionary]) -> void:
+	for zone_variant in exterior_zones:
+		var zone: Dictionary = zone_variant
+		if zone["kind"] not in [&"parking", &"alley"]:
+			continue
+		var zone_rect: Rect2 = zone["rect"]
+		var inset := zone_rect.grow(-ProceduralCityGenerator.GENERATED_SPAWN_CLEARANCE + 0.001)
+		if inset.size.x <= 0.0 or inset.size.y <= 0.0:
+			continue
+		# Check if any cell in the inset is clear of all prop footprints.
+		var has_clear := false
+		for prop_variant in props:
+			var p: Dictionary = prop_variant
+			if p["zone"] != zone["zone"] or String(p["id"]).get_base_dir() != String(zone["id"]).get_base_dir():
+				continue
+			var pr := Rect2(p["position"] - p["size"] * 0.5, p["size"])
+			if not inset.intersects(pr.grow(ProceduralCityGenerator.GENERATED_SPAWN_CLEARANCE)):
+				has_clear = true
+				break
+		if has_clear:
+			continue
+		# Too crowded: remove composition props overlapping the zone.
+		var removed := 0
+		var cleaned: Array[Dictionary] = []
+		for i in range(props.size()):
+			var p: Dictionary = props[i]
+			var pr2 := Rect2(p["position"] - p["size"] * 0.5, p["size"])
+			var in_zone := zone_rect.grow(4.0).intersects(pr2)
+			var is_functional: bool = p.get("interaction", &"") == &"loot" or p.get("kind", &"") in [&"dumpster", &"car", &"wreck", &"medical_cache"]
+			if in_zone and not is_functional and removed < 4:
+				removed += 1
+				continue
+			cleaned.append(p)
+		if removed > 0:
+			props.clear()
+			props.append_array(cleaned)
 
 ## Composed street dressing for one urban quarter: lamps following the
 ## sidewalk rhythm, tree lines on residential/commercial frontages, benches
@@ -918,11 +960,17 @@ func _make_exterior_props(seed_value: int, blocks: Array[Dictionary], buildings:
 ## apocalypse level earns them. Everything is deterministic from the seed and
 ## keeps the pedestrian band, door approaches and road connectivity clear --
 ## collisions stay on the sidewalk, tall visuals may overlap the roadway.
-func _make_street_composition(output: Array[Dictionary], serials: Dictionary, seed_value: int, block: Dictionary, building: Dictionary, rect: Rect2, morphology: Dictionary) -> void:
+func _make_street_composition(output: Array[Dictionary], serials: Dictionary, seed_value: int, block: Dictionary, building: Dictionary, rect: Rect2, morphology: Dictionary, local_zones: Array) -> void:
 	var profile: StringName = morphology["profile"]
 	var apocalypse := int(morphology.get("apocalypse_level", 1))
 	var zone: StringName = block["zone"]
 	var center_x := rect.get_center().x
+
+	# Exterior-zone footprints (grown by spawn clearance) are no-prop zones:
+	# semantic spawn regions sample full zombie footprints inside them.
+	var zone_clear_rects: Array[Rect2] = []
+	for zr in local_zones:
+		zone_clear_rects.append((zr["rect"] as Rect2).grow(ProceduralCityGenerator.GENERATED_SPAWN_CLEARANCE))
 
 	# --- lamp spacing follows the sidewalk ---
 	var lamp_positions: Array[float] = []
@@ -1031,21 +1079,21 @@ func _lamp_state(apocalypse: int, hash_value: int) -> StringName:
 				return &"steady"
 			return &"flicker" if roll < 40 else &"dead"
 
-## Keeps any physical street object out of the semantic frontage anchor zone
-## (the block-center south band where the residential frontage spawn region
-## samples full zombie footprints). South-band objects within the protected
-## radius are nudged deterministically outward; everything off the south
-## band passes through untouched.
+## Keeps any physical street object out of exterior-zone spawn-clearance
+## footprints AND the semantic frontage anchor zone.
 func _frontage_cleared_position(block: Dictionary, position: Vector2, footprint_half_width: float) -> Vector2:
 	var rect: Rect2 = block["rect"]
-	if position.y < rect.end.y - 48.0:
-		return position
 	var center_x := rect.get_center().x
 	var minimum := 56.0 + footprint_half_width
-	if absf(position.x - center_x) >= minimum:
-		return position
-	var side := 1.0 if position.x >= center_x else -1.0
-	return Vector2(center_x + side * (minimum + 16.0), position.y)
+	# South-band frontage anchor protection.
+	if position.y >= rect.end.y - 48.0 and absf(position.x - center_x) < minimum:
+		var side := 1.0 if position.x >= center_x else -1.0
+		position.x = center_x + side * (minimum + 16.0)
+	# Exterior-zone clearance.
+	for zr in _zone_clear_rects:
+		if zr.has_point(position):
+			return Vector2(zr.position.x - footprint_half_width - 20.0, position.y)
+	return position
 
 func _append_lamp(output: Array[Dictionary], serials: Dictionary, seed_value: int, block: Dictionary, position: Vector2, apocalypse: int) -> void:
 	position = _frontage_cleared_position(block, position, 5.0)

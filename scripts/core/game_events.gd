@@ -40,3 +40,6 @@ signal survivor_selected(survivor: Node)
 ## Phase 3B: fires whenever PlayerInteractor's best candidate changes.
 ## Empty string means "no valid interaction target right now."
 signal interact_prompt_changed(label: String)
+## Emitted when a survivor group switches floors inside a multistory
+## generated building (0 = ground, 1 = upper).
+signal building_floor_changed(building: ProceduralBuilding, floor_index: int)

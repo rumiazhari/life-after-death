@@ -25,6 +25,8 @@ var weapon_slots: Array[Weapon] = []
 var carried_inventory: Inventory
 
 var _fire_was_held: bool = false
+## Floor tag for zombie perception gating (0 = ground, 1 = upstairs).
+var current_floor: int = 0
 ## External physical pushes (explosions) layered onto input movement.
 var _knockback := Vector2.ZERO
 
