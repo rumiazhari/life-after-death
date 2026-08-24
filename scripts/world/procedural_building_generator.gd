@@ -84,7 +84,7 @@ func generate(building_id: StringName, archetype: StringName, size: Vector2, see
 		"partitions": partitions,
 		"windows": windows,
 		"clearance_rects": clearance_rects,
-		"furniture": furniture,
+"furniture": furniture,
 		"stairs_up": _stairs_up_position(rooms, clearance_rects, furniture),
 	}
 

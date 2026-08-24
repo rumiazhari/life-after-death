@@ -16,6 +16,8 @@ extends CanvasLayer
 @onready var interact_prompt_label: Label = $Root/SafeArea/InteractPromptPanel/InteractPromptLabel
 
 var _known_magazine_size: int = 1
+var has_player: bool = false
+var floor_label: Label
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
@@ -31,9 +33,20 @@ func _ready() -> void:
 	kills_label.text = "Kills: 0"
 	zombie_count_label.text = "Zombies: 0"
 	interact_prompt_panel.visible = false
+	has_player = get_tree().get_first_node_in_group("player") != null
+	# Add floor indicator label dynamically
+	var floor_dbg := Label.new()
+	floor_dbg.name = "floor_label"
+	floor_dbg.set_default_font_size(16)
+	floor_dbg.position = Vector2(10, get_viewport().get_visible_rect().size.y - 30)
+	add_child(floor_dbg)
+	floor_label = floor_dbg
 
 func _process(_delta: float) -> void:
 	fps_label.text = "FPS: %d" % Engine.get_frames_per_second()
+	var player: Node2D = get_tree().get_first_node_in_group("player")
+	if player != null and has_player:
+		floor_label.text = "Floor: %d" % player.current_floor
 
 func _on_health_changed(current: float, max_health: float) -> void:
 	health_label.text = "HP: %d / %d" % [int(ceil(current)), int(max_health)]

@@ -29,9 +29,10 @@ const CAMERA_DISTANCE := 900.0
 ## Ground-plane depth compresses by sin(pitch) on screen; the geometry root
 ## is stretched by the inverse so the footprint aligns 1:1 with the 2D map.
 const GROUND_Z_COMPENSATION := 1.0 / sin(deg_to_rad(CAMERA_PITCH_DEG))
-## Vertical faces compress by cos(pitch); storey boxes are boosted so the
-## projected storey height reads close to the flat facade's.
-const STOREY_VISUAL_HEIGHT := 50.0
+## Vertical faces compress by cos(pitch); boosted by 1/cos(pitch) so the
+## projected storey height lands at exactly 34 px per storey (matching the
+## 2D facade's storey band).
+const STOREY_VISUAL_HEIGHT := 34.0 / cos(deg_to_rad(CAMERA_PITCH_DEG))
 const PAD_X := 28.0
 const PAD_TOP := 26.0
 const PAD_BOTTOM := 14.0
