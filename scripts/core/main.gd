@@ -101,7 +101,6 @@ func _ready() -> void:
 	var world_25d := BuildingWorld3D.new()
 	world_25d.name = "BuildingWorld3D"
 	add_child(world_25d)
-	world_25d.track(camera_rig)
 
 	GameEvents.player_died.connect(_on_player_died)
 	death_overlay.restart_requested.connect(_restart_game)

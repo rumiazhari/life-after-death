@@ -184,7 +184,8 @@ func _test_building_world_25d_mirrors_destruction() -> void:
 	add_child(building)
 	await get_tree().physics_frame
 	await get_tree().physics_frame
-	world.register_building(building)
+	var record: Dictionary = world.register_building(building)
+	world.attach_display(building, record)
 
 	var half: Vector2 = spec["interior"]["half_extent"]
 	# Collect two south segments up front (before anything dies).
@@ -196,7 +197,16 @@ func _test_building_world_25d_mirrors_destruction() -> void:
 				var body := child as Node2D
 				if body.position.y >= half.y - PixelAtlasMap.TILE_SIZE:
 					south.append({"comp": c, "pos": body.position})
-	print("south_segments=", south.size())
+	_assert(south.size() >= 3, "fixture needs south perimeter segments")
+
+	# Display container exists with a real viewport, and is anchored into the
+	# y-sorted entity layer at the building's south baseline (occlusion parity
+	# with the old flat facade).
+	var container: SubViewportContainer = record["container"]
+	_assert(container != null and container.is_inside_tree(), "the 2.5D display container must exist")
+	_assert((record["viewport"] as SubViewport).size.x > 100 and (record["viewport"] as SubViewport).size.y > 100,
+		"per-building viewport must be sized to the building bounds")
+	_assert(world.get_facade_detail_count() > 0, "street-face details (windows/doors) must be extruded")
 
 	var first: Dictionary = south[1]
 	var second: Dictionary = south[2]
@@ -213,16 +223,15 @@ func _test_building_world_25d_mirrors_destruction() -> void:
 	var roof_mid: int = world.get_roof_tile_count()
 	failures += 0 if column_after < column_before else 1
 	failures += 0 if roof_mid < roof_before else 1
-	print("column ", column_before, "->", column_after, " | roof ", roof_before, "->", roof_mid)
 
 	(second["comp"] as EnvironmentDamageComponent).apply_damage(9999.0, EnvironmentDamage.DamageClass.EXPLOSIVE, null)
 	await get_tree().process_frame
 	await get_tree().physics_frame
 	var cascade_after: int = world.count_meshes_in_column_x(cascade_x)
 	failures += 0 if cascade_after < cascade_before else 1
-	print("cascade x=", cascade_x, " ", cascade_before, "->", cascade_after)
 
-	print("FAILURES ", failures)
+	print("column ", column_before, "->", column_after, " | roof ", roof_before, "->", roof_mid,
+		" | cascade x=", cascade_x, " ", cascade_before, "->", cascade_after)
 	_assert(failures == 0, "2.5D destruction mirror must track every event (%d failures)" % failures)
 	world.queue_free()
 	building.queue_free()
@@ -2418,6 +2427,13 @@ func _streamed_semantic_count(world: StreamingWorld, field: StringName) -> int:
 	return total
 
 func _instantiate_procedural_district_fixture(seed_value: int) -> ProceduralDistrict:
+	# Hygiene: transient physics dressing (debris/limbs/corpses/casings) from
+	# earlier tests shares the entity layer and must never leak into a fresh
+	# district's spawn-clearance sampling.
+	for group_name in ["physics_debris", "severed_limbs", "corpses", "blood_decals", "blood_sprays", "shell_casings"]:
+		for node in get_tree().get_nodes_in_group(group_name):
+			if is_instance_valid(node):
+				node.free()
 	var district := PROCEDURAL_DISTRICT_SCENE.instantiate() as ProceduralDistrict
 	district.city_seed = seed_value
 	add_child(district)
@@ -2484,6 +2500,11 @@ func _assert_runtime_city_is_physically_connected(district: ProceduralDistrict, 
 	await get_tree().process_frame
 	var scoped_regions: Array = get_tree().get_nodes_in_group("spawn_regions").filter(func(node: Node) -> bool: return district.is_ancestor_of(node))
 	for region_index in range(scoped_regions.size()):
+		# The nav request budget is per-frame; sampling many regions back to
+		# back can starve `are_positions_connected` for later regions and
+		# flake the check. Yielding occasionally resets it fairly.
+		if region_index % 8 == 7:
+			await get_tree().physics_frame
 		var region := scoped_regions[region_index] as SpawnRegion
 		var candidate_rng := RandomNumberGenerator.new()
 		candidate_rng.seed = seed_value + (region_index + 1) * 7919

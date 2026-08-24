@@ -117,14 +117,23 @@ func _build_shell(interior: Dictionary) -> void:
 	_wire_wall_destruction_sync()
 	# 2.5D: when the shared 3D building layer exists, it becomes the visual
 	# truth (real stacked geometry); the flat facade/roof step aside.
+	# Registration is deferred because it needs this node inside the tree
+	# (world lookups + container parenting into the entity layer).
+	call_deferred("_register_with_world_25d")
+
+func _register_with_world_25d() -> void:
+	if not is_inside_tree():
+		return
 	var world_25d: Node = _world_25d()
-	if world_25d != null:
-		world_25d.register_building(self)
-		if _facade_visual != null:
-			_facade_visual.visible = false
-		var roof := get_node_or_null(roof_node_path) as TileMapLayer
-		if roof != null:
-			roof.visible = false
+	if world_25d == null:
+		return
+	var record: Dictionary = world_25d.register_building(self)
+	world_25d.attach_display(self, record)
+	if _facade_visual != null:
+		_facade_visual.visible = false
+	var roof := get_node_or_null(roof_node_path) as TileMapLayer
+	if roof != null:
+		roof.visible = false
 
 ## Logical spatial sync between interior wall destruction and the projected
 ## exterior: destroying a perimeter wall segment erases the roof tile(s)

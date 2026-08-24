@@ -1,104 +1,116 @@
 class_name BuildingWorld3D
 extends Node3D
-## The 2.5D layer: every generated building is rebuilt here as REAL stacked
-## geometry -- floor slabs, one wall box per wall cell per storey, and a
-## per-tile roof -- rendered through an orthographic camera matched to the
-## 2D camera. Destruction in the semantic model drives this geometry:
-## dead wall cells lose their columns (all storeys), roof bays rain down,
-## and structural cascades flatten whole columns. Gameplay collision stays
-## on the 2D plane (ground floor); this layer is presentation truth.
+## The 2.5D layer: every generated building gets a dedicated small 3D
+## viewport containing REAL stacked geometry -- floor slabs, one wall box
+## per wall cell per storey (with window/door insets on the street face),
+## and a per-tile roof -- displayed through an orthographic camera at a
+## fixed 2.5D pitch. Each display container is parented into the y-sorted
+## entity layer anchored at the building's south baseline, so occlusion
+## against actors behaves exactly like the old flat facade did.
+##
+## Destruction in the semantic model drives this geometry: dead wall cells
+## lose their columns (all storeys), roof bays rain down tile-by-tile, and
+## structural cascades flatten whole x-columns. Gameplay collision stays on
+## the 2D plane (ground floor); this layer is presentation truth.
 
-const STOREY_HEIGHT := 34.0
+const STOREY_HEIGHT := 40.0
 const CELL := 32.0
 const WALL_COLOR := Color(0.78, 0.70, 0.55)
 const WALL_SIDING := Color(0.66, 0.58, 0.46)
 const FLOOR_COLOR := Color(0.45, 0.40, 0.34)
+const GLASS_COLOR := Color(0.16, 0.22, 0.26)
+const DOOR_COLOR := Color(0.36, 0.22, 0.13)
 const ROOF_COLORS := {
 	"A": Color(0.59, 0.27, 0.24), "B": Color(0.35, 0.43, 0.51),
 	"C": Color(0.59, 0.54, 0.38), "D": Color(0.39, 0.55, 0.43),
 }
+const CAMERA_PITCH_DEG := 55.0
+const CAMERA_DISTANCE := 900.0
+## Ground-plane depth compresses by sin(pitch) on screen; used for framing.
+const PAD_X := 28.0
+const PAD_TOP := 26.0
+const PAD_BOTTOM := 14.0
 
-var _viewport: SubViewport
-var _camera: Camera3D
-var _tracked_rig: Node = null
-## building_id -> {cells: {Vector2i -> Array[MeshInstance3D]}, roof: {Vector2i -> MeshInstance3D}, spec}
+## building_id -> record {viewport, container, camera, cells, roof, spec, details}
 var _buildings: Dictionary = {}
 
-func _ready() -> void:
-	add_to_group("building_world_25d")
-	_viewport = SubViewport.new()
-	_viewport.name = "Viewport25D"
-	_viewport.transparent_bg = true
-	_viewport.own_world_3d = true
-	_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
-	_viewport.msaa_3d = Viewport.MSAA_2X
-	add_child(_viewport)
-	var light := DirectionalLight3D.new()
-	light.rotation_degrees = Vector3(-52.0, 18.0, 0.0)
-	light.light_energy = 1.15
-	_viewport.add_child(light)
-	_camera = Camera3D.new()
-	_camera.projection = Camera3D.PROJECTION_ORTHOGONAL
-	_camera.current = true
-	_viewport.add_child(_camera)
-	_apply_camera_transform(Vector2.ZERO, 1.0)
-	get_viewport().size_changed.connect(_match_viewport_size)
-	_match_viewport_size()
-
-func _match_viewport_size() -> void:
-	if _viewport == null:
-		return
-	var size := get_viewport().get_visible_rect().size
-	_viewport.size = Vector2i(size)
-
-## Matches the 2D camera: same screen center, same zoom, fixed 2.5D pitch.
 ## Mapping: 2D (x, y) -> 3D (x, up=height, z=y).
-func track(camera_rig: Node) -> void:
-	_tracked_rig = camera_rig
-
-func _process(_delta: float) -> void:
-	if _tracked_rig == null or not is_instance_valid(_tracked_rig):
-		return
-	var center: Vector2 = _tracked_rig.get_screen_center_position()
-	var zoom: Vector2 = _tracked_rig.zoom
-	_apply_camera_transform(center, zoom.y)
-
-func _apply_camera_transform(center: Vector2, zoom_y: float) -> void:
-	if _viewport == null:
-		return
-	var view_size := Vector2(_viewport.size)
-	_camera.size = maxf(view_size.y / maxf(zoom_y, 0.01), 100.0)
-	# Pull back along the view direction so the ortho frustum centers on the
-	# 2D screen center at ground level.
-	var distance := 600.0
-	var pitch := deg_to_rad(-52.0)
-	var offset := Vector3(0.0, sin(-pitch) * distance, cos(-pitch) * distance)
-	_camera.global_position = Vector3(center.x, 0.0, center.y) + offset
-	_camera.look_at(Vector3(center.x, 0.0, center.y), Vector3.UP)
-
 static func to3d(p: Vector2, height := 0.0) -> Vector3:
 	return Vector3(p.x, height, p.y)
 
-## Builds the stacked geometry for one generated building spec.
-func register_building(building: ProceduralBuilding) -> void:
+func register_building(building: ProceduralBuilding) -> Dictionary:
 	var spec: Dictionary = building.specification
 	var id: StringName = spec["id"]
 	if _buildings.has(id):
-		return
+		return _buildings[id]
 	var interior: Dictionary = spec["interior"]
 	var half_extent: Vector2 = interior["half_extent"]
 	var storeys: int = clampi(int(spec.get("storeys", 3)), 2, 6)
-	var record := {"cells": {}, "roof": {}, "spec": spec, "building": building}
+
+	var ground_depth := half_extent.y * 2.0
+	var wall_stack := STOREY_HEIGHT * float(storeys)
+	var view_w := half_extent.x * 2.0 + PAD_X * 2.0
+	var view_h := ground_depth * 0.82 + wall_stack * 0.60 + PAD_TOP + PAD_BOTTOM
+
+	var viewport := SubViewport.new()
+	viewport.name = String(id).get_file() + "_25D"
+	viewport.transparent_bg = true
+	viewport.own_world_3d = true
+	viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+	viewport.msaa_3d = Viewport.MSAA_2X
+	viewport.size = Vector2i(maxi(int(view_w), 64), maxi(int(view_h), 64))
+
+	var container := SubViewportContainer.new()
+	container.name = String(id).get_file() + "_Display"
+	container.stretch = true
+	container.size = Vector2(view_w, view_h)
+	container.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(container)
+	container.add_child(viewport)
+
+	var light := DirectionalLight3D.new()
+	light.rotation_degrees = Vector3(-52.0, 18.0, 0.0)
+	light.light_energy = 1.15
+	viewport.add_child(light)
+
+	var camera := Camera3D.new()
+	camera.projection = Camera3D.PROJECTION_ORTHOGONAL
+	camera.size = maxf(view_h, 100.0)
+	camera.current = true
+	var target := Vector3(0.0, wall_stack * 0.32, half_extent.y * 0.35)
+	var pitch := deg_to_rad(CAMERA_PITCH_DEG)
+	camera.position = target + Vector3(0.0, sin(pitch) * CAMERA_DISTANCE, cos(pitch) * CAMERA_DISTANCE)
+	camera.look_at(target, Vector3.UP)
+	viewport.add_child(camera)
+
+	var record := {
+		"viewport": viewport, "container": container, "camera": camera,
+		"spec": spec, "storeys": storeys, "half_extent": half_extent,
+		"cells": {}, "roof": {}, "details": 0,
+	}
 	_buildings[id] = record
 
-	# Floor slab per footprint rect.
+	_build_geometry(record, building, interior, storeys)
+	return record
+
+func _build_geometry(record: Dictionary, building: ProceduralBuilding, interior: Dictionary, storeys: int) -> void:
+	var viewport: SubViewport = record["viewport"]
+	var half_extent: Vector2 = record["half_extent"]
+
 	for rect_variant in interior.get("perimeter_rects", []):
 		var rect: Rect2 = rect_variant
 		var slab := _box(Vector3(rect.size.x, 4.0, rect.size.y), FLOOR_COLOR)
 		slab.position = to3d(rect.get_center(), 0.0)
-		add_child(slab)
+		viewport.add_child(slab)
 
-	# Wall columns: one box per semantic wall cell per storey.
+	# Entrance x (world-local) for the ground-floor door inset.
+	var entrance_x := INF
+	for door_variant in interior.get("doors", []):
+		var door: Dictionary = door_variant
+		if bool(door["exterior"]):
+			entrance_x = (door["position"] as Vector2).x
+			break
+
 	for child in building.get_children():
 		if not (child is StaticBody2D):
 			continue
@@ -107,27 +119,72 @@ func register_building(building: ProceduralBuilding) -> void:
 			continue
 		var local: Vector2 = (child as Node2D).position
 		var cell := Vector2i(floori(local.x / CELL), floori(local.y / CELL))
+		var south_face := local.y >= half_extent.y - CELL
 		for storey in range(storeys):
 			var mesh := _box(Vector3(CELL, STOREY_HEIGHT * 0.96, CELL),
 				WALL_COLOR if storey % 2 == 0 else WALL_SIDING)
 			mesh.position = to3d(local, STOREY_HEIGHT * float(storey) + STOREY_HEIGHT * 0.5)
-			add_child(mesh)
+			viewport.add_child(mesh)
+			if south_face:
+				record["details"] += _add_street_face_details(mesh, storeys, storey, entrance_x, local.x)
 			if not record["cells"].has(cell):
 				record["cells"][cell] = []
 			(record["cells"][cell] as Array).append(mesh)
 
-	# Roof tiles mirror the 2D roof layer exactly (compound shapes included).
 	var roof_layer := building.get_node_or_null("Roof") as TileMapLayer
 	if roof_layer != null:
 		var roof_color: Color = ROOF_COLORS.get(String(interior.get("roof_material", "A")), Color(0.5, 0.3, 0.3))
 		for cell in roof_layer.get_used_cells():
 			var tile := _box(Vector3(CELL, 6.0, CELL), roof_color.darkened(0.08 * float(absi(cell.x + cell.y) % 3)))
 			tile.position = to3d(Vector2(cell) * CELL + Vector2(CELL * 0.5, CELL * 0.5), STOREY_HEIGHT * float(storeys))
-			add_child(tile)
+			viewport.add_child(tile)
 			record["roof"][cell] = tile
 
-## A destroyed wall cell loses its WHOLE column (every storey) -- pieces
-## tumble down and fade.
+## Windows on every above-ground storey + a door inset beside the entrance
+## on the ground floor. Insets are CHILDREN of the wall box so they fall
+## with it on destruction.
+func _add_street_face_details(wall_mesh: MeshInstance3D, total_storeys: int, storey: int, entrance_x: float, cell_center_x: float) -> int:
+	var added := 0
+	var face_z := CELL * 0.5 + 1.2
+	if storey == 0:
+		if absf(cell_center_x - entrance_x) <= CELL * 0.75:
+			var door := _box(Vector3(20.0, 26.0, 2.4), DOOR_COLOR)
+			door.position = Vector3(0.0, -STOREY_HEIGHT * 0.18, face_z)
+			wall_mesh.add_child(door)
+			added += 1
+		return added
+	var window_y := STOREY_HEIGHT * 0.08
+	for offset_x in [-8.0, 8.0]:
+		var window := _box(Vector3(11.0, 10.0, 2.2), GLASS_COLOR)
+		window.position = Vector3(offset_x, window_y, face_z)
+		wall_mesh.add_child(window)
+		added += 1
+	return added
+
+## Places the display container into the live scene: inside the shared
+## y-sorted entity layer anchored at the building's south baseline when one
+## exists (restoring facade-style actor occlusion), otherwise attached to
+## the building itself.
+func attach_display(building: ProceduralBuilding, record: Dictionary) -> void:
+	var container: SubViewportContainer = record["container"]
+	if container == null or not container.is_inside_tree():
+		return
+	var interior: Dictionary = building.specification["interior"]
+	var half_extent: Vector2 = interior["half_extent"]
+	var entity_layer: Node2D = building.get_tree().get_first_node_in_group("entity_container") as Node2D
+	var parent_node: Node2D = entity_layer if entity_layer != null else building
+	if container.get_parent() != parent_node:
+		container.reparent(parent_node, true)
+	# Align: project the south-baseline center through the camera and place
+	# the container so that pixel lands exactly on the world anchor.
+	var anchor_local := Vector2(0.0, half_extent.y)
+	var anchor_world: Vector2 = building.to_global(anchor_local)
+	var camera: Camera3D = record["camera"]
+	var pixel: Vector2 = camera.unproject_position(to3d(anchor_local))
+	container.global_position = anchor_world - pixel
+	if entity_layer != null and container.get_parent() != entity_layer:
+		pass # already reparented above
+
 func remove_wall_column(world_local: Vector2) -> void:
 	var cell := Vector2i(floori(world_local.x / CELL), floori(world_local.y / CELL))
 	for building_id in _buildings:
@@ -138,7 +195,6 @@ func remove_wall_column(world_local: Vector2) -> void:
 			_drop_and_free(mesh)
 		record["cells"].erase(cell)
 
-## Roof bay collapse: erase the given cells' tiles with falling animation.
 func collapse_roof_tiles(cells: Array) -> void:
 	for building_id in _buildings:
 		var roof_map: Dictionary = (_buildings[building_id] as Dictionary)["roof"]
@@ -148,8 +204,6 @@ func collapse_roof_tiles(cells: Array) -> void:
 				_drop_and_free(roof_map[cell])
 				roof_map.erase(cell)
 
-## Structural cascade: flatten an entire x-column across all upper storeys
-## plus its roof strip.
 func collapse_column(local_x: float) -> void:
 	var cell_x := floori(local_x / CELL)
 	for building_id in _buildings:
@@ -212,6 +266,18 @@ func get_roof_tile_count() -> int:
 			if is_instance_valid(roof_map[key]):
 				total += 1
 	return total
+
+func get_facade_detail_count() -> int:
+	var total := 0
+	for building_id in _buildings:
+		total += int((_buildings[building_id] as Dictionary).get("details", 0))
+	return total
+
+func get_record_for(building: ProceduralBuilding) -> Dictionary:
+	return _buildings.get(specification_id(building), {})
+
+func specification_id(building: ProceduralBuilding) -> StringName:
+	return building.specification["id"]
 
 func _box(size: Vector3, color: Color) -> MeshInstance3D:
 	var mesh_instance := MeshInstance3D.new()
