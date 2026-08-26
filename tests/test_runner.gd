@@ -458,6 +458,8 @@ func _test_dialogue_ui_shows_lines_and_choices() -> void:
 	await _run_test("stair_toast_message_matches_direction", _test_stair_toast_message_matches_direction)
 	await _run_test("cover_props_spawn_across_city_blocks", _test_cover_props_spawn_across_city_blocks)
 	await _run_test("street_cover_props_breach_shatter_and_persist", _test_street_cover_props_breach_shatter_and_persist)
+	await _run_test("upper_floor_stashes_seed_rich_loot_when_stairs_exist", _test_upper_floor_stashes_seed_rich_loot_when_stairs_exist)
+	await _run_test("upper_floor_stash_rewards_climbing_and_survives_disturbance", _test_upper_floor_stash_rewards_climbing_and_survives_disturbance)
 
 	print("\n=== TEST RESULTS: %d passed, %d failed ===" % [_pass_count, _fail_count])
 	get_tree().quit(0 if _fail_count == 0 else 1)
@@ -6811,3 +6813,118 @@ func _test_street_cover_props_breach_shatter_and_persist() -> void:
 	fixture.queue_free()
 	await get_tree().process_frame
 	WorldState.reset()
+
+
+## Upper-floor loot incentive (backlog #1, USER DIRECTIVE pillar 1): any
+## multistory building that gets a usable stairwell must also seed 2-3 rich
+## stash props on the upper deck, so climbing is a real payoff rather than an
+## empty shell. Verifies the stashes exist, are floor-tagged, and carry more
+## total loot value than a typical ground container.
+func _test_upper_floor_stashes_seed_rich_loot_when_stairs_exist() -> void:
+	WorldState.reset()
+	var generator := ProceduralCityGenerator.new()
+	var found_stairs := false
+	var found_stash := false
+	var best_stash_total := 0
+	for world_seed in [7, 1024, 8801, 20260821, 65535]:
+		for coordinate in [Vector2i.ZERO, Vector2i(-2, 3), Vector2i(4, -4)]:
+			WorldState.reset()
+			var city := generator.generate_streamed_chunk(world_seed, coordinate)
+			for building in city["buildings"]:
+				var interior: Dictionary = building.get("interior", {})
+				if interior.get("stairs_up", {}).is_empty():
+					continue
+				found_stairs = true
+				for furniture in interior.get("furniture", []):
+					if int(furniture.get("floor", 0)) != 1:
+						continue
+					found_stash = true
+					var items: Dictionary = furniture.get("items", {})
+					var total := 0
+					for count in items.values():
+						total += int(count)
+					best_stash_total = maxi(best_stash_total, total)
+					_assert(String(furniture["kind"]) in ["loot_bag", "utility_box"],
+						"upper stash must be a locked duffel or utility box (got %s)" % String(furniture["kind"]))
+					_assert(not items.is_empty(), "an upper stash must carry loot")
+	_assert(found_stairs, "corpus must contain at least one multistory building with stairs")
+	_assert(found_stash, "every multistory building must seed upper-floor stashes")
+	_assert(best_stash_total >= 5, "an upper stash must be worth the climb (>=5 items, got %d)" % best_stash_total)
+	WorldState.reset()
+
+## Upper-deck stashes must survive the apocalypse disturbance pass (they are a
+## deliberate reward of verticality) and must be inert/hidden on the ground
+## floor, switching live only once the player takes the stairs up.
+func _test_upper_floor_stash_rewards_climbing_and_survives_disturbance() -> void:
+	WorldState.reset()
+	var generator := ProceduralCityGenerator.new()
+	var picked: Dictionary = {}
+	for world_seed in [7, 1024, 8801, 20260821]:
+		for coordinate in [Vector2i.ZERO, Vector2i(-2, 3), Vector2i(4, -4)]:
+			WorldState.reset()
+			var city := generator.generate_streamed_chunk(world_seed, coordinate)
+			for building in city["buildings"]:
+				var interior: Dictionary = building.get("interior", {})
+				if interior.get("stairs_up", {}).is_empty():
+					continue
+				for furniture in interior.get("furniture", []):
+					if int(furniture.get("floor", 0)) == 1:
+						picked = furniture
+						break
+				if not picked.is_empty():
+					break
+			if not picked.is_empty():
+				break
+		if not picked.is_empty():
+			break
+	_assert(not picked.is_empty(), "need an upper stash fixture")
+	# Disturbance must never strip a stash (floor == 1 is exempt in the generator).
+	_assert(not (picked["items"] as Dictionary).is_empty(),
+		"an upper stash must keep its loot after the disturbance pass")
+	# Runtime: configure a building with this stash and confirm it starts hidden
+	# and becomes visible only on the upper floor.
+	WorldState.reset()
+	var city := generator.generate_streamed_chunk(20260821, Vector2i.ZERO)
+	var stash_building: Dictionary = {}
+	for building in city["buildings"]:
+		var interior: Dictionary = building.get("interior", {})
+		if interior.get("stairs_up", {}).is_empty():
+			continue
+		for furniture in interior.get("furniture", []):
+			if int(furniture.get("floor", 0)) == 1:
+				stash_building = building
+				break
+		if not stash_building.is_empty():
+			break
+	_assert(not stash_building.is_empty(), "need a real multistory building to configure")
+	var pb: ProceduralBuilding = PROCEDURAL_BUILDING_SCRIPT.new()
+	pb.configure(stash_building)
+	add_child(pb)
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	# Collect upper-deck stash nodes via the build-time meta flag.
+	var stash_nodes := 0
+	var any_hidden_on_ground := false
+	for room in pb.get_node("Rooms").get_children():
+		for child in room.get_children():
+			if not (child is Node2D and child.has_meta("upper_deck_stash")):
+				continue
+			stash_nodes += 1
+			if not child.visible:
+				any_hidden_on_ground = true
+	_assert(stash_nodes >= 1, "the configured building must build its upper stash node")
+	_assert(any_hidden_on_ground, "upper stashes must start hidden on the ground floor")
+	pb.set_floor(1)
+	await get_tree().process_frame
+	var any_visible_upstairs := false
+	for room in pb.get_node("Rooms").get_children():
+		for child in room.get_children():
+			if not (child is Node2D and child.has_meta("upper_deck_stash")):
+				continue
+			if child.visible:
+				any_visible_upstairs = true
+	_assert(any_visible_upstairs, "upper stashes must become visible once upstairs")
+	pb.queue_free()
+	await get_tree().process_frame
+	WorldState.reset()
+

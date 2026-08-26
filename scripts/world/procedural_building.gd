@@ -42,6 +42,8 @@ var _ground_colliders: Array[CollisionShape2D] = []
 var _upper_colliders: Array[CollisionShape2D] = []
 var _floor_sets_built := false
 
+var _upper_deck_props: Array[Node2D] = []
+
 ## Cool info-blue tint for stairwell announcements on the HUD event feed.
 const STAIR_TOAST_COLOR := Color(0.55, 0.8, 1.0)
 
@@ -93,6 +95,8 @@ func set_floor(floor_index: int) -> void:
 		collider.set_deferred("disabled", enable_upper)
 	for collider in _upper_colliders:
 		collider.set_deferred("disabled", not enable_upper)
+	for prop in _upper_deck_props:
+		prop.visible = enable_upper
 	GameEvents.building_floor_changed.emit(self, current_floor)
 
 ## Splits wall-cell colliders into perimeter (both floors) vs interior
@@ -129,6 +133,13 @@ func _ensure_floor_sets() -> void:
 					for collider in child.get_children():
 						if collider is CollisionShape2D:
 							_ground_colliders.append(collider)
+
+	# Upper-deck stashes are real colliders (block movement + offer a search
+	# area) only while the player is upstairs; register them with the upper set
+	# so set_floor() enables/disables them with the rest of the upper plane.
+	for prop in _upper_deck_props:
+		for shape in _collect_collision_shapes(prop):
+			_upper_colliders.append(shape)
 
 func has_stairs() -> bool:
 	return not specification.get("interior", {}).get("stairs_up", {}).is_empty()
@@ -438,6 +449,25 @@ func _build_furniture(interior: Dictionary, rooms_by_id: Dictionary) -> void:
 				if piece_damage != null:
 					piece_damage.sub_cells = 2
 					piece_damage.fail_threshold = 0.5
+
+			# Upper-deck stash (floor == 1): inert + hidden on the ground floor,
+			# switched live by set_floor() exactly like the upper shell colliders.
+			if int(furniture.get("floor", 0)) == 1 and built != null:
+				_upper_deck_props.append(built)
+				built.set_meta("upper_deck_stash", true)
+				for shape in _collect_collision_shapes(built):
+					shape.set_deferred("disabled", true)
+				built.visible = false
+
+## Recursively collect every CollisionShape2D under `root` (used to
+## route a node's body + interact-area colliders into the active floor set).
+func _collect_collision_shapes(root: Node) -> Array[CollisionShape2D]:
+	var shapes: Array[CollisionShape2D] = []
+	if root is CollisionShape2D:
+		shapes.append(root as CollisionShape2D)
+	for child in root.get_children():
+		shapes.append_array(_collect_collision_shapes(child))
+	return shapes
 
 func _find_damage_component(root: Node) -> EnvironmentDamageComponent:
 	if root.name == "EnvironmentDamageComponent":

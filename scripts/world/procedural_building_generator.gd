@@ -16,6 +16,14 @@ const DOOR_LANDING_DEPTH := 48.0
 const AISLE_WIDTH := 40.0
 const FURNITURE_CLEARANCE := 8.0
 
+## Upper-deck stash kind metadata (texture + footprint + visual size). Kept at
+## class scope so _make_upper_floor_stashes can read it without reaching into
+## the function-local furniture table.
+const STASH_KIND_META := {
+	&"loot_bag": {"texture": "res://assets/pixel/props/loot_bag.png", "size": Vector2(24, 22), "visual_size": Vector2(26, 24)},
+	&"utility_box": {"texture": "res://assets/pixel/props/utility_box.png", "size": Vector2(22, 22), "visual_size": Vector2(24, 24)},
+}
+
 const ARCHETYPE_ROOMS := {
 	&"apartment": [&"living_room", &"kitchen", &"bedroom", &"bathroom"],
 	&"store": [&"retail_floor", &"stock_room"],
@@ -65,6 +73,9 @@ func generate(building_id: StringName, archetype: StringName, size: Vector2, see
 	var windows := _make_windows(building_id, rooms, doors, size, orientation)
 	var clearance_rects := _make_clearance_rects(rooms, doors, orientation)
 	var furniture := _make_furniture(building_id, rooms, doors, clearance_rects)
+	var stairs_up := _stairs_up_position(rooms, clearance_rects, furniture)
+	if not stairs_up.is_empty():
+		_make_upper_floor_stashes(building_id, rooms, clearance_rects, furniture)
 	_apply_apocalypse_disturbance(building_id, rooms, clearance_rects, furniture)
 	var style: Dictionary = ARCHETYPE_STYLE.get(archetype, ARCHETYPE_STYLE[&"apartment"])
 	return {
@@ -85,7 +96,7 @@ func generate(building_id: StringName, archetype: StringName, size: Vector2, see
 		"windows": windows,
 		"clearance_rects": clearance_rects,
 "furniture": furniture,
-		"stairs_up": _stairs_up_position(rooms, clearance_rects, furniture),
+		"stairs_up": stairs_up,
 	}
 
 ## Deterministic per-building collapse state: some interiors remain mostly
@@ -885,6 +896,8 @@ func _furniture_data(kind: StringName) -> Dictionary:
 		&"workbench": {"texture": "res://assets/pixel/props/table.png", "size": Vector2(80, 28), "visual_size": Vector2(84, 30)},
 		&"pallet": {"texture": "res://assets/pixel/props/pallet.png", "size": Vector2(28, 20), "visual_size": Vector2(32, 22)},
 		&"crate": {"texture": "res://assets/pixel/props/crate.png", "size": Vector2(26, 22), "visual_size": Vector2(28, 24)},
+		&"loot_bag": {"texture": "res://assets/pixel/props/loot_bag.png", "size": Vector2(24, 22), "visual_size": Vector2(26, 24)},
+		&"utility_box": {"texture": "res://assets/pixel/props/utility_box.png", "size": Vector2(22, 22), "visual_size": Vector2(24, 24)},
 	}
 	if FURNITURE.has(kind):
 		return FURNITURE[kind]
@@ -939,6 +952,107 @@ func _stairs_up_position(rooms: Array[Dictionary], clearance_rects: Array[Dictio
 		}
 	return {}
 
+## Upper-floor loot stashes: when a building has a usable stairwell,
+## seed 2-3 hidden caches on the upper deck so climbing is a real payoff
+## (north-star pillar 1 verticality). Stashes are scarce-but-rich -- a
+## locked duffel and a wall utility box -- never a duplicate of ground
+## furniture, and placed clear of the stairwell + reserved aisles so they
+## never collide with the validation graph. Deterministic via the building
+## id hash. Returns nothing; appends directly into `furniture`.
+func _make_upper_floor_stashes(building_id: StringName, rooms: Array[Dictionary], clearance_rects: Array[Dictionary], furniture: Array[Dictionary]) -> void:
+	if rooms.is_empty():
+		return
+	var entrance_room: Dictionary = rooms[0]
+	var room_rect: Rect2 = entrance_room["rect"]
+	var reserves: Array[Rect2] = []
+	for reserve in clearance_rects:
+		if reserve["room_id"] == entrance_room["id"]:
+			reserves.append(reserve["rect"])
+	var occupied: Array[Rect2] = []
+	for furn in furniture:
+		if furn["room_id"] == entrance_room["id"]:
+			occupied.append(furn["clearance_rect"] as Rect2)
+	# Rich, scarce cache kinds. Keep the count modest so the upper deck still
+	# reads as a usable room, not a loot vault.
+	var stash_specs := [
+		{"kind": &"loot_bag", "items": {"ammunition": 3, "medical_supplies": 1, "materials": 2}, "capacity": 80.0},
+		{"kind": &"utility_box", "items": {"materials": 4, "ammunition": 1}, "capacity": 60.0},
+		{"kind": &"loot_bag", "items": {"food_ration": 2, "water_bottle": 2, "medical_supplies": 1}, "capacity": 70.0},
+	]
+	var seed_base := int(String(building_id).hash())
+	var placed := 0
+	var serial := 0
+	for spec in stash_specs:
+		if placed >= 3:
+			break
+		var roll := posmod(seed_base + serial * 1013, 100)
+		if roll < 18:
+			serial += 1
+			continue
+		var meta: Dictionary = STASH_KIND_META.get(spec["kind"], STASH_KIND_META[&"loot_bag"])
+		var texture: String = meta.get("texture", "res://assets/pixel/props/loot_bag.png")
+		var size: Vector2 = Vector2(meta.get("size", Vector2(24, 22)))
+		var spot := _upper_stash_spot(room_rect, reserves, occupied, size, seed_base + serial * 7919)
+		if spot == Vector2.INF:
+			serial += 1
+			continue
+		var collision_rect := Rect2(spot - size * 0.5, size)
+		var clearance := collision_rect.grow(FURNITURE_CLEARANCE)
+		occupied.append(clearance)
+		furniture.append({
+			"id": StringName("%s/prop/upper_%s_%02d" % [String(building_id), String(spec["kind"]), serial]),
+			"room_id": entrance_room["id"],
+			"role": entrance_room["role"],
+			"kind": spec["kind"],
+			"mode": &"loot",
+			"position": spot,
+			"size": size,
+			"visual_size": meta.get("visual_size", size),
+			"collision_rect": collision_rect,
+			"clearance_rect": clearance,
+			"texture": texture,
+			"capacity": float(spec["capacity"]),
+			"items": (spec["items"] as Dictionary).duplicate(),
+			"yield": 1,
+			"minimum_damage_class": EnvironmentDamage.DamageClass.SMALL_ARMS,
+			"floor": 1,
+		})
+		placed += 1
+		serial += 1
+
+## Free standing spot on the upper deck: reuses the staircase spotter candidate
+## ring (already clear of the stairwell) plus corner fallbacks, rejecting any
+## cell that clips a reserved aisle or an already-placed prop.
+func _upper_stash_spot(room_rect: Rect2, reserves: Array[Rect2], occupied: Array[Rect2], size: Vector2, seed_hash: int) -> Vector2:
+	var candidates: Array[Vector2] = [
+		Vector2(room_rect.position.x + 30.0, room_rect.position.y + 30.0),
+		Vector2(room_rect.end.x - 30.0, room_rect.position.y + 30.0),
+		Vector2(room_rect.end.x - 30.0, room_rect.end.y - 30.0),
+		Vector2(room_rect.position.x + 30.0, room_rect.end.y - 30.0),
+		Vector2(room_rect.get_center().x, room_rect.position.y + 26.0),
+	]
+	var size2 := size
+	for candidate in candidates:
+		var collision := Rect2(candidate - size2 * 0.5, size2)
+		var clear := collision.grow(FURNITURE_CLEARANCE)
+		if not room_rect.encloses(clear):
+			continue
+		var blocked := false
+		for reserve in reserves:
+			if clear.intersects(reserve):
+				blocked = true
+				break
+		if blocked:
+			continue
+		for other in occupied:
+			if clear.intersects(other):
+				blocked = true
+				break
+		if blocked:
+			continue
+		return candidate
+	return Vector2.INF
+
 func _floor_for(archetype: StringName, role: StringName) -> StringName:
 	if archetype == &"clinic":
 		return &"floor_clinic"
@@ -959,6 +1073,10 @@ func _apply_apocalypse_disturbance(building_id: StringName, rooms: Array[Diction
 	var empty_chance := 12 * _disturbance
 	var damage_chance := 10 * _disturbance
 	for furn in furniture:
+		# Upper-deck stashes are a deliberate verticality reward (backlog #1);
+		# the apocalypse disturbance pass never strips or damages them.
+		if int(furn.get("floor", 0)) == 1:
+			continue
 		var roll := posmod(int(String(furn["id"]).hash()), 100)
 		match String(furn["mode"]):
 			"physical":
