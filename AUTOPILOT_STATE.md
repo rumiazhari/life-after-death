@@ -4,8 +4,11 @@ STATUS: OK
 Project: life-after-death (Godot 4.7.1 zombie survival game)
 
 ## Current goal
-Iteration 12 (next): upper-floor loot incentive — weight loot tables/placement
-so multistory buildings reward going upstairs (pillar 1 gameplay payoff).
+Iteration 13 (next): interior kit variety for upper floors — make the
+second deck of multistory buildings read as a real enterable floor (office
+workstation clusters / school corridor lockers) so the climb rewards both
+loot (iter 12) and vertical sightlines.
+Iteration 12 is committed (suite 207/0): upper-floor loot stashes.
 Iteration 11 is committed (suite 205/0): destructible street cover props —
 crates/barrels/road-barriers on sidewalks that take progressive breach damage
 through the existing EnvironmentDamageComponent path, shatter into debris, and
@@ -25,10 +28,11 @@ walls to street-level cover.
 - iter 9: Low-health screen-edge vignette. Extended scripts/ui/combat_feedback.gd (presentation-only): a radial dark-red falloff painted in _draw() with concentric rings, strength derived each frame from the health ratio (smooth onset at 0.6, peaks near critical health where the pulsing low-health vignette takes over). Added vignette_strength() getter + respawn clear. + 1 headless test (vignette_strength monotonic vs health, open above onset, near-full close at critical, cleared on respawn).
 - iter 10: Player stair-climb feedback on the HUD event feed. ProceduralBuilding._on_stairs_used() now announces deck switches through GameEvents.event_toast (info-blue STAIR_TOAST_COLOR): "You take the stairs up to the upper floor." / "You head back down to street level." — player-scoped only, AI survivor switches stay silent. Copy pinned by static stair_toast_message(). + 2 headless tests (stairs use flips plane + tags actor + exactly one toast for players / silence for AI / building_floor_changed fires once per real change and same-floor set is a no-op; message copy matches direction). Suite green 203/0. First slice steered by the ⭐ USER DIRECTIVE (vertical-play legibility).
 - iter 11: Destructible street-level COVER props. New generator pass in _make_street_composition seeds crates/barrels/road-barriers on sidewalks (one guaranteed per block, denser with apocalypse level, all deterministic via hash scatter); new _append_cover_prop emits specs with elevated max_durability (crate 34 / barrel 46 / barrier 58), a microcell breach grid (sub_cells 2-3) and a shatter debris set drawn from the prop's own texture — all persisted through WorldState prop flags. BuildingShellBuilder.add_street_object now reads spec-driven max_durability / sub_cells / debris_count / debris_texture (legacy props unaffected). + 2 headless tests (cover spawns across the city corpus with full tuning; a cover prop breaches progressively, survives a non-lethal hit, then shatters + persists its destroyed flag). Suite green 205/0.
+- iter 12: Upper-floor loot incentive. ProceduralBuildingGenerator._make_upper_floor_stashes now seeds 2-3 loot_bag/utility_box caches on the upper deck whenever a building's stairs_up lands; stashes carry premium item tables (ammunition/materials/medical/food), are tagged floor=1, and are exempt from the apocalypse disturbance pass so they're a guaranteed payoff for climbing. At runtime ProceduralBuilding routes deck-1 furniture into a dedicated UpperFloor container whose colliders register in the upper collider set (ground set ignores them), visuals start hidden and flip visible on set_floor(1), and LootContainerComponent.required_deck blocks searching them from the ground floor. + 2 headless tests (stash corpus richness + runtime hide/toggle/required_deck guard). Suite green 207/0.
 
 ## Backlog (top-down, ordered toward the ⭐ USER DIRECTIVE)
-1. Upper-floor loot incentive — weight loot tables/placement so multistory buildings reward going upstairs (pillar 1 gameplay payoff).
-2. Interior kit variety for office/school/workshop floor plans (pillar 3 refinement).
+1. ~~Upper-floor loot incentive~~ (DONE, iter 12).
+2. Interior kit variety for upper floors — make multistory second decks read as real enterable floors (office workstation clusters / school corridor lockers) so the climb rewards both loot (iter 12) and vertical sightlines (pillar 1 + 3).
 3. (Pillar 2 follow-up) Persisted cover destruction should also re-open navigation around the cleared prop; verify nav rebuild in _make_street_composition cover pass is wired the same way wall breaches are.
 
 ## ⭐ USER DIRECTIVE (2026-08-26 evening) — 2.5D VERTICAL TRAVERSABILITY + DESTRUCTION
