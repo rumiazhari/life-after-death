@@ -467,8 +467,17 @@ static func add_street_object(parent: Node2D, local_position: Vector2, spec: Dic
 	damage.name = "EnvironmentDamageComponent"
 	damage.object_id = stable_id
 	damage.minimum_damage_class = int(spec.get("minimum_damage_class", EnvironmentDamage.DamageClass.SMALL_ARMS))
-	damage.max_durability = maxf(18.0, collision_size.length() * 0.75)
+	# Cover props (crates/barrels/barriers) override the footprint-derived
+	# default with an explicit durability pool; everything else keeps it.
+	damage.max_durability = float(spec.get("max_durability", maxf(18.0, collision_size.length() * 0.75)))
 	damage.affected_size = collision_size
+	# Microgrid breach + shatter tuning: absent means the legacy behaviour
+	# (whole-block damage, at most one debris chunk from the sprite).
+	damage.sub_cells = int(spec.get("sub_cells", 1))
+	damage.debris_count = int(spec.get("debris_count", 0))
+	var debris_path: String = spec.get("debris_texture", "")
+	if debris_path != "":
+		damage.debris_texture = load(debris_path)
 	damage.destroy_target = root
 	body.add_child(damage)
 	root.add_child(body)

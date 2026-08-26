@@ -456,6 +456,8 @@ func _test_dialogue_ui_shows_lines_and_choices() -> void:
 	await _run_test("combat_feedback_vignette_closes_in_with_low_health", _test_combat_feedback_vignette_closes_in_with_low_health)
 	await _run_test("stairs_use_flips_plane_tags_actor_and_toasts_player", _test_stairs_use_flips_plane_tags_actor_and_toasts_player)
 	await _run_test("stair_toast_message_matches_direction", _test_stair_toast_message_matches_direction)
+	await _run_test("cover_props_spawn_across_city_blocks", _test_cover_props_spawn_across_city_blocks)
+	await _run_test("street_cover_props_breach_shatter_and_persist", _test_street_cover_props_breach_shatter_and_persist)
 
 	print("\n=== TEST RESULTS: %d passed, %d failed ===" % [_pass_count, _fail_count])
 	get_tree().quit(0 if _fail_count == 0 else 1)
@@ -6725,3 +6727,87 @@ func _test_stair_toast_message_matches_direction() -> void:
 	_assert(up.contains("upper floor"), "upstairs copy must mention the upper floor (got '%s')" % up)
 	_assert(down.contains("street level"), "downstairs copy must mention street level (got '%s')" % down)
 	_assert(up != down, "the two directions must have distinct copy")
+
+## Destructible street cover: crates/barrels/barriers are seeded on sidewalks
+## and survive a city rebuild for the same seed. Player-visible payoff of the
+## USER DIRECTIVE's destructible-city pillar at the street-prop scale.
+func _test_cover_props_spawn_across_city_blocks() -> void:
+	WorldState.reset()
+	var generator := ProceduralCityGenerator.new()
+	var corpus_kinds := {}
+	for world_seed in [7, 1024, 8801, 20260821, 65535, 2147483646]:
+		for coordinate in [Vector2i.ZERO, Vector2i(-2, 3), Vector2i(4, -4)]:
+			WorldState.reset()
+			var city := generator.generate_streamed_chunk(world_seed, coordinate)
+			var cover_count := 0
+			var cover_kinds := {}
+			for prop_spec in city["props"]:
+				if prop_spec.get("placement_role", &"") == &"cover":
+					cover_count += 1
+					cover_kinds[prop_spec["kind"]] = true
+					corpus_kinds[prop_spec["kind"]] = true
+					# Combat tuning must travel with the spec.
+					_assert(prop_spec.get("sub_cells", 0) >= 2, "cover props need a breach microgrid (kind=%s)" % String(prop_spec["kind"]))
+					_assert(float(prop_spec.get("max_durability", 0.0)) >= 30.0, "cover props need an elevated durability pool (kind=%s)" % String(prop_spec["kind"]))
+					_assert(prop_spec.get("debris_count", 0) >= 3, "cover props need a shatter debris set (kind=%s)" % String(prop_spec["kind"]))
+					var texture: String = prop_spec.get("debris_texture", "")
+					_assert(texture != "" and FileAccess.file_exists(texture), "cover debris texture must resolve (kind=%s)" % String(prop_spec["kind"]))
+			# The deterministic guaranteed piece means every block answers
+			# with at least one cover kind.
+			_assert(cover_count >= 1, "every city block must seed cover (seed=%d coords=%s count=%d)" % [world_seed, str(coordinate), cover_count])
+	# Across the whole seed corpus the streets must offer the full cover set:
+	# crates, barrels and road barriers, all destructible.
+	_assert(corpus_kinds.has(&"crate") and corpus_kinds.has(&"barrel") and corpus_kinds.has(&"barrier"),
+		"the full cover set (crate/barrel/barrier) must appear across cities (got=%s)" % str(corpus_kinds.keys()))
+	WorldState.reset()
+
+## A cover prop is built as a real destructible structure: a breach microgrid,
+## progressive damage, shatter debris, and a persisted destroyed flag that the
+## next build honours by not rebuilding it. Exercises the same EnvironmentDamage
+## path wall breaches use, but at the street-prop scale.
+func _test_street_cover_props_breach_shatter_and_persist() -> void:
+	WorldState.reset()
+	var fixture := Node2D.new()
+	fixture.name = "CoverFixture"
+	# The component reads its persisted destroyed flag on _ready(); give the
+	# test crate a stable object_id so we can probe WorldState afterwards.
+	add_child(fixture)
+	await get_tree().process_frame
+
+	var crate_spec: Dictionary = {
+		"id": &"test/cover_crate", "kind": &"crate",
+		"texture": "res://assets/pixel/props/crate.png",
+		"size": Vector2(24, 20), "visual_size": Vector2(30, 26),
+		"interaction": &"salvage", "yield": 2,
+		"minimum_damage_class": EnvironmentDamage.DamageClass.SMALL_ARMS,
+		"max_durability": 34.0, "sub_cells": 2,
+		"debris_count": 3, "debris_texture": "res://assets/pixel/props/crate.png",
+	}
+	BuildingShellBuilder.add_street_object(fixture, Vector2.ZERO, crate_spec)
+	var crate_root := fixture.get_child(fixture.get_child_count() - 1) as Node2D
+	await get_tree().process_frame
+	var crate_damage := _first_descendant_of_type(crate_root, EnvironmentDamageComponent) as EnvironmentDamageComponent
+	_assert(crate_damage != null, "a cover prop must carry an EnvironmentDamageComponent")
+	_assert(crate_damage.sub_cells >= 2, "cover props enable a breach microgrid")
+	_assert(crate_damage.max_durability >= 30.0, "cover props keep their elevated durability")
+
+	# Progressive breach: a solid hit does not destroy, but kills at least
+	# one microcell (a single small-arms round only chips; here we model a
+	# heavier or explosive-class strike that punches a hole without collapsing
+	# the whole prop).
+	var before := crate_damage.alive_fraction()
+	crate_damage.apply_damage(30.0, EnvironmentDamage.DamageClass.HEAVY, null)
+	await get_tree().process_frame
+	_assert(crate_damage.alive_fraction() < before, "a solid hit must breach at least one microcell")
+	_assert(is_instance_valid(crate_root) and not crate_root.is_queued_for_deletion(), "a non-lethal hit must NOT shatter the cover yet")
+
+	# Lethal follow-up shatters it and persists the destroyed flag.
+	crate_damage.apply_damage(80.0, EnvironmentDamage.DamageClass.SMALL_ARMS, null)
+	await get_tree().process_frame
+	await get_tree().process_frame
+	_assert(WorldState.get_prop_state_flag(&"test/cover_crate", &"destroyed", false), "cover destruction must persist in WorldState")
+	_assert(crate_root.is_queued_for_deletion() or not is_instance_valid(crate_root), "the shattered cover must be freed")
+
+	fixture.queue_free()
+	await get_tree().process_frame
+	WorldState.reset()

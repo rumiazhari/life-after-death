@@ -58,6 +58,8 @@ const PROP_TEXTURES := {
 	&"rubble": "res://assets/pixel/props/debris_small.png",
 	&"sandbags": "res://assets/pixel/props/sandbags.png",
 	&"pallet": "res://assets/pixel/props/pallet.png",
+	&"barrel": "res://assets/pixel/props/furniture_barrel.png",
+	&"barrier": "res://assets/pixel/props/road_barrier.png",
 }
 
 var _rng := RandomNumberGenerator.new()
@@ -1038,6 +1040,26 @@ func _make_street_composition(output: Array[Dictionary], serials: Dictionary, se
 			&"industrial_transition":
 				var industrial_kind: StringName = [&"pallet", &"crate"][i % 2]
 				_append_prop(output, serials, seed_value, block, industrial_kind, &"yard_edge", Vector2(slot_x, rect.position.y + 16.0))
+
+	# --- destructible street cover: crates/barrels/barriers on sidewalks ---
+	# Every block gets at least one piece of cover; higher apocalypse adds
+	# more, denser as the world rots. Kind and slot come from hash scatter
+	# so the same world seed always breeds the same barricade layout.
+	var cover_rolls := 1 + apocalypse
+	# Guaranteed first piece (deterministic kind/slot per block) so cover is
+	# a reliable street feature, not a rare dice roll.
+	var guaranteed_kind: StringName = [&"crate", &"barrel", &"barrier"][_hash_scatter(seed_value, block, 650) % 3]
+	var guaranteed_span := maxi(int(rect.size.x - 176.0), 1)
+	var guaranteed_x := rect.position.x + 88.0 + float(_hash_scatter(seed_value, block, 680) % guaranteed_span)
+	_append_cover_prop(output, serials, seed_value, block, guaranteed_kind, Vector2(guaranteed_x, rect.end.y - 16.0))
+	for cover_index in range(1, cover_rolls):
+		if float(_hash_scatter(seed_value, block, 600 + cover_index) % 100) >= 45.0 + float(apocalypse) * 15.0:
+			continue
+		var cover_kind: StringName = [&"crate", &"barrel", &"barrier"][_hash_scatter(seed_value, block, 650 + cover_index) % 3]
+		var cover_span := maxi(int(rect.size.x - 176.0), 1)
+		var cover_x := rect.position.x + 88.0 + float(_hash_scatter(seed_value, block, 680 + cover_index) % cover_span)
+		_append_cover_prop(output, serials, seed_value, block, cover_kind, Vector2(cover_x, rect.end.y - 16.0))
+
 	# Tram stop group beside whichever block edge the tram axis runs along.
 	var tram_axis: StringName = morphology["tram_axis"]
 	if profile in [&"historic_core", &"inner_city"] and _rng.randf() < 0.6:
@@ -1127,6 +1149,39 @@ func _append_tree(output: Array[Dictionary], serials: Dictionary, seed_value: in
 		"interaction": &"salvage", "items": {},
 	})
 
+## Destructible street-level COVER prop: crates, barrels and road barriers
+## that read as real protection, not dressing. Unlike plain props these carry
+## explicit combat tuning -- a microcell integrity grid so gunfire chews
+## progressive holes, an elevated durability pool, and a shatter debris set
+## drawn from the prop's own texture -- while durability/destroyed state
+## persists through the same WorldState prop flags wall breaches use.
+func _append_cover_prop(output: Array[Dictionary], serials: Dictionary, seed_value: int, block: Dictionary, kind: StringName, position: Vector2) -> void:
+	position = _frontage_cleared_position(block, position, _prop_size(kind).x * 0.5)
+	var block_id: StringName = block["id"]
+	var serial: int = serials.get(block_id, 0)
+	serials[block_id] = serial + 1
+	var durability := 34.0
+	var cells := 2
+	match kind:
+		&"barrel":
+			durability = 46.0
+			cells = 3
+		&"barrier":
+			durability = 58.0
+			cells = 2
+	output.append({
+		"id": StringName("city_%d/%s/exterior_%02d" % [seed_value, String(block_id), serial]),
+		"block_id": block_id, "zone": block["zone"], "kind": kind,
+		"placement_role": &"cover", "position": position,
+		"texture": PROP_TEXTURES[kind], "size": _prop_size(kind),
+		"yield": 2, "minimum_damage_class": EnvironmentDamage.DamageClass.SMALL_ARMS,
+		"interaction": &"salvage", "items": {},
+		"max_durability": durability, "sub_cells": cells,
+		"debris_count": 4 if kind == &"barrier" else 3,
+		"debris_texture": PROP_TEXTURES[kind],
+	})
+	_apply_street_object_dimensions(output[len(output) - 1])
+
 func _prop_id(serials: Dictionary, seed_value: int, block: Dictionary) -> StringName:
 	var block_id: StringName = block["id"]
 	var serial: int = serials.get(block_id, 0)
@@ -1195,6 +1250,12 @@ func _apply_street_object_dimensions(record: Dictionary) -> void:
 			record["visual_size"] = Vector2(32, 16)
 		&"car", &"wreck":
 			record["visual_size"] = Vector2(62, 34)
+		&"crate":
+			record["visual_size"] = Vector2(30, 26)
+		&"barrel":
+			record["visual_size"] = Vector2(24, 30)
+		&"barrier":
+			record["visual_size"] = Vector2(46, 22)
 		_:
 			pass
 
@@ -1214,6 +1275,8 @@ func _prop_size(kind: StringName) -> Vector2:
 		&"rubble": return Vector2(24, 14)
 		&"sandbags": return Vector2(36, 16)
 		&"pallet": return Vector2(32, 24)
+		&"barrel": return Vector2(20, 20)
+		&"barrier": return Vector2(40, 18)
 	return Vector2(16, 16)
 
 func _make_spawn_regions(seed_value: int, blocks: Array[Dictionary], _roads: Array[Dictionary], exterior_zones: Array[Dictionary], buildings: Array[Dictionary], props: Array[Dictionary]) -> Array[Dictionary]:
