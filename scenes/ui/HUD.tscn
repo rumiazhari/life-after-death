@@ -1,4 +1,4 @@
-[gd_scene load_steps=13 format=3]
+[gd_scene load_steps=14 format=3]
 
 [ext_resource type="Script" path="res://scripts/ui/hud.gd" id="1"]
 [ext_resource type="Script" path="res://scripts/ui/safe_area.gd" id="2"]
@@ -6,6 +6,7 @@
 [ext_resource type="Texture2D" path="res://assets/pixel/ui/icon_ammo.png" id="4"]
 [ext_resource type="Texture2D" path="res://assets/pixel/ui/icon_zombie.png" id="5"]
 [ext_resource type="Texture2D" path="res://assets/pixel/ui/icon_kills.png" id="6"]
+[ext_resource type="Script" path="res://scripts/ui/combat_feedback.gd" id="7"]
 
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_bar_bg"]
 bg_color = Color(0.08, 0.08, 0.1, 0.9)
@@ -43,6 +44,17 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 mouse_filter = 2
+
+[node name="SafeArea" type="Control" parent="Root"]
+[node name="CombatFeedback" type="Control" parent="Root"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+script = ExtResource("7")
 
 [node name="SafeArea" type="Control" parent="Root"]
 layout_mode = 1
