@@ -43,6 +43,7 @@ const PROCEDURAL_DISTRICT_SCENE: PackedScene = preload("res://scenes/world/maps/
 const PROCEDURAL_RETRY_PROBE_SCRIPT: GDScript = preload("res://tests/procedural_retry_probe.gd")
 const FAILING_PROCEDURAL_DISTRICT_SCRIPT: GDScript = preload("res://tests/failing_procedural_district.gd")
 const SAFEHOUSE_COMPASS_SCRIPT: GDScript = preload("res://scripts/ui/safehouse_compass.gd")
+const DAY_NIGHT_SCRIPT: GDScript = preload("res://scripts/visuals/day_night_cycle.gd")
 const PROCEDURAL_SEED_CORPUS: Array[int] = [0, 1, 2, 3, 7, 31, 42, 255, 1024, 8801, 65535, 20260821, 2147483646]
 
 func _ready() -> void:
@@ -446,6 +447,8 @@ func _test_dialogue_ui_shows_lines_and_choices() -> void:
 	await _run_test("voxel_zombie_hit_flash_is_isolated_per_instance", _test_voxel_zombie_hit_flash_is_isolated_per_instance)
 	await _run_test("safehouse_compass_offscreen_clamping_and_readout", _test_safehouse_compass_offscreen_clamping_and_readout)
 	await _run_test("hud_builds_safehouse_compass_and_tolerates_missing_targets", _test_hud_builds_safehouse_compass_and_tolerates_missing_targets)
+	await _run_test("day_night_palette_is_continuous_bounded_and_timekeyed", _test_day_night_palette_is_continuous_bounded_and_timekeyed)
+	await _run_test("day_night_cycle_drives_environment_and_tolerates_missing_targets", _test_day_night_cycle_drives_environment_and_tolerates_missing_targets)
 
 	print("\n=== TEST RESULTS: %d passed, %d failed ===" % [_pass_count, _fail_count])
 	get_tree().quit(0 if _fail_count == 0 else 1)
@@ -6526,4 +6529,79 @@ func _test_hud_builds_safehouse_compass_and_tolerates_missing_targets() -> void:
 	hud._update_safehouse_compass()
 	_assert(is_instance_valid(compass), "the compass update path with missing targets must not destroy the widget")
 	hud.queue_free()
+	await get_tree().process_frame
+
+func _test_day_night_palette_is_continuous_bounded_and_timekeyed() -> void:
+	var midnight: Dictionary = DAY_NIGHT_SCRIPT.evaluate(0.0)
+	var noon: Dictionary = DAY_NIGHT_SCRIPT.evaluate(765.0)
+	_assert(midnight["ambient_energy"] < noon["ambient_energy"],
+			"midnight must be darker than midday")
+	var dawn_sun: Color = DAY_NIGHT_SCRIPT.evaluate(390.0)["sun_color"]
+	var dusk_sun: Color = DAY_NIGHT_SCRIPT.evaluate(1125.0)["sun_color"]
+	var noon_sun: Color = noon["sun_color"]
+	_assert(dawn_sun.r - dawn_sun.b > noon_sun.r - noon_sun.b,
+			"dawn sun must be warmer (r-b) than noon sun")
+	_assert(dusk_sun.r - dusk_sun.b > noon_sun.r - noon_sun.b,
+			"dusk sun must be warmer (r-b) than noon sun")
+	var prev: Dictionary = midnight
+	for m in range(10, 1441, 10):
+		var cur: Dictionary = DAY_NIGHT_SCRIPT.evaluate(float(m))
+		for key in ["background", "ambient", "sun_color"]:
+			var c: Color = cur[key]
+			_assert(c.r >= 0.0 and c.r <= 1.0 and c.g >= 0.0 and c.g <= 1.0 \
+					and c.b >= 0.0 and c.b <= 1.0,
+					"palette colors must stay in [0,1] (minute %d)" % m)
+		_assert(cur["ambient_energy"] >= 0.0 and cur["ambient_energy"] <= 1.0,
+				"ambient energy must stay bounded (minute %d)" % m)
+		_assert(cur["sun_energy"] >= 0.0 and cur["sun_energy"] <= DAY_NIGHT_SCRIPT.MAX_SUN_ENERGY + 0.001,
+				"sun energy must stay bounded (minute %d)" % m)
+		var d_amb: float = absf(cur["ambient_energy"] - prev["ambient_energy"])
+		var cb: Color = cur["background"]
+		var pb: Color = prev["background"]
+		var d_bg: float = sqrt((cb.r - pb.r) * (cb.r - pb.r) + (cb.g - pb.g) * (cb.g - pb.g) + (cb.b - pb.b) * (cb.b - pb.b))
+		_assert(d_amb < 0.06 and d_bg < 0.03,
+				"palette must move smoothly across 10-minute steps (minute %d)" % m)
+		prev = cur
+	_assert(prev["background"].is_equal_approx(midnight["background"]),
+			"the 24h wrap keyframe must return to the midnight look")
+
+func _test_day_night_cycle_drives_environment_and_tolerates_missing_targets() -> void:
+	var env := Environment.new()
+	env.background_mode = Environment.BG_COLOR
+	env.background_color = Color.WHITE
+	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+	env.ambient_light_color = Color.WHITE
+	env.ambient_light_energy = 1.0
+	var sun := DirectionalLight3D.new()
+	sun.light_color = Color.WHITE
+	sun.light_energy = 2.0
+	var cycle: Node = DAY_NIGHT_SCRIPT.new()
+	cycle.environment_resource = env
+	cycle.sun_light = sun
+	add_child(cycle)
+	cycle.apply_time(765.0)
+	var want: Dictionary = DAY_NIGHT_SCRIPT.evaluate(765.0)
+	_assert(env.background_color.is_equal_approx(want["background"]),
+			"applying midday must drive the background to the palette value")
+	_assert(env.ambient_light_color.is_equal_approx(want["ambient"]),
+			"applying midday must drive the ambient tint to the palette value")
+	_assert(is_equal_approx(env.ambient_light_energy, want["ambient_energy"]),
+			"applying midday must drive the ambient energy to the palette value")
+	_assert(sun.light_color.is_equal_approx(want["sun_color"]),
+			"applying midday must drive the sun colour to the palette value")
+	_assert(is_equal_approx(sun.light_energy, want["sun_energy"]),
+			"applying midday must drive the sun energy to the palette value")
+	cycle.apply_time(0.0)
+	_assert(not env.background_color.is_equal_approx(want["background"]),
+			"a night application must differ visually from midday")
+	var night_bg: Color = env.background_color
+	cycle.apply_time(0.0)
+	_assert(env.background_color.is_equal_approx(night_bg),
+			"re-applying the same minute must be idempotent")
+	cycle.queue_free()
+	var bare: Node = DAY_NIGHT_SCRIPT.new()
+	add_child(bare)
+	bare._process(0.0)
+	_assert(is_instance_valid(bare), "the day-night update path with missing targets must not crash")
+	bare.queue_free()
 	await get_tree().process_frame
