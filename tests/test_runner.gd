@@ -460,6 +460,8 @@ func _test_dialogue_ui_shows_lines_and_choices() -> void:
 	await _run_test("street_cover_props_breach_shatter_and_persist", _test_street_cover_props_breach_shatter_and_persist)
 	await _run_test("upper_floor_stashes_seed_rich_loot_when_stairs_exist", _test_upper_floor_stashes_seed_rich_loot_when_stairs_exist)
 	await _run_test("upper_floor_stash_rewards_climbing_and_survives_disturbance", _test_upper_floor_stash_rewards_climbing_and_survives_disturbance)
+	await _run_test("upper_floor_interior_kits_furnish_second_deck", _test_upper_floor_interior_kits_furnish_second_deck)
+	await _run_test("upper_floor_kit_pieces_route_to_upper_deck_at_runtime", _test_upper_floor_kit_pieces_route_to_upper_deck_at_runtime)
 
 	print("\n=== TEST RESULTS: %d passed, %d failed ===" % [_pass_count, _fail_count])
 	get_tree().quit(0 if _fail_count == 0 else 1)
@@ -6838,6 +6840,10 @@ func _test_upper_floor_stashes_seed_rich_loot_when_stairs_exist() -> void:
 				for furniture in interior.get("furniture", []):
 					if int(furniture.get("floor", 0)) != 1:
 						continue
+					# Iter-13 interior kits also live on floor 1; this test's
+					# contract is specifically about the loot stashes.
+					if String(furniture.get("id", "")).contains("upperkit"):
+						continue
 					found_stash = true
 					var items: Dictionary = furniture.get("items", {})
 					var total := 0
@@ -6868,7 +6874,9 @@ func _test_upper_floor_stash_rewards_climbing_and_survives_disturbance() -> void
 				if interior.get("stairs_up", {}).is_empty():
 					continue
 				for furniture in interior.get("furniture", []):
-					if int(furniture.get("floor", 0)) == 1:
+					# Skip iter-13 kit dressing; this fixture must be a stash.
+					if int(furniture.get("floor", 0)) == 1 \
+							and not String(furniture.get("id", "")).contains("upperkit"):
 						picked = furniture
 						break
 				if not picked.is_empty():
@@ -6891,7 +6899,9 @@ func _test_upper_floor_stash_rewards_climbing_and_survives_disturbance() -> void
 		if interior.get("stairs_up", {}).is_empty():
 			continue
 		for furniture in interior.get("furniture", []):
-			if int(furniture.get("floor", 0)) == 1:
+			# Skip iter-13 kit dressing; this fixture must be a stash.
+			if int(furniture.get("floor", 0)) == 1 \
+					and not String(furniture.get("id", "")).contains("upperkit"):
 				stash_building = building
 				break
 		if not stash_building.is_empty():
@@ -6924,6 +6934,128 @@ func _test_upper_floor_stash_rewards_climbing_and_survives_disturbance() -> void
 			if child.visible:
 				any_visible_upstairs = true
 	_assert(any_visible_upstairs, "upper stashes must become visible once upstairs")
+	pb.queue_free()
+	await get_tree().process_frame
+	WorldState.reset()
+
+## Upper-deck interior kits (backlog #2): every multistory building's second
+## deck must carry at least one themed dressing piece beyond the loot stashes,
+## kit kinds must belong to their archetype's table, pieces must sit inside
+## their room (validate() stays clean), and generation must reproduce
+## identical upper decks seed-for-seed.
+func _test_upper_floor_interior_kits_furnish_second_deck() -> void:
+	WorldState.reset()
+	var generator := ProceduralCityGenerator.new()
+	var validator := ProceduralBuildingGenerator.new()
+	var found_stairs := false
+	var found_cluster := false
+	var determinism_ids_first: Array[String] = []
+	var determinism_ids_second: Array[String] = []
+	for world_seed in [7, 1024, 8801, 20260821]:
+		for coordinate in [Vector2i.ZERO, Vector2i(-2, 3), Vector2i(4, -4)]:
+			WorldState.reset()
+			var city := generator.generate_streamed_chunk(world_seed, coordinate)
+			for building in city["buildings"]:
+				var interior: Dictionary = building.get("interior", {})
+				if interior.get("stairs_up", {}).is_empty():
+					continue
+				found_stairs = true
+				var allowed: Array[String] = []
+				var kit_table: Array = ProceduralBuildingGenerator.UPPER_FLOOR_KITS.get(building["archetype"], [])
+				for entry in kit_table:
+					allowed.append(String(entry["kind"]))
+				var kit_count := 0
+				for furniture in interior.get("furniture", []):
+					if int(furniture.get("floor", 0)) != 1:
+						continue
+					var furniture_id := String(furniture.get("id", ""))
+					if world_seed == 7 and coordinate == Vector2i.ZERO:
+						determinism_ids_first.append(furniture_id)
+					if not furniture_id.contains("upperkit"):
+						continue
+					kit_count += 1
+					_assert(String(furniture["kind"]) in allowed,
+						"kit kind %s must belong to the %s kit table" % [String(furniture["kind"]), String(building["archetype"])])
+					var sits_inside := false
+					for room in interior.get("rooms", []):
+						if String(room["id"]) == String(furniture["room_id"]) \
+								and (room["rect"] as Rect2).encloses(furniture["clearance_rect"] as Rect2):
+							sits_inside = true
+							break
+					_assert(sits_inside, "kit piece %s must sit inside its room" % furniture_id)
+				found_cluster = found_cluster or kit_count >= 2
+				_assert(kit_count >= 1,
+					"multistory building %s needs upper-floor kit dressing (got %d)" % [String(building["id"]), kit_count])
+				var errors := validator.validate(interior)
+				_assert(errors.is_empty(), "interior of %s must stay valid with kits: %s" % [String(building["id"]), str(errors)])
+			if world_seed == 7 and coordinate == Vector2i.ZERO:
+				WorldState.reset()
+				var replay := generator.generate_streamed_chunk(world_seed, coordinate)
+				for building in replay["buildings"]:
+					var interior: Dictionary = building.get("interior", {})
+					if interior.get("stairs_up", {}).is_empty():
+						continue
+					for furniture in interior.get("furniture", []):
+						if int(furniture.get("floor", 0)) == 1:
+							determinism_ids_second.append(String(furniture["id"]))
+	determinism_ids_first.sort()
+	determinism_ids_second.sort()
+	_assert(found_stairs, "corpus must contain multistory buildings")
+	_assert(found_cluster, "at least one upper deck must place a multi-piece kit cluster")
+	_assert(not determinism_ids_second.is_empty(), "determinism probe needs an upper deck")
+	_assert(determinism_ids_first == determinism_ids_second,
+		"same seed must reproduce identical upper decks (%d vs %d ids)" % [determinism_ids_first.size(), determinism_ids_second.size()])
+	WorldState.reset()
+
+## Kit pieces are plain floor-tagged furniture to the runtime: they must build
+## as hidden/inert props on the ground floor and flip visible once the player
+## takes the stairs up (same path iter 12 proved for stashes).
+func _test_upper_floor_kit_pieces_route_to_upper_deck_at_runtime() -> void:
+	WorldState.reset()
+	var generator := ProceduralCityGenerator.new()
+	var kit_building: Dictionary = {}
+	for coordinate in [Vector2i.ZERO, Vector2i(-2, 3), Vector2i(4, -4)]:
+		WorldState.reset()
+		var city := generator.generate_streamed_chunk(20260821, coordinate)
+		for building in city["buildings"]:
+			var interior: Dictionary = building.get("interior", {})
+			if interior.get("stairs_up", {}).is_empty():
+				continue
+			for furniture in interior.get("furniture", []):
+				if String(furniture.get("id", "")).contains("upperkit"):
+					kit_building = building
+					break
+			if not kit_building.is_empty():
+				break
+		if not kit_building.is_empty():
+			break
+	_assert(not kit_building.is_empty(), "need a multistory building with kit dressing")
+	WorldState.reset()
+	var pb: ProceduralBuilding = PROCEDURAL_BUILDING_SCRIPT.new()
+	pb.configure(kit_building)
+	add_child(pb)
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	var kit_nodes := 0
+	var any_hidden_on_ground := false
+	for room in pb.get_node("Rooms").get_children():
+		for child in room.get_children():
+			# Builder names props with the raw stable-id file part (snake_case).
+			if child is Node2D and child.has_meta("upper_deck_stash") and String(child.name).contains("upperkit"):
+				kit_nodes += 1
+				if not child.visible:
+					any_hidden_on_ground = true
+	_assert(kit_nodes >= 1, "the configured building must build its upper-floor kit nodes")
+	_assert(any_hidden_on_ground, "kit pieces must start hidden on the ground floor")
+	pb.set_floor(1)
+	await get_tree().process_frame
+	var any_visible_upstairs := false
+	for room in pb.get_node("Rooms").get_children():
+		for child in room.get_children():
+			if child is Node2D and child.has_meta("upper_deck_stash") and String(child.name).contains("upperkit"):
+				if child.visible:
+					any_visible_upstairs = true
+	_assert(any_visible_upstairs, "kit pieces must become visible once upstairs")
 	pb.queue_free()
 	await get_tree().process_frame
 	WorldState.reset()

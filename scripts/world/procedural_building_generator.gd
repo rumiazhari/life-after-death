@@ -24,6 +24,42 @@ const STASH_KIND_META := {
 	&"utility_box": {"texture": "res://assets/pixel/props/utility_box.png", "size": Vector2(22, 22), "visual_size": Vector2(24, 24)},
 }
 
+## Upper-deck interior kit tables (backlog #2): themed dressing sets per
+## archetype so the second deck reads as a real furnished floor -- apartment
+## sleeping decks, store back-office corners, restaurant pantry overflow,
+## clinic recovery wards, and workshop office workstation clusters with a
+## corridor locker. Only reuses kinds already present in _furniture_data(),
+## so no new assets or runtime paths are required.
+const UPPER_FLOOR_KITS := {
+	&"apartment": [
+		{"kind": &"bed_single", "mode": &"physical", "items": {}},
+		{"kind": &"wardrobe", "mode": &"loot", "items": {"materials": 2, "medical_supplies": 1}},
+		{"kind": &"nightstand", "mode": &"loot", "items": {"food_ration": 1}},
+	],
+	&"store": [
+		{"kind": &"desk", "mode": &"physical", "items": {}},
+		{"kind": &"office_chair", "mode": &"physical", "items": {}},
+		{"kind": &"shelf_row", "mode": &"loot", "items": {"materials": 3}},
+	],
+	&"restaurant": [
+		{"kind": &"pantry_shelf", "mode": &"loot", "items": {"food_ration": 3, "water_bottle": 2}},
+		{"kind": &"counter", "mode": &"physical", "items": {}},
+		{"kind": &"crate", "mode": &"salvage", "items": {}},
+	],
+	&"clinic": [
+		{"kind": &"exam_bed", "mode": &"physical", "items": {}},
+		{"kind": &"bedside_trolley", "mode": &"physical", "items": {}},
+		{"kind": &"medicine_shelf", "mode": &"loot", "items": {"medical_supplies": 2}},
+	],
+	&"workshop": [
+		{"kind": &"desk", "mode": &"physical", "items": {}},
+		{"kind": &"office_chair", "mode": &"physical", "items": {}},
+		{"kind": &"desk", "mode": &"physical", "items": {}},
+		{"kind": &"office_chair", "mode": &"physical", "items": {}},
+		{"kind": &"locker", "mode": &"loot", "items": {"materials": 3}},
+	],
+}
+
 const ARCHETYPE_ROOMS := {
 	&"apartment": [&"living_room", &"kitchen", &"bedroom", &"bathroom"],
 	&"store": [&"retail_floor", &"stock_room"],
@@ -76,6 +112,7 @@ func generate(building_id: StringName, archetype: StringName, size: Vector2, see
 	var stairs_up := _stairs_up_position(rooms, clearance_rects, furniture)
 	if not stairs_up.is_empty():
 		_make_upper_floor_stashes(building_id, rooms, clearance_rects, furniture)
+		_make_upper_floor_kit(building_id, archetype, rooms, clearance_rects, furniture, stairs_up)
 	_apply_apocalypse_disturbance(building_id, rooms, clearance_rects, furniture)
 	var style: Dictionary = ARCHETYPE_STYLE.get(archetype, ARCHETYPE_STYLE[&"apartment"])
 	return {
@@ -1052,6 +1089,102 @@ func _upper_stash_spot(room_rect: Rect2, reserves: Array[Rect2], occupied: Array
 			continue
 		return candidate
 	return Vector2.INF
+
+## Upper-deck interior kits (backlog #2): a small themed dressing set per
+## archetype -- see UPPER_FLOOR_KITS -- placed on the second deck whenever a
+## stairwell lands, so climbing reveals a furnished floor (workstation
+## clusters, lockers, beds) rather than an empty shell holding a few loot
+## bags (north-star pillars 1 + 3). Every piece is floor-tagged like the
+## stashes, so the runtime hides it downstairs, flips it live on stairs, and
+## the apocalypse disturbance pass leaves it untouched. Pieces sit clear of
+## reserved aisles, every existing prop, and the stairwell footprint so
+## validate()'s clearance graph stays clean. Deterministic via building id
+## hash. Returns nothing; appends directly into `furniture`.
+func _make_upper_floor_kit(building_id: StringName, archetype: StringName, rooms: Array[Dictionary], clearance_rects: Array[Dictionary], furniture: Array[Dictionary], stairs_up: Dictionary) -> void:
+	var kit: Array = UPPER_FLOOR_KITS.get(archetype, [])
+	if rooms.is_empty() or kit.is_empty():
+		return
+	var entrance_room: Dictionary = rooms[0]
+	var room_rect: Rect2 = entrance_room["rect"]
+	var reserves: Array[Rect2] = []
+	for reserve in clearance_rects:
+		if reserve["room_id"] == entrance_room["id"]:
+			reserves.append(reserve["rect"])
+	var occupied: Array[Rect2] = []
+	for furn in furniture:
+		if furn["room_id"] == entrance_room["id"]:
+			occupied.append(furn["clearance_rect"] as Rect2)
+	# The stairwell pierces both decks; keep kit pieces off its footprint.
+	var blocked: Array[Rect2] = []
+	if not stairs_up.is_empty():
+		blocked.append(Rect2(stairs_up["position"] as Vector2 - (stairs_up["size"] as Vector2) * 0.5, stairs_up["size"]))
+	var seed_base := int(String(building_id).hash())
+	var serial := 0
+	for piece in kit:
+		var kind: StringName = piece["kind"]
+		var data := _furniture_data(kind)
+		var size: Vector2 = data["size"]
+		var spot := _upper_kit_spot(room_rect, reserves, occupied, blocked, size, seed_base + serial * 6151)
+		if spot == Vector2.INF:
+			serial += 1
+			continue
+		var collision_rect := Rect2(spot - size * 0.5, size)
+		var clearance := collision_rect.grow(FURNITURE_CLEARANCE)
+		occupied.append(clearance)
+		furniture.append({
+			"id": StringName("%s/prop/upperkit_%s_%02d" % [String(building_id), String(kind), serial]),
+			"room_id": entrance_room["id"],
+			"role": entrance_room["role"],
+			"kind": kind,
+			"mode": piece["mode"],
+			"position": spot,
+			"size": size,
+			"visual_size": data["visual_size"],
+			"collision_rect": collision_rect,
+			"clearance_rect": clearance,
+			"texture": data["texture"],
+			"capacity": 80.0 if kind in [&"shelf_row", &"industrial_shelf", &"cabinet", &"wardrobe"] else 60.0,
+			"items": (piece["items"] as Dictionary).duplicate(),
+			"yield": 2 if kind == &"crate" else 1,
+			"minimum_damage_class": EnvironmentDamage.DamageClass.SMALL_ARMS,
+			"floor": 1,
+		})
+		serial += 1
+
+## Dense deterministic scanner for upper-deck kit pieces: walks an inset grid
+## over the deck (start index rotated by seed hash so different pieces claim
+## different regions) rejecting any cell that clips a reserved aisle, an
+## already-placed prop, or the stairwell footprint.
+func _upper_kit_spot(room_rect: Rect2, reserves: Array[Rect2], occupied: Array[Rect2], blocked: Array[Rect2], size: Vector2, seed_hash: int) -> Vector2:
+	var inset := 30.0
+	var step := 22.0
+	var columns := maxi(1, int((room_rect.size.x - inset * 2.0) / step))
+	var rows := maxi(1, int((room_rect.size.y - inset * 2.0) / step))
+	var total := columns * rows
+	var start := posmod(seed_hash, total)
+	for offset in range(total):
+		var index := start + offset
+		if index >= total:
+			index -= total
+		var column := index % columns
+		var row := int(float(index - column) / float(columns))
+		var candidate := Vector2(
+			room_rect.position.x + inset + float(column) * step,
+			room_rect.position.y + inset + float(row) * step)
+		var clear := Rect2(candidate - size * 0.5, size).grow(FURNITURE_CLEARANCE)
+		if not room_rect.encloses(clear):
+			continue
+		if not _rect_clear_of(clear, reserves) or not _rect_clear_of(clear, occupied) \
+				or not _rect_clear_of(clear, blocked):
+			continue
+		return candidate
+	return Vector2.INF
+
+func _rect_clear_of(rect: Rect2, others: Array[Rect2]) -> bool:
+	for other in others:
+		if rect.intersects(other):
+			return false
+	return true
 
 func _floor_for(archetype: StringName, role: StringName) -> StringName:
 	if archetype == &"clinic":
