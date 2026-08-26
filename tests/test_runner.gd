@@ -43,6 +43,7 @@ const PROCEDURAL_DISTRICT_SCENE: PackedScene = preload("res://scenes/world/maps/
 const PROCEDURAL_RETRY_PROBE_SCRIPT: GDScript = preload("res://tests/procedural_retry_probe.gd")
 const FAILING_PROCEDURAL_DISTRICT_SCRIPT: GDScript = preload("res://tests/failing_procedural_district.gd")
 const SAFEHOUSE_COMPASS_SCRIPT: GDScript = preload("res://scripts/ui/safehouse_compass.gd")
+const GAME_CLOCK_SCRIPT: GDScript = preload("res://scripts/ui/game_clock_label.gd")
 const DAY_NIGHT_SCRIPT: GDScript = preload("res://scripts/visuals/day_night_cycle.gd")
 const PROCEDURAL_SEED_CORPUS: Array[int] = [0, 1, 2, 3, 7, 31, 42, 255, 1024, 8801, 65535, 20260821, 2147483646]
 
@@ -447,6 +448,7 @@ func _test_dialogue_ui_shows_lines_and_choices() -> void:
 	await _run_test("voxel_zombie_hit_flash_is_isolated_per_instance", _test_voxel_zombie_hit_flash_is_isolated_per_instance)
 	await _run_test("safehouse_compass_offscreen_clamping_and_readout", _test_safehouse_compass_offscreen_clamping_and_readout)
 	await _run_test("hud_builds_safehouse_compass_and_tolerates_missing_targets", _test_hud_builds_safehouse_compass_and_tolerates_missing_targets)
+	await _run_test("hud_builds_game_clock_label_and_formats_time", _test_hud_builds_game_clock_label_and_formats_time)
 	await _run_test("day_night_palette_is_continuous_bounded_and_timekeyed", _test_day_night_palette_is_continuous_bounded_and_timekeyed)
 	await _run_test("day_night_cycle_drives_environment_and_tolerates_missing_targets", _test_day_night_cycle_drives_environment_and_tolerates_missing_targets)
 
@@ -6528,6 +6530,28 @@ func _test_hud_builds_safehouse_compass_and_tolerates_missing_targets() -> void:
 	# groups, the per-frame update path must run clean and leave a valid node.
 	hud._update_safehouse_compass()
 	_assert(is_instance_valid(compass), "the compass update path with missing targets must not destroy the widget")
+	hud.queue_free()
+	await get_tree().process_frame
+
+func _test_hud_builds_game_clock_label_and_formats_time() -> void:
+	var hud_scene: PackedScene = preload("res://scenes/ui/HUD.tscn")
+	var hud: CanvasLayer = hud_scene.instantiate()
+	add_child(hud)
+	await get_tree().process_frame
+	var clock: Label = hud.get_node_or_null("GameClockLabel")
+	_assert(clock != null, "the HUD must build its GameClockLabel widget during _ready")
+	# Pure formatter pin -- no instance needed.
+	_assert(GAME_CLOCK_SCRIPT.phase_suffix(0) == "Night", "midnight must read as Night")
+	_assert(GAME_CLOCK_SCRIPT.phase_suffix(390) == "Dawn", "06:30 must read as Dawn")
+	_assert(GAME_CLOCK_SCRIPT.phase_suffix(765) == "Day", "12:45 must read as Day")
+	_assert(GAME_CLOCK_SCRIPT.phase_suffix(1125) == "Dusk", "18:45 must read as Dusk")
+	_assert(GAME_CLOCK_SCRIPT.phase_suffix(1440) == "Night", "24h wrap must roll back to Night")
+	var probe: Label = GAME_CLOCK_SCRIPT.new()
+	probe.update_time(3, 13, 5)
+	_assert(probe.text == "Day 3  13:05  Day", "fed day/hour/minute must format as 'Day 3  13:05  Day' (got '%s')" % probe.text)
+	probe.update_time(1, 27, 70)
+	_assert(probe.text == "Day 1  03:10  Night", "out-of-range hour/minute must wrap to 03:10 (got '%s')" % probe.text)
+	probe.queue_free()
 	hud.queue_free()
 	await get_tree().process_frame
 

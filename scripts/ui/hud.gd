@@ -16,11 +16,13 @@ extends CanvasLayer
 @onready var interact_prompt_label: Label = $Root/SafeArea/InteractPromptPanel/InteractPromptLabel
 
 const SAFEHOUSE_COMPASS_SCRIPT: GDScript = preload("res://scripts/ui/safehouse_compass.gd")
+const GAME_CLOCK_SCRIPT: GDScript = preload("res://scripts/ui/game_clock_label.gd")
 
 var _known_magazine_size: int = 1
 var has_player: bool = false
 var floor_label: Label
 var safehouse_compass: Control
+var game_clock_label: Label
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
@@ -50,6 +52,12 @@ func _ready() -> void:
 	safehouse_compass = SAFEHOUSE_COMPASS_SCRIPT.new()
 	safehouse_compass.name = "SafehouseCompass"
 	add_child(safehouse_compass)
+	# Game-clock readout (Day N HH:MM + phase). Presentation-only: the HUD
+	# pushes SimulationClock's current day/hour/minute into it each frame.
+	game_clock_label = GAME_CLOCK_SCRIPT.new()
+	game_clock_label.name = "GameClockLabel"
+	game_clock_label.position = Vector2(10, 62)
+	add_child(game_clock_label)
 
 func _process(_delta: float) -> void:
 	fps_label.text = "FPS: %d" % Engine.get_frames_per_second()
@@ -57,6 +65,15 @@ func _process(_delta: float) -> void:
 	if player != null and has_player:
 		floor_label.text = "Floor: %d" % player.current_floor
 	_update_safehouse_compass()
+	_update_game_clock()
+
+func _update_game_clock() -> void:
+	if game_clock_label == null or not is_instance_valid(game_clock_label):
+		return
+	game_clock_label.update_time(
+		SimulationClock.game_day,
+		SimulationClock.game_hour,
+		SimulationClock.game_minute)
 
 func _update_safehouse_compass() -> void:
 	if safehouse_compass == null or not is_instance_valid(safehouse_compass):

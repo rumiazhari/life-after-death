@@ -15,12 +15,11 @@
 [ext_resource type="PackedScene" path="res://scenes/ui/MobileControls.tscn" id="13"]
 [ext_resource type="PackedScene" path="res://scenes/ui/DebugOverlay.tscn" id="14"]
 [ext_resource type="PackedScene" path="res://scenes/world/SettlementController.tscn" id="15"]
-[ext_resource type="PackedScene" path="res://scenes/world/ScavengePoint.tscn" id="16"]
 [ext_resource type="PackedScene" path="res://scenes/ui/SurvivorInspector.tscn" id="17"]
-[ext_resource type="Script" path="res://scripts/combat/blood_decal_manager.gd" id="18"]
-[ext_resource type="Script" path="res://scripts/world/world_drop_visual_manager.gd" id="19"]
-[ext_resource type="Script" path="res://scripts/combat/hit_effect_manager.gd" id="20"]
-[ext_resource type="Script" path="res://scripts/combat/explosion_effect_manager.gd" id="21"]
+[ext_resource type="Script" uid="uid://c0rildl2eiqg" path="res://scripts/combat/blood_decal_manager.gd" id="18"]
+[ext_resource type="Script" uid="uid://bnuxfuavcufh2" path="res://scripts/world/world_drop_visual_manager.gd" id="19"]
+[ext_resource type="Script" uid="uid://lustsauklupw" path="res://scripts/combat/hit_effect_manager.gd" id="20"]
+[ext_resource type="Script" uid="uid://bfhxlb17r6mep" path="res://scripts/combat/explosion_effect_manager.gd" id="21"]
 
 [node name="Main" type="Node2D" unique_id=209900488]
 script = ExtResource("1")
@@ -47,17 +46,17 @@ script = ExtResource("8")
 [node name="CameraRig" type="Camera2D" parent="." unique_id=203459741]
 script = ExtResource("9")
 
-[node name="BloodDecalManager" type="Node2D" parent="."]
+[node name="BloodDecalManager" type="Node2D" parent="." unique_id=1496261788]
 script = ExtResource("18")
 
-[node name="WorldDropVisualManager" type="Node2D" parent="."]
+[node name="WorldDropVisualManager" type="Node2D" parent="." unique_id=1738359127]
 script = ExtResource("19")
 
-[node name="HitEffectManager" type="Node2D" parent="."]
+[node name="HitEffectManager" type="Node2D" parent="." unique_id=956710394]
 z_index = 2
 script = ExtResource("20")
 
-[node name="ExplosionEffectManager" type="Node2D" parent="."]
+[node name="ExplosionEffectManager" type="Node2D" parent="." unique_id=1167930446]
 script = ExtResource("21")
 
 [node name="Settlement" parent="." unique_id=2000328190 instance=ExtResource("15")]
@@ -76,4 +75,3 @@ position = Vector2(-976, -976)
 [node name="DebugOverlay" parent="UI" unique_id=2059187727 instance=ExtResource("14")]
 
 [node name="SurvivorInspector" parent="UI" unique_id=1010038244 instance=ExtResource("17")]
-
