@@ -42,6 +42,7 @@ const VOXEL_ZOMBIE_SCENE: PackedScene = preload("res://scenes/actors/VoxelZombie
 const PROCEDURAL_DISTRICT_SCENE: PackedScene = preload("res://scenes/world/maps/ProceduralDistrict.tscn")
 const PROCEDURAL_RETRY_PROBE_SCRIPT: GDScript = preload("res://tests/procedural_retry_probe.gd")
 const FAILING_PROCEDURAL_DISTRICT_SCRIPT: GDScript = preload("res://tests/failing_procedural_district.gd")
+const SAFEHOUSE_COMPASS_SCRIPT: GDScript = preload("res://scripts/ui/safehouse_compass.gd")
 const PROCEDURAL_SEED_CORPUS: Array[int] = [0, 1, 2, 3, 7, 31, 42, 255, 1024, 8801, 65535, 20260821, 2147483646]
 
 func _ready() -> void:
@@ -443,6 +444,8 @@ func _test_dialogue_ui_shows_lines_and_choices() -> void:
 
 	await _run_test("voxel_zombie_hit_flash_engages_and_recovers", _test_voxel_zombie_hit_flash_engages_and_recovers)
 	await _run_test("voxel_zombie_hit_flash_is_isolated_per_instance", _test_voxel_zombie_hit_flash_is_isolated_per_instance)
+	await _run_test("safehouse_compass_offscreen_clamping_and_readout", _test_safehouse_compass_offscreen_clamping_and_readout)
+	await _run_test("hud_builds_safehouse_compass_and_tolerates_missing_targets", _test_hud_builds_safehouse_compass_and_tolerates_missing_targets)
 
 	print("\n=== TEST RESULTS: %d passed, %d failed ===" % [_pass_count, _fail_count])
 	get_tree().quit(0 if _fail_count == 0 else 1)
@@ -6466,4 +6469,61 @@ func _test_voxel_zombie_hit_flash_is_isolated_per_instance() -> void:
 			"an undamaged neighbour must keep its base albedo while another flashes")
 	a.queue_free()
 	b.queue_free()
+	await get_tree().process_frame
+
+
+func _test_safehouse_compass_offscreen_clamping_and_readout() -> void:
+	var compass: Control = SAFEHOUSE_COMPASS_SCRIPT.new()
+	add_child(compass)
+	await get_tree().process_frame
+	var vp := Vector2(1152.0, 648.0)
+	var center := vp * 0.5
+	var margin: float = SAFEHOUSE_COMPASS_SCRIPT.EDGE_MARGIN
+
+	# Target well inside the inset -> on-screen, so no marker (no clutter
+	# while the building itself is visible).
+	compass.update_indicator(center + Vector2(120.0, -60.0), vp, 900.0)
+	_assert(not compass.visible,
+			"a safehouse already inside the on-screen inset must not raise a marker")
+
+	# Due east and far off-screen -> marker appears clamped to the right
+	# inset edge, arrow pointing along +X.
+	compass.update_indicator(center + Vector2(5000.0, 0.0), vp, 2000.0)
+	_assert(compass.visible, "an off-screen safehouse must raise the edge marker")
+	var marker: Control = compass.get_node("Marker")
+	var marker_center: Vector2 = marker.position + marker.pivot_offset
+	_assert(absf(marker.rotation) < 0.001,
+			"a safehouse due east must point the arrow along +X")
+	_assert(absf(marker_center.x - (vp.x - margin)) < 0.5 and absf(marker_center.y - center.y) < 0.5,
+			"an off-screen safehouse due east must clamp to the right inset edge")
+	_assert(compass.get_node("DistanceLabel").text == "100m",
+			"2000 world px at %d px/m must read as exactly 100m" % int(SAFEHOUSE_COMPASS_SCRIPT.PIXELS_PER_METER))
+
+	# Up-left diagonal bearing -> marker stays inside the inset rect and the
+	# arrow rotation matches the true bearing.
+	var bearing := Vector2(-3000.0, -4000.0)
+	compass.update_indicator(center + bearing, vp, 5000.0)
+	marker_center = marker.position + marker.pivot_offset
+	_assert(marker_center.x >= margin - 0.5 and marker_center.x <= vp.x - margin + 0.5 \
+			and marker_center.y >= margin - 0.5 and marker_center.y <= vp.y - margin + 0.5,
+			"the clamped marker must never sit outside the viewport inset")
+	_assert(absf(wrapf(marker.rotation - bearing.angle(), -PI, PI)) < 0.001,
+			"the arrow rotation must match the true bearing to the safehouse")
+
+	compass.queue_free()
+	await get_tree().process_frame
+
+
+func _test_hud_builds_safehouse_compass_and_tolerates_missing_targets() -> void:
+	var hud_scene: PackedScene = preload("res://scenes/ui/HUD.tscn")
+	var hud: CanvasLayer = hud_scene.instantiate()
+	add_child(hud)
+	await get_tree().process_frame
+	var compass: Control = hud.get_node_or_null("SafehouseCompass")
+	_assert(compass != null, "the HUD must build its SafehouseCompass widget during _ready")
+	# Bare fixture: whatever leaked actors may sit in the player/settlement
+	# groups, the per-frame update path must run clean and leave a valid node.
+	hud._update_safehouse_compass()
+	_assert(is_instance_valid(compass), "the compass update path with missing targets must not destroy the widget")
+	hud.queue_free()
 	await get_tree().process_frame

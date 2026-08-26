@@ -15,9 +15,12 @@ extends CanvasLayer
 @onready var interact_prompt_panel: PanelContainer = $Root/SafeArea/InteractPromptPanel
 @onready var interact_prompt_label: Label = $Root/SafeArea/InteractPromptPanel/InteractPromptLabel
 
+const SAFEHOUSE_COMPASS_SCRIPT: GDScript = preload("res://scripts/ui/safehouse_compass.gd")
+
 var _known_magazine_size: int = 1
 var has_player: bool = false
 var floor_label: Label
+var safehouse_compass: Control
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
@@ -41,12 +44,35 @@ func _ready() -> void:
 	floor_dbg.position = Vector2(10, get_viewport().get_visible_rect().size.y - 30)
 	add_child(floor_dbg)
 	floor_label = floor_dbg
+	# Off-screen safehouse indicator (see safehouse_compass.gd); fed from
+	# _process like the floor label -- read-only group polling, no direct
+	# coupling to Settlement.
+	safehouse_compass = SAFEHOUSE_COMPASS_SCRIPT.new()
+	safehouse_compass.name = "SafehouseCompass"
+	add_child(safehouse_compass)
 
 func _process(_delta: float) -> void:
 	fps_label.text = "FPS: %d" % Engine.get_frames_per_second()
 	var player: Node2D = get_tree().get_first_node_in_group("player")
 	if player != null and has_player:
 		floor_label.text = "Floor: %d" % player.current_floor
+	_update_safehouse_compass()
+
+func _update_safehouse_compass() -> void:
+	if safehouse_compass == null or not is_instance_valid(safehouse_compass):
+		return
+	var player: Node2D = get_tree().get_first_node_in_group("player")
+	var settlement: Node2D = get_tree().get_first_node_in_group("settlement")
+	if player == null or settlement == null \
+			or not is_instance_valid(player) or not is_instance_valid(settlement):
+		safehouse_compass.visible = false
+		return
+	var viewport_size := get_viewport().get_visible_rect().size
+	var target_screen: Vector2 = get_viewport().get_canvas_transform() * settlement.global_position
+	safehouse_compass.update_indicator(
+		target_screen,
+		viewport_size,
+		settlement.global_position.distance_to(player.global_position))
 
 func _on_health_changed(current: float, max_health: float) -> void:
 	health_label.text = "HP: %d / %d" % [int(ceil(current)), int(max_health)]
