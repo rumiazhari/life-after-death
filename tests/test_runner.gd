@@ -2481,10 +2481,11 @@ func _streamed_semantic_count(world: StreamingWorld, field: StringName) -> int:
 	return total
 
 func _instantiate_procedural_district_fixture(seed_value: int) -> ProceduralDistrict:
-	# Hygiene: transient physics dressing (debris/limbs/corpses/casings) from
-	# earlier tests shares the entity layer and must never leak into a fresh
-	# district's spawn-clearance sampling.
-	for group_name in ["physics_debris", "severed_limbs", "corpses", "blood_decals", "blood_sprays", "shell_casings"]:
+	# Hygiene: transient physics dressing (debris/limbs/corpses/casings) AND
+	# any leaked live actors from earlier tests (zombies, survivors, player,
+	# settlement, spawn manager, swarm manager) must never pollute a fresh
+	# district's spawn-clearance sampling or nav-grid rasterization.
+	for group_name in ["physics_debris", "severed_limbs", "corpses", "blood_decals", "blood_sprays", "shell_casings", "zombies", "survivors", "player", "settlement", "spawn_manager", "swarm_manager", "attackable"]:
 		for node in get_tree().get_nodes_in_group(group_name):
 			if is_instance_valid(node):
 				node.free()

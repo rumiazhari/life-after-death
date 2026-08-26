@@ -37,7 +37,7 @@ func _ready() -> void:
 	# Add floor indicator label dynamically
 	var floor_dbg := Label.new()
 	floor_dbg.name = "floor_label"
-	floor_dbg.set_default_font_size(16)
+	floor_dbg.add_theme_font_size_override("font_size", 16)
 	floor_dbg.position = Vector2(10, get_viewport().get_visible_rect().size.y - 30)
 	add_child(floor_dbg)
 	floor_label = floor_dbg
