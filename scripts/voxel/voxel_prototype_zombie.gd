@@ -8,7 +8,15 @@ const PERCEPTION := preload("res://scripts/voxel/voxel_zombie_perception_3d.gd")
 @export var contact_damage := 8.0
 @export var contact_damage_interval := 0.6
 @onready var health_component: HealthComponent = $HealthComponent
+@onready var _mesh: MeshInstance3D = $Mesh
 
+## Presentation-only damage feedback: the capsule snaps to FLASH_COLOR and
+## tweens back to its base albedo over FLASH_DURATION seconds.
+const FLASH_COLOR := Color(1.0, 1.0, 1.0)
+const FLASH_DURATION := 0.12
+
+var _base_albedo := Color(0.5, 0.72, 0.3)
+var _flash_tween: Tween
 var target: Node3D
 var navigation_service
 var path_follower
@@ -18,6 +26,12 @@ var _contact_damage_remaining := 0.0
 
 func _ready() -> void:
 	add_to_group(&"voxel_zombies")
+	# The scene ships one shared StandardMaterial3D sub-resource: without a
+	# per-instance copy every spawned zombie would tint together on hit.
+	if _mesh.material_override is StandardMaterial3D:
+		var owned := _mesh.material_override.duplicate() as StandardMaterial3D
+		_mesh.material_override = owned
+		_base_albedo = owned.albedo_color
 	health_component.damaged.connect(_on_damaged)
 	health_component.died.connect(_on_died)
 	perception = PERCEPTION.new()
@@ -74,7 +88,21 @@ func take_damage(amount: float, source: Node = null) -> void:
 
 
 func _on_damaged(amount: float) -> void:
+	_flash_hit()
 	GameEvents.voxel_zombie_damaged.emit(self, amount)
+
+
+## Presentation-only self hit-flash: re-hitting restarts the tween so rapid
+## fire never stacks tweens or strands a white zombie.
+func _flash_hit() -> void:
+	var mat := _mesh.material_override as StandardMaterial3D
+	if mat == null:
+		return
+	if _flash_tween != null and _flash_tween.is_valid():
+		_flash_tween.kill()
+	mat.albedo_color = FLASH_COLOR
+	_flash_tween = create_tween()
+	_flash_tween.tween_property(mat, "albedo_color", _base_albedo, FLASH_DURATION)
 
 
 func _on_died() -> void:

@@ -38,6 +38,7 @@ const WINDOW_SCENE: PackedScene = preload("res://scenes/world/Window.tscn")
 const SCAVENGE_POINT_SCENE: PackedScene = preload("res://scenes/world/ScavengePoint.tscn")
 const CONVENIENCE_STORE_SCENE: PackedScene = preload("res://scenes/world/buildings/ConvenienceStore01.tscn")
 const CLINIC_SCENE: PackedScene = preload("res://scenes/world/buildings/Clinic01.tscn")
+const VOXEL_ZOMBIE_SCENE: PackedScene = preload("res://scenes/actors/VoxelZombie3D.tscn")
 const PROCEDURAL_DISTRICT_SCENE: PackedScene = preload("res://scenes/world/maps/ProceduralDistrict.tscn")
 const PROCEDURAL_RETRY_PROBE_SCRIPT: GDScript = preload("res://tests/procedural_retry_probe.gd")
 const FAILING_PROCEDURAL_DISTRICT_SCRIPT: GDScript = preload("res://tests/failing_procedural_district.gd")
@@ -439,6 +440,9 @@ func _test_dialogue_ui_shows_lines_and_choices() -> void:
 	await _run_test("phase_3b8_zombie_resample_discards_cached_path", _test_phase_3b8_zombie_resample_discards_cached_path)
 	await _run_test("phase_3b8_survivor_action_exit_resets_navigation", _test_phase_3b8_survivor_action_exit_resets_navigation)
 	await _run_test("phase_3b8_idle_zombie_makes_no_navigation_requests", _test_phase_3b8_idle_zombie_makes_no_navigation_requests)
+
+	await _run_test("voxel_zombie_hit_flash_engages_and_recovers", _test_voxel_zombie_hit_flash_engages_and_recovers)
+	await _run_test("voxel_zombie_hit_flash_is_isolated_per_instance", _test_voxel_zombie_hit_flash_is_isolated_per_instance)
 
 	print("\n=== TEST RESULTS: %d passed, %d failed ===" % [_pass_count, _fail_count])
 	get_tree().quit(0 if _fail_count == 0 else 1)
@@ -6426,4 +6430,39 @@ func _test_room_context_rapid_oscillation_settles_correctly() -> void:
 	survivor.queue_free()
 	building.queue_free()
 	settlement.free()
+	await get_tree().process_frame
+
+
+func _test_voxel_zombie_hit_flash_engages_and_recovers() -> void:
+	var zombie: VoxelPrototypeZombie = VOXEL_ZOMBIE_SCENE.instantiate()
+	add_child(zombie)
+	var mat := (zombie.get_node("Mesh") as MeshInstance3D).material_override as StandardMaterial3D
+	var base := mat.albedo_color
+	zombie.take_damage(10.0)
+	_assert(mat.albedo_color.is_equal_approx(VoxelPrototypeZombie.FLASH_COLOR),
+			"taking damage must snap the voxel zombie's albedo to the flash colour")
+	await get_tree().create_timer(VoxelPrototypeZombie.FLASH_DURATION + 0.15).timeout
+	_assert(mat.albedo_color.is_equal_approx(base),
+			"the hit-flash must recover the base albedo once the flash window ends")
+	zombie.queue_free()
+	await get_tree().process_frame
+
+
+func _test_voxel_zombie_hit_flash_is_isolated_per_instance() -> void:
+	var a: VoxelPrototypeZombie = VOXEL_ZOMBIE_SCENE.instantiate()
+	var b: VoxelPrototypeZombie = VOXEL_ZOMBIE_SCENE.instantiate()
+	add_child(a)
+	add_child(b)
+	var mat_a := (a.get_node("Mesh") as MeshInstance3D).material_override as StandardMaterial3D
+	var mat_b := (b.get_node("Mesh") as MeshInstance3D).material_override as StandardMaterial3D
+	var base_b := mat_b.albedo_color
+	_assert(mat_a != mat_b,
+			"each voxel zombie must own a private material copy so a flash can never leak across instances")
+	a.take_damage(10.0)
+	_assert(mat_a.albedo_color.is_equal_approx(VoxelPrototypeZombie.FLASH_COLOR),
+			"the damaged zombie must engage its flash immediately")
+	_assert(mat_b.albedo_color.is_equal_approx(base_b),
+			"an undamaged neighbour must keep its base albedo while another flashes")
+	a.queue_free()
+	b.queue_free()
 	await get_tree().process_frame

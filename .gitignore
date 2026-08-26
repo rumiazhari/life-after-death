@@ -14,3 +14,6 @@
 # Local editor user-data and portable-editor cache (machine-local)
 /.godot-user/
 /Godot/
+
+# Autopilot run lock is machine-local runtime state, never source.
+.autopilot.lock
