@@ -42,6 +42,15 @@ var _ground_colliders: Array[CollisionShape2D] = []
 var _upper_colliders: Array[CollisionShape2D] = []
 var _floor_sets_built := false
 
+## Cool info-blue tint for stairwell announcements on the HUD event feed.
+const STAIR_TOAST_COLOR := Color(0.55, 0.8, 1.0)
+
+## Feed copy for a stairwell ride. Static + pure so the headless suite can
+## pin the wording without instantiating a configured building.
+static func stair_toast_message(to_upper_floor: bool) -> String:
+	return "You take the stairs up to the upper floor." if to_upper_floor \
+			else "You head back down to street level."
+
 func _build_stairs() -> void:
 	var stairs: Dictionary = specification.get("interior", {}).get("stairs_up", {})
 	if stairs.is_empty():
@@ -67,6 +76,11 @@ func _on_stairs_used(actor: Node) -> void:
 	# Tag the actor so perception respects the floor change.
 	if "current_floor" in actor:
 		actor.set("current_floor", current_floor)
+	# Player-visible feedback: announce the deck switch on the HUD event
+	# feed -- only for the player's own climbs; AI survivor switches stay
+	# silent so the feed doesn't chatter.
+	if actor != null and actor.is_in_group("player"):
+		GameEvents.event_toast.emit(stair_toast_message(current_floor == 1), STAIR_TOAST_COLOR)
 
 func set_floor(floor_index: int) -> void:
 	floor_index = clampi(floor_index, 0, 1)

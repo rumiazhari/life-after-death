@@ -46,6 +46,7 @@ const SAFEHOUSE_COMPASS_SCRIPT: GDScript = preload("res://scripts/ui/safehouse_c
 const GAME_CLOCK_SCRIPT: GDScript = preload("res://scripts/ui/game_clock_label.gd")
 const DAY_NIGHT_SCRIPT: GDScript = preload("res://scripts/visuals/day_night_cycle.gd")
 const COMBAT_FEEDBACK_SCRIPT: GDScript = preload("res://scripts/ui/combat_feedback.gd")
+const PROCEDURAL_BUILDING_SCRIPT: GDScript = preload("res://scripts/world/procedural_building.gd")
 const PROCEDURAL_SEED_CORPUS: Array[int] = [0, 1, 2, 3, 7, 31, 42, 255, 1024, 8801, 65535, 20260821, 2147483646]
 
 func _ready() -> void:
@@ -453,6 +454,8 @@ func _test_dialogue_ui_shows_lines_and_choices() -> void:
 	await _run_test("day_night_palette_is_continuous_bounded_and_timekeyed", _test_day_night_palette_is_continuous_bounded_and_timekeyed)
 	await _run_test("day_night_cycle_drives_environment_and_tolerates_missing_targets", _test_day_night_cycle_drives_environment_and_tolerates_missing_targets)
 	await _run_test("combat_feedback_vignette_closes_in_with_low_health", _test_combat_feedback_vignette_closes_in_with_low_health)
+	await _run_test("stairs_use_flips_plane_tags_actor_and_toasts_player", _test_stairs_use_flips_plane_tags_actor_and_toasts_player)
+	await _run_test("stair_toast_message_matches_direction", _test_stair_toast_message_matches_direction)
 
 	print("\n=== TEST RESULTS: %d passed, %d failed ===" % [_pass_count, _fail_count])
 	get_tree().quit(0 if _fail_count == 0 else 1)
@@ -6671,3 +6674,54 @@ func _test_day_night_cycle_drives_environment_and_tolerates_missing_targets() ->
 	_assert(is_instance_valid(bare), "the day-night update path with missing targets must not crash")
 	bare.queue_free()
 	await get_tree().process_frame
+
+func _test_stairs_use_flips_plane_tags_actor_and_toasts_player() -> void:
+	# Lightweight stand-in building: set_floor() only needs the interior
+	# dict shape (_ensure_floor_sets tolerates an empty collider set), so
+	# the full configure() pass is unnecessary for the stairs code path.
+	var building: ProceduralBuilding = PROCEDURAL_BUILDING_SCRIPT.new()
+	building.specification = {"id": &"tests/stairs_building", "interior": {"perimeter_rects": []}}
+	var toasts: Array[String] = []
+	var toast_cb := func(message: String, _color: Color) -> void:
+		toasts.append(message)
+	GameEvents.event_toast.connect(toast_cb)
+	var flips: Array[int] = []
+	var flip_cb := func(_building: ProceduralBuilding, floor_index: int) -> void:
+		flips.append(floor_index)
+	GameEvents.building_floor_changed.connect(flip_cb)
+	# Player-shaped actor (needs a current_floor member exactly like the
+	# real Player carries for zombie-perception gating).
+	var actor_script := GDScript.new()
+	actor_script.source_code = "extends Node2D\nvar current_floor: int = 0\n"
+	actor_script.reload()
+	var actor: Node2D = actor_script.new()
+	actor.add_to_group("player")
+	building._on_stairs_used(actor)
+	_assert(building.current_floor == 1, "first stair use must move the plane to the upper floor")
+	_assert(int(actor.get("current_floor")) == 1, "the actor must be tagged with the new floor for perception gating")
+	_assert(toasts.size() == 1, "player stair use must emit exactly one event_toast (got %d)" % toasts.size())
+	if toasts.size() == 1:
+		_assert(String(toasts[0]).contains("upper floor"), "the upstairs toast must mention the upper floor")
+	# AI actor outside the player group: the shared plane still flips, the
+	# feed stays quiet.
+	var ai_actor := Node2D.new()
+	building._on_stairs_used(ai_actor)
+	_assert(building.current_floor == 0, "second stair use must return the plane to ground floor")
+	_assert(toasts.size() == 1, "non-player stair use must stay off the event feed")
+	_assert(flips.size() == 2 and flips[0] == 1 and flips[1] == 0,
+			"building_floor_changed must fire once per real deck change (%s)" % str(flips))
+	# Re-setting the floor we are already on is an event-level no-op.
+	building.set_floor(0)
+	_assert(flips.size() == 2, "re-setting the current floor must not re-emit building_floor_changed")
+	GameEvents.event_toast.disconnect(toast_cb)
+	GameEvents.building_floor_changed.disconnect(flip_cb)
+	actor.free()
+	ai_actor.free()
+	building.free()
+
+func _test_stair_toast_message_matches_direction() -> void:
+	var up: String = PROCEDURAL_BUILDING_SCRIPT.stair_toast_message(true)
+	var down: String = PROCEDURAL_BUILDING_SCRIPT.stair_toast_message(false)
+	_assert(up.contains("upper floor"), "upstairs copy must mention the upper floor (got '%s')" % up)
+	_assert(down.contains("street level"), "downstairs copy must mention street level (got '%s')" % down)
+	_assert(up != down, "the two directions must have distinct copy")
