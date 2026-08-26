@@ -26,6 +26,7 @@ ActorSpriteLibrary="*res://scripts/visuals/actor_sprite_library.gd"
 CosmeticRng="*res://scripts/visuals/cosmetic_rng.gd"
 DebugSettings="*res://scripts/core/debug_settings.gd"
 NoiseManager="*res://scripts/core/noise_manager.gd"
+AudioManager="*res://scripts/audio/audio_manager.gd"
 UrbanNavigationService="*res://scripts/world/urban_navigation_service.gd"
 _mcp_game_helper="*res://addons/godot_ai/runtime/game_helper.gd"
 
