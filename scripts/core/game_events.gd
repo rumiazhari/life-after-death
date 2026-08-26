@@ -43,3 +43,13 @@ signal interact_prompt_changed(label: String)
 ## Emitted when a survivor group switches floors inside a multistory
 ## generated building (0 = ground, 1 = upper).
 signal building_floor_changed(building: ProceduralBuilding, floor_index: int)
+
+## Phase 3C: kill-feed / event toasts --------------------------------------
+## Emitted when a survivor (player or AI) completes a scavenging action
+## and gains items. Domain-structured so other systems can react if needed.
+signal scavenge_completed(survivor_name: String, item_id: StringName, amount: int)
+
+## Generic on-HUD toast notification (color defaults to white). Any system
+## can emit this for player-visible event text that doesn't fit a specific
+## domain signal. HUD's EventFeed listens to this.
+signal event_toast(message: String, color: Color)

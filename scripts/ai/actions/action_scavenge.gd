@@ -66,7 +66,10 @@ func tick(ai: SurvivorAI, delta: float) -> bool:
 	# Atomic: either the capacity-limited amount moves from the point into
 	# the survivor's inventory completely, or nothing does -- see
 	# ScavengePoint.harvest_into().
-	point.harvest_into(ai.survivor.carried_inventory)
+	var harvested := point.harvest_into(ai.survivor.carried_inventory)
+	if harvested > 0:
+		GameEvents.scavenge_completed.emit(ai.data.survivor_name, point.item_id, harvested)
+		GameEvents.event_toast.emit("Scavenged %d %s" % [harvested, String(point.item_id).replace("_", " ").capitalize()], Color(1.0, 0.84, 0.26))
 	if point.is_depleted():
 		ai.job_board.complete_job(_job)
 	else:
