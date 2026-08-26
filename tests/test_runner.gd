@@ -45,6 +45,7 @@ const FAILING_PROCEDURAL_DISTRICT_SCRIPT: GDScript = preload("res://tests/failin
 const SAFEHOUSE_COMPASS_SCRIPT: GDScript = preload("res://scripts/ui/safehouse_compass.gd")
 const GAME_CLOCK_SCRIPT: GDScript = preload("res://scripts/ui/game_clock_label.gd")
 const DAY_NIGHT_SCRIPT: GDScript = preload("res://scripts/visuals/day_night_cycle.gd")
+const COMBAT_FEEDBACK_SCRIPT: GDScript = preload("res://scripts/ui/combat_feedback.gd")
 const PROCEDURAL_SEED_CORPUS: Array[int] = [0, 1, 2, 3, 7, 31, 42, 255, 1024, 8801, 65535, 20260821, 2147483646]
 
 func _ready() -> void:
@@ -451,6 +452,7 @@ func _test_dialogue_ui_shows_lines_and_choices() -> void:
 	await _run_test("hud_builds_game_clock_label_and_formats_time", _test_hud_builds_game_clock_label_and_formats_time)
 	await _run_test("day_night_palette_is_continuous_bounded_and_timekeyed", _test_day_night_palette_is_continuous_bounded_and_timekeyed)
 	await _run_test("day_night_cycle_drives_environment_and_tolerates_missing_targets", _test_day_night_cycle_drives_environment_and_tolerates_missing_targets)
+	await _run_test("combat_feedback_vignette_closes_in_with_low_health", _test_combat_feedback_vignette_closes_in_with_low_health)
 
 	print("\n=== TEST RESULTS: %d passed, %d failed ===" % [_pass_count, _fail_count])
 	get_tree().quit(0 if _fail_count == 0 else 1)
@@ -6553,6 +6555,46 @@ func _test_hud_builds_game_clock_label_and_formats_time() -> void:
 	_assert(probe.text == "Day 1  03:10  Night", "out-of-range hour/minute must wrap to 03:10 (got '%s')" % probe.text)
 	probe.queue_free()
 	hud.queue_free()
+	await get_tree().process_frame
+
+func _test_combat_feedback_vignette_closes_in_with_low_health() -> void:
+	# Mirror the HUD-widget tests: let add_child() drive _ready() (which
+	# connects the GameEvents signals) and await a frame -- do NOT call
+	# _ready() by hand, or the connections double up and corrupt the shared
+	# GameEvents autoload for later tests.
+	var fb: Control = COMBAT_FEEDBACK_SCRIPT.new()
+	fb.size = Vector2(1280, 720)
+	add_child(fb)
+	await get_tree().process_frame
+	# Full health -> screen stays open.
+	fb._on_player_health_changed(100.0, 100.0)
+	fb.advance(0.016)
+	_assert(fb.vignette_strength() == 0.0, "full-health must keep the vignette fully open")
+	# Just above onset -> still open.
+	fb._on_player_health_changed(70.0, 100.0)
+	fb.advance(0.016)
+	_assert(fb.vignette_strength() == 0.0, "health above onset must not raise the vignette")
+	# Below onset -> vignette begins to close in (smoothly, not instantly).
+	fb._on_player_health_changed(50.0, 100.0)
+	fb.advance(0.016)
+	var v_mid: float = fb.vignette_strength()
+	_assert(v_mid > 0.0, "dropping below onset must begin closing the vignette")
+	# Lower still -> stronger than at 50%.
+	fb._on_player_health_changed(30.0, 100.0)
+	fb.advance(0.016)
+	_assert(fb.vignette_strength() > v_mid, "lesser health must close the vignette further")
+	# Critically low -> near-full close and the low-health warning is active.
+	# (Strength peaks near 1.0 only as health->0; at 10% it sits ~0.7, so
+	# assert a strong-but-not-absolute close.)
+	fb._on_player_health_changed(10.0, 100.0)
+	fb.advance(0.016)
+	_assert(fb.vignette_strength() > 0.6, "critical health must strongly close the vignette")
+	_assert(fb.is_low_health_warning_active(), "critical health must arm the low-health warning")
+	# Respawn -> vignette clears.
+	fb._on_player_respawned()
+	fb.advance(0.016)
+	_assert(fb.vignette_strength() == 0.0, "respawn must clear the vignette")
+	fb.queue_free()
 	await get_tree().process_frame
 
 func _test_day_night_palette_is_continuous_bounded_and_timekeyed() -> void:
