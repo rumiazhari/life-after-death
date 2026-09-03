@@ -1,24 +1,43 @@
-# Godot 4+ specific ignores
-.godot/
-/android/
+# Audio cache and temporary files
+*.wav.tmp
+*.mp3.tmp
 
-# Godot AI MCP editor plugin: a development-time tool for this session,
-# not a runtime dependency of the shipped game. Excluded from version
-# control per project instructions.
-/addons/godot_ai/
-/godot-ai-LICENSE.txt
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
 
-# Claude Code local session settings (machine-local, not project source)
-/.claude/
+# Build artifacts
+build/
+dist/
+*.egg-info/
 
-# Local editor user-data and portable-editor cache (machine-local)
-/.godot-user/
-/Godot/
+# Logs
+*.log
 
-# Autopilot run lock is machine-local runtime state, never source.
-.autopilot.lock
+# Environment
+.env
+.env.local
+*.env.*
 
-# Autopilot headless-suite logs and the junk/ staging area (files retired
-# instead of deleted, per file-deletion policy) are machine-local noise.
-out_*.txt
-/junk/
+# Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Dependencies
+.venv/
+venv/
+node_modules/
+.mypy_cache/
+.pytest_cache/
+coverage/
+htmlcov/
+.coverage
+
+# System files
+.DS_Store
+Thumbs.db
+*.tmp
